@@ -25,21 +25,21 @@ Future<void> showTutorialDialog(BuildContext context) {
           children: [
             _GuideRow(
               icon: Icons.mic_rounded,
-              title: '1. Voz Híbrida (2 Canales)',
+              title: '1. Copiloto IA & Voz Híbrida',
               body:
-                  '• Canal 1 (IA Cloud/Ollama): Describe un sistema completo en voz alta para generar entidades, relaciones y notas.\n• Canal 2 (Atómico Offline): Usa comandos rápidos como "Crear clase Factura" o "Conectar herencia Empleado con Persona".',
+                  '• Canal 1 (Ollama Local / Cloud): Dicta sistemas completos o usa modos consultivos (Opinar, Revisar, OMT, Resumen) sin alterar el lienzo.\n• Canal 2 (Atómico Offline): Usa comandos rápidos como "Crear clase Factura" o "Conectar herencia Empleado con Persona".',
             ),
             _GuideRow(
               icon: Icons.camera_alt_rounded,
               title: '2. Pizarras a UML (Vision AI)',
               body:
-                  'Fotografía un diagrama hecho a mano y Gemini Vision lo convierte en clases JPA editables.',
+                  'Fotografía un diagrama hecho a mano y Vision AI (Ollama Local-First / Gemini) lo convierte en clases JPA editables.',
             ),
             _GuideRow(
               icon: Icons.group_rounded,
-              title: '3. WebSocket en Tiempo Real',
+              title: '3. Salas Multi-Día, @IA y Pizarra',
               body:
-                  'Al editar una clase en el lienzo, se bloquea con exclusión mutua para el resto del equipo. Soporta roles OWNER, EDITOR y VIEWER + chat y bitácora.',
+                  'Colabora en tiempo real con exclusión mutua, menciona @IA o @equipo en el chat, recibe alertas OMT y retoma trabajo con checkpoints y notas de pizarra.',
             ),
             _GuideRow(
               icon: Icons.code_rounded,

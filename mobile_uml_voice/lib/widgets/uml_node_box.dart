@@ -3,17 +3,18 @@ import '../models/uml_models.dart';
 
 /// Estima la altura visual aproximada de un nodo UML para enrutar conectores.
 double estimateNodeHeight(UmlNode node) {
+  final footerH = node.authorBadgeName != null ? 20.0 : 0.0;
   if (node.elementType == UmlElementType.note) {
     final textLen = (node.noteContent ?? node.name).length;
     final lines = (textLen / 26).ceil().clamp(2, 6);
-    return 56.0 + lines * 18.0;
+    return 56.0 + lines * 18.0 + footerH;
   }
   const headerH = 48.0;
   final attrH = (node.attributes.isEmpty ? 1 : node.attributes.length) * 20.0 + 14.0;
   final methodH = node.elementType == UmlElementType.umlEnum
       ? 0.0
       : (node.methods.isEmpty ? 0.0 : node.methods.length * 20.0 + 14.0);
-  return (headerH + attrH + methodH).clamp(96.0, 520.0);
+  return (headerH + attrH + methodH + footerH).clamp(96.0, 540.0);
 }
 
 Color parseHexColor(String hex, {Color fallback = const Color(0xFF38BDF8)}) {
@@ -30,17 +31,21 @@ Color parseHexColor(String hex, {Color fallback = const Color(0xFF38BDF8)}) {
 }
 
 /// Caja UML interactiva para `CLASS`, `INTERFACE`, `ENUM`, `NOTE` y `ASSOCIATION_CLASS`
-/// con indicador visual de bloqueo mutuo WebSocket.
+/// con indicador visual de bloqueo mutuo WebSocket, autoría y notas IA en pizarra.
 class UmlNodeBox extends StatelessWidget {
   final UmlNode node;
   final bool isSelected;
   final CollabNodeLock? lockedByOther;
+  final List<AiAnnotationItem> openAnnotations;
+  final VoidCallback? onAnnotationsTap;
 
   const UmlNodeBox({
     super.key,
     required this.node,
     this.isSelected = false,
     this.lockedByOther,
+    this.openAnnotations = const [],
+    this.onAnnotationsTap,
   });
 
   Color _headerColor() {
@@ -124,6 +129,10 @@ class UmlNodeBox extends StatelessWidget {
                   height: 1.35,
                 ),
               ),
+              if (node.authorBadgeName != null) ...[
+                const SizedBox(height: 6),
+                _AuthorFooter(authorName: node.authorBadgeName!, isNote: true),
+              ],
             ],
           ),
         ),
@@ -166,13 +175,43 @@ class UmlNodeBox extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  Text(
-                    node.displayStereotype,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      fontStyle: FontStyle.italic,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          node.displayStereotype,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white.withValues(alpha: 0.8),
+                            fontStyle: FontStyle.italic,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (openAnnotations.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: onAnnotationsTap,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF8B5CF6),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '💡 ${openAnnotations.length}',
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     node.name,
@@ -280,9 +319,48 @@ class UmlNodeBox extends StatelessWidget {
                 ),
               ),
             ],
+            if (node.authorBadgeName != null) ...[
+              const Divider(height: 1, color: Color(0xFF1E293B)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                child: _AuthorFooter(authorName: node.authorBadgeName!),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AuthorFooter extends StatelessWidget {
+  final String authorName;
+  final bool isNote;
+
+  const _AuthorFooter({required this.authorName, this.isNote = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          Icons.person_outline,
+          size: 11,
+          color: isNote ? const Color(0xFFFCD34D) : const Color(0xFF94A3B8),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            'Por: $authorName',
+            style: TextStyle(
+              fontSize: 9.5,
+              color: isNote ? const Color(0xFFFDE68A) : const Color(0xFF94A3B8),
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }

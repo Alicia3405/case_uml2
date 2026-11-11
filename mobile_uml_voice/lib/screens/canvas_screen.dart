@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/uml_models.dart';
 import '../providers/project_provider.dart';
 import '../services/download_helper.dart';
 import '../services/file_picker_helper.dart';
 import '../widgets/class_editor_sheet.dart';
 import '../widgets/codegen_preview_sheet.dart';
+import '../widgets/collab_insights_sheet.dart';
 import '../widgets/relation_editor_dialog.dart';
 import '../widgets/relation_painter.dart';
 import '../widgets/team_collab_sheet.dart';
@@ -23,9 +26,44 @@ class _CanvasScreenState extends State<CanvasScreen> {
   final TransformationController _transformCtrl = TransformationController();
   String? _selectedNodeId;
   DateTime _lastDragEmit = DateTime.fromMillisecondsSinceEpoch(0);
+  StreamSubscription<CollabNotificationItem>? _notifSub;
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = context.read<ProjectProvider>();
+    _notifSub = provider.collabService.onNotificationReceived.listen((notif) {
+      if (!mounted) return;
+      final myId = provider.authService.currentUser?.id;
+      if (myId != null && notif.actorUserId == myId) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: notif.severity == 'discipline' ||
+                  notif.severity == 'warning'
+              ? const Color(0xFF92400E)
+              : const Color(0xFF1E293B),
+          content: Text(
+            '🔔 ${notif.title}: ${notif.body}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          action: SnackBarAction(
+            label: 'Ver',
+            textColor: const Color(0xFF38BDF8),
+            onPressed: () {
+              if (!mounted) return;
+              showCollabInsightsSheet(context, provider, initialTab: 0);
+            },
+          ),
+        ),
+      );
+    });
+  }
 
   @override
   void dispose() {
+    _notifSub?.cancel();
     _transformCtrl.dispose();
     super.dispose();
   }
@@ -248,7 +286,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 ],
               ),
               Text(
-                '${project.name} • ${project.userRole ?? "OWNER"}',
+                '${project.name} • ${project.userRole ?? "OWNER"}${provider.sessionMeta != null ? " • S#${provider.sessionMeta!.sessionNumber}" : ""}',
                 style: const TextStyle(fontSize: 11, color: Colors.white60),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -256,6 +294,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Alertas y notificaciones',
+            onPressed: () =>
+                showCollabInsightsSheet(context, provider, initialTab: 0),
+            icon: Badge(
+              isLabelVisible: provider.unreadNotificationCount > 0,
+              label: Text('${provider.unreadNotificationCount}'),
+              child: const Icon(Icons.notifications_outlined, size: 21),
+            ),
+          ),
           // Chip de sala WebSocket en vivo + unread chat
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -282,19 +330,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ),
           ),
           IconButton(
-            tooltip: 'Deshacer',
-            onPressed: provider.canUndo ? provider.undo : null,
-            icon: const Icon(Icons.undo, size: 20),
-          ),
-          IconButton(
-            tooltip: 'Rehacer',
-            onPressed: provider.canRedo ? provider.redo : null,
-            icon: const Icon(Icons.redo, size: 20),
-          ),
-          IconButton(
             tooltip: provider.isReadOnly
                 ? 'Modo solo lectura'
-                : 'Guardar en servidor PostgreSQL',
+                : 'Guardar en servidor MongoDB',
             onPressed: provider.isReadOnly || provider.isBusy
                 ? null
                 : () => provider.saveCurrentDiagram(),
@@ -309,15 +347,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
           ),
         ],
       ),
-      floatingActionButton: provider.isReadOnly
-          ? null
-          : FloatingActionButton(
-              backgroundColor: const Color(0xFF38BDF8),
-              foregroundColor: const Color(0xFF090D16),
-              tooltip: 'Voice Dock Atómico',
-              onPressed: () => showVoiceDockSheet(context, provider),
-              child: const Icon(Icons.mic_rounded),
-            ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: provider.isReadOnly
+            ? const Color(0xFF8B5CF6)
+            : const Color(0xFF38BDF8),
+        foregroundColor:
+            provider.isReadOnly ? Colors.white : const Color(0xFF090D16),
+        tooltip: provider.isReadOnly
+            ? 'Copiloto IA (Modo Consultivo)'
+            : 'Voice Dock y Copiloto IA',
+        onPressed: () => showVoiceDockSheet(context, provider),
+        child: Icon(
+          provider.isReadOnly ? Icons.auto_awesome : Icons.mic_rounded,
+        ),
+      ),
       bottomNavigationBar: Container(
         color: const Color(0xFF0F172A),
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -341,11 +384,40 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   label: 'Vision AI',
                   onTap: () => showVisionScannerSheet(context, provider),
                 ),
+                _ToolButton(
+                  icon: Icons.undo,
+                  label: 'Deshacer',
+                  enabled: provider.canUndo,
+                  onTap: provider.canUndo ? provider.undo : null,
+                ),
+                _ToolButton(
+                  icon: Icons.redo,
+                  label: 'Rehacer',
+                  enabled: provider.canRedo,
+                  onTap: provider.canRedo ? provider.redo : null,
+                ),
               ],
               _ToolButton(
                 icon: Icons.code_rounded,
                 label: 'Código / ZIP',
                 onTap: () => showCodegenPreviewSheet(context, provider),
+              ),
+              _ToolButton(
+                icon: Icons.history_toggle_off,
+                label: 'Retomar',
+                onTap: () =>
+                    showCollabInsightsSheet(context, provider, initialTab: 1),
+              ),
+              _ToolButton(
+                icon: Icons.sticky_note_2_outlined,
+                label: provider.openAiAnnotations.isNotEmpty
+                    ? 'Notas (${provider.openAiAnnotations.length})'
+                    : 'Notas IA',
+                accentColor: provider.openAiAnnotations.isNotEmpty
+                    ? const Color(0xFFFBBF24)
+                    : null,
+                onTap: () =>
+                    showCollabInsightsSheet(context, provider, initialTab: 2),
               ),
               _ToolButton(
                 icon: Icons.fact_check_outlined,
@@ -357,12 +429,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 onSelected: (val) {
                   if (val == 'export_xmi') _exportXmi(provider);
                   if (val == 'import_xmi') _importXmi(provider);
+                  if (val == 'ollama_cfg') {
+                    showOllamaConfigDialog(context, provider);
+                  }
                   if (val == 'toggle_ro') provider.toggleLocalReadOnly();
                   if (val == 'reset_zoom') {
                     _transformCtrl.value = Matrix4.identity();
                   }
                 },
                 itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'ollama_cfg',
+                    child: Text('🦙 Configurar Ollama / Colab',
+                        style: TextStyle(color: Colors.white)),
+                  ),
                   const PopupMenuItem(
                     value: 'export_xmi',
                     child: Text('Exportar XMI 2.1',
@@ -458,9 +538,58 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Modo VIEWER (Solo Lectura): puedes navegar, chatear y revisar código permitido en tiempo real.',
+                      'Modo VIEWER (Solo Lectura): puedes consultar al Copiloto IA, chatear y revisar código permitido en tiempo real.',
                       style: TextStyle(color: Color(0xFFFEF3C7), fontSize: 11.5),
                     ),
+                  ),
+                ],
+              ),
+            ),
+          if (provider.shouldShowResumeBanner)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFF0C4A6E),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.history_toggle_off,
+                      size: 16, color: Color(0xFF38BDF8)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Desde tu última visita: ${provider.resumeBundle?.sinceLastVisit.changesCount ?? 0} cambio(s) • ${provider.openAiAnnotations.length} nota(s) IA • ${provider.unreadNotificationCount} alerta(s)',
+                      style: const TextStyle(
+                        color: Color(0xFFE0F2FE),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => showCollabInsightsSheet(
+                      context,
+                      provider,
+                      initialTab: 1,
+                    ),
+                    child: const Text(
+                      'Retomar',
+                      style: TextStyle(
+                        color: Color(0xFF38BDF8),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: provider.dismissResumeBanner,
+                    child: const Icon(Icons.close,
+                        size: 16, color: Colors.white60),
                   ),
                 ],
               ),
@@ -546,6 +675,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             node: node,
                             isSelected: _selectedNodeId == node.id,
                             lockedByOther: foreignLock,
+                            openAnnotations: diagram.openAnnotationsForNode(
+                              node.id,
+                              node.name,
+                            ),
+                            onAnnotationsTap: () => showCollabInsightsSheet(
+                              context,
+                              provider,
+                              initialTab: 2,
+                            ),
                           ),
                         ),
                       );
@@ -564,28 +702,38 @@ class _CanvasScreenState extends State<CanvasScreen> {
 class _ToolButton extends StatelessWidget {
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool enabled;
+  final Color? accentColor;
 
   const _ToolButton({
     required this.icon,
     required this.label,
     required this.onTap,
+    this.enabled = true,
+    this.accentColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final fg = !enabled
+        ? Colors.white24
+        : (accentColor ?? Colors.white);
+    final lblColor = !enabled
+        ? Colors.white24
+        : (accentColor ?? Colors.white70);
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 20),
+            Icon(icon, color: fg, size: 20),
             const SizedBox(height: 2),
             Text(label,
-                style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                style: TextStyle(color: lblColor, fontSize: 10)),
           ],
         ),
       ),

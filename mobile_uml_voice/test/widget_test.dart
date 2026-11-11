@@ -71,4 +71,52 @@ void main() {
     expect(find.text('Editando: Ana Gómez Rojas'), findsOneWidget);
     expect(find.text('+ calcularTotal(): BigDecimal'), findsOneWidget);
   });
+
+  testWidgets('UmlNodeBox renderiza autoría y badge interactivo de anotaciones IA',
+      (WidgetTester tester) async {
+    var tappedNotes = false;
+    final node = UmlNode(
+      id: 'n_pago',
+      name: 'Pago',
+      elementType: UmlElementType.umlClass,
+      lastModifiedByName: 'Ana Gómez',
+      attributes: [
+        UmlAttribute(name: 'id', type: 'UUID', isPrimaryKey: true),
+      ],
+    );
+
+    final notes = [
+      AiAnnotationItem(
+        id: 'a1',
+        targetNodeId: 'n_pago',
+        title: 'Agregar método pagar',
+        message: 'Conviene definir el método procesarPago',
+      ),
+      AiAnnotationItem(
+        id: 'a2',
+        targetClassName: 'Pago',
+        title: 'Asociar Moneda',
+        message: 'Usa BigDecimal + código ISO',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UmlNodeBox(
+            node: node,
+            openAnnotations: notes,
+            onAnnotationsTap: () => tappedNotes = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Por: Ana Gómez'), findsOneWidget);
+    expect(find.text('💡 2'), findsOneWidget);
+
+    await tester.tap(find.text('💡 2'));
+    await tester.pump();
+    expect(tappedNotes, isTrue);
+  });
 }

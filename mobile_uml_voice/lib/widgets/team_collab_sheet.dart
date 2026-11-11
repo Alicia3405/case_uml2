@@ -110,6 +110,11 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
         final collab = widget.provider.collabService;
         final onlineIds = collab.participants.map((p) => p.userId).toSet();
         final isOwner = project?.isOwner ?? false;
+        final sessionMeta = collab.sessionMeta;
+        final myId = widget.provider.authService.currentUser?.id;
+        final amHost = sessionMeta?.hostUserId != null &&
+            myId != null &&
+            sessionMeta!.hostUserId == myId;
 
         return SizedBox(
           height: MediaQuery.of(context).size.height * 0.78,
@@ -140,12 +145,21 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            'Sala: ${collab.activeRoomCode ?? "Conectando..."} • ${collab.participants.length} en línea',
+                            'Sala: ${collab.activeRoomCode ?? "Conectando..."} • ${collab.participants.length} en línea${sessionMeta != null ? " • Sesión #${sessionMeta.sessionNumber}" : ""}',
                             style: const TextStyle(
                               color: Color(0xFF94A3B8),
                               fontSize: 11.5,
                             ),
                           ),
+                          if (sessionMeta?.hostUserName != null)
+                            Text(
+                              '👑 Anfitrión actual: ${sessionMeta!.hostUserName}',
+                              style: const TextStyle(
+                                color: Color(0xFFFBBF24),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -182,6 +196,7 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                             runSpacing: 6,
                             children: collab.participants.map((p) {
                               final c = parseHexColor(p.color);
+                              final pIsHost = sessionMeta?.hostUserId == p.userId;
                               return Chip(
                                 avatar: CircleAvatar(
                                   backgroundColor: c,
@@ -189,7 +204,7 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                 ),
                                 backgroundColor: const Color(0xFF1E293B),
                                 label: Text(
-                                  p.userName,
+                                  '${pIsHost ? "👑 " : ""}${p.userName}',
                                   style: const TextStyle(
                                       color: Colors.white, fontSize: 11.5),
                                 ),
@@ -282,6 +297,12 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                             final isOnline = onlineIds.contains(m.userId);
                             final isCreator = m.userId == project.createdBy ||
                                 m.role == 'OWNER';
+                            final isSessionHost =
+                                sessionMeta?.hostUserId == m.userId;
+                            final canTransferHost =
+                                (amHost || isOwner) &&
+                                    !isSessionHost &&
+                                    sessionMeta != null;
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.all(10),
@@ -289,10 +310,13 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                 color: const Color(0xFF1E293B),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: isOnline
-                                      ? const Color(0xFF10B981)
-                                          .withValues(alpha: 0.45)
-                                      : const Color(0xFF334155),
+                                  color: isSessionHost
+                                      ? const Color(0xFFFBBF24)
+                                          .withValues(alpha: 0.65)
+                                      : isOnline
+                                          ? const Color(0xFF10B981)
+                                              .withValues(alpha: 0.45)
+                                          : const Color(0xFF334155),
                                 ),
                               ),
                               child: Column(
@@ -342,11 +366,47 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                                   ),
                                               ],
                                             ),
-                                            Text(
-                                              m.email,
-                                              style: const TextStyle(
-                                                  color: Colors.white54,
-                                                  fontSize: 11),
+                                            Row(
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    m.email,
+                                                    style: const TextStyle(
+                                                        color: Colors.white54,
+                                                        fontSize: 11),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                if (isSessionHost) ...[
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 1.5),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                              0xFFFBBF24)
+                                                          .withValues(
+                                                              alpha: 0.18),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              6),
+                                                    ),
+                                                    child: const Text(
+                                                      '👑 Anfitrión',
+                                                      style: TextStyle(
+                                                        color:
+                                                            Color(0xFFFBBF24),
+                                                        fontSize: 9.5,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
                                             ),
                                           ],
                                         ),
@@ -357,62 +417,108 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                       ),
                                     ],
                                   ),
-                                  if (isOwner && !isCreator) ...[
+                                  if ((isOwner && !isCreator) ||
+                                      canTransferHost) ...[
                                     const Divider(
                                         height: 14, color: Color(0xFF334155)),
-                                    Row(
-                                      children: [
-                                        SegmentedButton<String>(
-                                          segments: const [
-                                            ButtonSegment(
-                                                value: 'EDITOR',
-                                                label: Text('Editor',
-                                                    style:
-                                                        TextStyle(fontSize: 11))),
-                                            ButtonSegment(
-                                                value: 'VIEWER',
-                                                label: Text('Viewer',
-                                                    style:
-                                                        TextStyle(fontSize: 11))),
-                                          ],
-                                          selected: {
-                                            m.role == 'VIEWER'
-                                                ? 'VIEWER'
-                                                : 'EDITOR'
-                                          },
-                                          onSelectionChanged: (sel) {
-                                            widget.provider
-                                                .updateMemberPermissions(
-                                              targetUserId: m.userId,
-                                              role: sel.first,
-                                            );
-                                          },
-                                        ),
-                                        const Spacer(),
-                                        const Text('ZIP',
-                                            style: TextStyle(
-                                                color: Colors.white70,
-                                                fontSize: 11)),
-                                        Switch(
-                                          value: m.canDownloadCode,
-                                          onChanged: (val) {
-                                            widget.provider
-                                                .updateMemberPermissions(
-                                              targetUserId: m.userId,
-                                              canDownloadCode: val,
-                                            );
-                                          },
-                                        ),
-                                        IconButton(
+                                    if (isOwner && !isCreator)
+                                      Row(
+                                        children: [
+                                          SegmentedButton<String>(
+                                            segments: const [
+                                              ButtonSegment(
+                                                  value: 'EDITOR',
+                                                  label: Text('Editor',
+                                                      style: TextStyle(
+                                                          fontSize: 11))),
+                                              ButtonSegment(
+                                                  value: 'VIEWER',
+                                                  label: Text('Viewer',
+                                                      style: TextStyle(
+                                                          fontSize: 11))),
+                                            ],
+                                            selected: {
+                                              m.role == 'VIEWER'
+                                                  ? 'VIEWER'
+                                                  : 'EDITOR'
+                                            },
+                                            onSelectionChanged: (sel) {
+                                              widget.provider
+                                                  .updateMemberPermissions(
+                                                targetUserId: m.userId,
+                                                role: sel.first,
+                                              );
+                                            },
+                                          ),
+                                          const Spacer(),
+                                          const Text('ZIP',
+                                              style: TextStyle(
+                                                  color: Colors.white70,
+                                                  fontSize: 11)),
+                                          Switch(
+                                            value: m.canDownloadCode,
+                                            onChanged: (val) {
+                                              widget.provider
+                                                  .updateMemberPermissions(
+                                                targetUserId: m.userId,
+                                                canDownloadCode: val,
+                                              );
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.person_remove_outlined,
+                                                size: 18,
+                                                color: Colors.redAccent),
+                                            onPressed: () => widget.provider
+                                                .removeMember(m.userId),
+                                          ),
+                                        ],
+                                      ),
+                                    if (canTransferHost)
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: TextButton.icon(
+                                          onPressed: widget.provider.isBusy
+                                              ? null
+                                              : () async {
+                                                  final ok = await widget
+                                                      .provider
+                                                      .transferHostToMember(
+                                                          m.userId);
+                                                  if (!context.mounted) return;
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        ok
+                                                            ? '👑 ${m.fullName} es ahora el anfitrión de la sala'
+                                                            : (widget.provider
+                                                                    .lastError ??
+                                                                'No se pudo transferir anfitrión'),
+                                                      ),
+                                                      backgroundColor: ok
+                                                          ? const Color(
+                                                              0xFF047857)
+                                                          : Colors.redAccent,
+                                                    ),
+                                                  );
+                                                },
                                           icon: const Icon(
-                                              Icons.person_remove_outlined,
-                                              size: 18,
-                                              color: Colors.redAccent),
-                                          onPressed: () => widget.provider
-                                              .removeMember(m.userId),
+                                            Icons.workspace_premium_outlined,
+                                            size: 16,
+                                            color: Color(0xFFFBBF24),
+                                          ),
+                                          label: const Text(
+                                            'Hacer anfitrión',
+                                            style: TextStyle(
+                                              color: Color(0xFFFBBF24),
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         ),
-                                      ],
-                                    ),
+                                      ),
                                   ],
                                 ],
                               ),
@@ -421,14 +527,14 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                       ],
                     ),
 
-                    // TAB 2: Chat en Vivo
+                    // TAB 2: Chat en Vivo + Copilot @IA Grupal
                     Column(
                       children: [
                         Expanded(
                           child: collab.chatMessages.isEmpty
                               ? const Center(
                                   child: Text(
-                                    'Aún no hay mensajes en esta sala.\nSaluda al equipo o coordina una entidad.',
+                                    'Aún no hay mensajes en esta sala.\nSaluda al equipo o escribe @IA para consultar al Copiloto grupal.',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(color: Colors.white54),
                                   ),
@@ -441,6 +547,7 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                     final isMine = msg.userId ==
                                         widget.provider.authService.currentUser
                                             ?.id;
+                                    final isAi = msg.isAi;
                                     final timeStr = DateFormat('HH:mm')
                                         .format(msg.timestamp.toLocal());
                                     return Align(
@@ -456,27 +563,83 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                           maxWidth: MediaQuery.of(context)
                                                   .size
                                                   .width *
-                                              0.74,
+                                              0.80,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: isMine
-                                              ? const Color(0xFF1D4ED8)
-                                              : const Color(0xFF1E293B),
+                                          color: isAi
+                                              ? const Color(0xFF2E1065)
+                                              : isMine
+                                                  ? const Color(0xFF1D4ED8)
+                                                  : const Color(0xFF1E293B),
                                           borderRadius:
                                               BorderRadius.circular(12),
+                                          border: isAi
+                                              ? Border.all(
+                                                  color:
+                                                      const Color(0xFF8B5CF6)
+                                                          .withValues(
+                                                              alpha: 0.7))
+                                              : null,
                                         ),
                                         child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text(
-                                              '${msg.userName} • $timeStr',
-                                              style: TextStyle(
-                                                color: parseHexColor(msg.color),
-                                                fontSize: 10.5,
-                                                fontWeight: FontWeight.w700,
-                                              ),
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    '${msg.userName} • $timeStr',
+                                                    style: TextStyle(
+                                                      color: isAi
+                                                          ? const Color(
+                                                              0xFFC4B5FD)
+                                                          : parseHexColor(
+                                                              msg.color),
+                                                      fontSize: 10.5,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (isAi && msg.aiMode != null)
+                                                  Container(
+                                                    margin:
+                                                        const EdgeInsets.only(
+                                                            left: 6),
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 5,
+                                                        vertical: 1),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                              0xFF8B5CF6)
+                                                          .withValues(
+                                                              alpha: 0.35),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              5),
+                                                    ),
+                                                    child: Text(
+                                                      msg.aiMode!,
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 9,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
+                                            if (msg.requestedByUserName != null)
+                                              Text(
+                                                'Respondiendo a ${msg.requestedByUserName}',
+                                                style: const TextStyle(
+                                                    color: Color(0xFFA78BFA),
+                                                    fontSize: 10),
+                                              ),
                                             const SizedBox(height: 3),
                                             Text(
                                               msg.message,
@@ -490,6 +653,37 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                     );
                                   },
                                 ),
+                        ),
+                        SizedBox(
+                          height: 36,
+                          child: ListView(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              '@IA revisa el diagrama',
+                              '@IA qué falta',
+                              '@IA resume avances',
+                            ].map((prompt) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: ActionChip(
+                                  backgroundColor: const Color(0xFF1E1B4B),
+                                  side: BorderSide(
+                                    color: const Color(0xFF8B5CF6)
+                                        .withValues(alpha: 0.55),
+                                  ),
+                                  label: Text(
+                                    prompt,
+                                    style: const TextStyle(
+                                        color: Color(0xFFDDD6FE), fontSize: 11),
+                                  ),
+                                  onPressed: () {
+                                    collab.sendChatMessage(prompt);
+                                  },
+                                ),
+                              );
+                            }).toList(),
+                          ),
                         ),
                         Padding(
                           padding: EdgeInsets.fromLTRB(
@@ -505,7 +699,7 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                   controller: _chatCtrl,
                                   style: const TextStyle(color: Colors.white),
                                   decoration: const InputDecoration(
-                                    hintText: 'Escribir al equipo...',
+                                    hintText: 'Escribir al equipo o @IA ...',
                                     hintStyle: TextStyle(color: Colors.white38),
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -569,15 +763,41 @@ class _TeamCollabBodyState extends State<_TeamCollabBody>
                                   style: const TextStyle(
                                       color: Colors.white, fontSize: 12.5),
                                 ),
-                                subtitle: entry.detail != null
-                                    ? Text(entry.detail!,
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (entry.detail != null)
+                                      Text(entry.detail!,
+                                          style: const TextStyle(
+                                              color: Colors.white54,
+                                              fontSize: 11)),
+                                    if (entry.affectedClasses.isNotEmpty)
+                                      Text(
+                                        'Clases: ${entry.affectedClasses.join(", ")}',
                                         style: const TextStyle(
-                                            color: Colors.white54, fontSize: 11))
-                                    : null,
-                                trailing: Text(
-                                  timeStr,
-                                  style: const TextStyle(
-                                      color: Colors.white38, fontSize: 10),
+                                            color: Color(0xFF38BDF8),
+                                            fontSize: 10.5),
+                                      ),
+                                  ],
+                                ),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    if (entry.sessionNumber != null)
+                                      Text(
+                                        'S#${entry.sessionNumber}',
+                                        style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.w700),
+                                      ),
+                                    Text(
+                                      timeStr,
+                                      style: const TextStyle(
+                                          color: Colors.white38, fontSize: 10),
+                                    ),
+                                  ],
                                 ),
                               );
                             },

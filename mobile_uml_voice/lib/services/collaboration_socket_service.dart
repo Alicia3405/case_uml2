@@ -21,12 +21,30 @@ class RemoteDiagramSyncEvent {
   final List<UmlConnection> connections;
   final String userId;
   final String action;
+  final List<AiAnnotationItem>? aiAnnotations;
 
   const RemoteDiagramSyncEvent({
     required this.nodes,
     required this.connections,
     required this.userId,
     required this.action,
+    this.aiAnnotations,
+  });
+}
+
+class HostTransferredEvent {
+  final bool transferred;
+  final String sessionId;
+  final String? previousHostUserId;
+  final String? newHostUserId;
+  final String? newHostUserName;
+
+  const HostTransferredEvent({
+    required this.transferred,
+    required this.sessionId,
+    this.previousHostUserId,
+    this.newHostUserId,
+    this.newHostUserName,
   });
 }
 
@@ -77,11 +95,16 @@ class CollaborationSocketService extends ChangeNotifier {
   final Map<String, CollabNodeLock> _activeLocks = {};
   List<CollabChatMessage> _chatMessages = [];
   List<CollabActivityLog> _activityLogs = [];
+  CollabSessionMeta? _sessionMeta;
+  List<CollabNotificationItem> _notifications = [];
 
   final _remoteDragCtrl = StreamController<RemoteNodeDragEvent>.broadcast();
   final _remoteSyncCtrl = StreamController<RemoteDiagramSyncEvent>.broadcast();
   final _lockRejectedCtrl = StreamController<NodeLockRejectedEvent>.broadcast();
   final _permissionsCtrl = StreamController<ProjectPermissionsEvent>.broadcast();
+  final _hostTransferredCtrl = StreamController<HostTransferredEvent>.broadcast();
+  final _aiAnnotationsCtrl = StreamController<List<AiAnnotationItem>>.broadcast();
+  final _notificationCtrl = StreamController<CollabNotificationItem>.broadcast();
 
   bool get isConnected => _isConnected;
   String? get activeRoomCode => _activeRoomCode;
@@ -93,11 +116,57 @@ class CollaborationSocketService extends ChangeNotifier {
   Map<String, CollabNodeLock> get activeLocks => Map.unmodifiable(_activeLocks);
   List<CollabChatMessage> get chatMessages => List.unmodifiable(_chatMessages);
   List<CollabActivityLog> get activityLogs => List.unmodifiable(_activityLogs);
+  CollabSessionMeta? get sessionMeta => _sessionMeta;
+  List<CollabNotificationItem> get notifications => List.unmodifiable(_notifications);
+  int get unreadNotificationCount =>
+      _notifications.where((n) => !n.isReadBy(_currentUser?.id)).length;
 
   Stream<RemoteNodeDragEvent> get onRemoteNodeDrag => _remoteDragCtrl.stream;
   Stream<RemoteDiagramSyncEvent> get onRemoteDiagramSync => _remoteSyncCtrl.stream;
   Stream<NodeLockRejectedEvent> get onNodeLockRejected => _lockRejectedCtrl.stream;
   Stream<ProjectPermissionsEvent> get onProjectPermissionsUpdated => _permissionsCtrl.stream;
+  Stream<HostTransferredEvent> get onHostTransferred => _hostTransferredCtrl.stream;
+  Stream<List<AiAnnotationItem>> get onAiAnnotationsUpdated => _aiAnnotationsCtrl.stream;
+  Stream<CollabNotificationItem> get onNotificationReceived => _notificationCtrl.stream;
+
+  void setNotifications(List<CollabNotificationItem> items) {
+    final byId = <String, CollabNotificationItem>{};
+    for (final item in items) {
+      byId[item.id] = item;
+    }
+    for (final existing in _notifications) {
+      byId.putIfAbsent(existing.id, () => existing);
+    }
+    final merged = byId.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _notifications = merged.length > 60 ? merged.sublist(0, 60) : merged;
+    notifyListeners();
+  }
+
+  void markNotificationReadLocally(String notificationId) {
+    final uid = _currentUser?.id;
+    if (uid == null) return;
+    _notifications = _notifications
+        .map((n) => n.id == notificationId ? n.copyWithReadBy(uid) : n)
+        .toList();
+    notifyListeners();
+  }
+
+  void markAllNotificationsReadLocally() {
+    final uid = _currentUser?.id;
+    if (uid == null) return;
+    _notifications = _notifications.map((n) => n.copyWithReadBy(uid)).toList();
+    notifyListeners();
+  }
+
+  void updateSessionHostLocally(String? newHostUserId, String? newHostUserName) {
+    if (_sessionMeta == null) return;
+    _sessionMeta = _sessionMeta!.copyWith(
+      hostUserId: newHostUserId,
+      hostUserName: newHostUserName,
+    );
+    notifyListeners();
+  }
 
   void _ensureConnected(String socketUrl) {
     if (_socket != null && _connectedSocketUrl == socketUrl) {
@@ -235,12 +304,18 @@ class CollaborationSocketService extends ChangeNotifier {
 
       final rawNodes = (map['nodes'] as List?) ?? const [];
       final rawConns = (map['connections'] as List?) ?? const [];
+      final rawAnnots = map['aiAnnotations'];
       final nodes = rawNodes
           .map((n) => UmlNode.fromJson(Map<String, dynamic>.from(n as Map)))
           .toList();
       final connections = rawConns
           .map((c) => UmlConnection.fromJson(Map<String, dynamic>.from(c as Map)))
           .toList();
+      final annots = rawAnnots is List
+          ? rawAnnots
+              .map((a) => AiAnnotationItem.fromJson(Map<String, dynamic>.from(a as Map)))
+              .toList()
+          : null;
 
       _remoteSyncCtrl.add(
         RemoteDiagramSyncEvent(
@@ -248,8 +323,72 @@ class CollaborationSocketService extends ChangeNotifier {
           connections: connections,
           userId: senderId,
           action: (map['action'] ?? 'update').toString(),
+          aiAnnotations: annots,
         ),
       );
+    });
+
+    socket.on('host_transferred', (dynamic raw) {
+      if (raw is! Map) return;
+      final map = Map<String, dynamic>.from(raw);
+      final sessionId = (map['sessionId'] ?? '').toString();
+      final newHostId = map['newHostUserId']?.toString();
+      final newHostName = map['newHostUserName']?.toString();
+      if (_sessionMeta != null &&
+          (sessionId.isEmpty || _sessionMeta!.id == sessionId)) {
+        _sessionMeta = _sessionMeta!.copyWith(
+          hostUserId: newHostId,
+          hostUserName: newHostName,
+        );
+      }
+      _hostTransferredCtrl.add(
+        HostTransferredEvent(
+          transferred: map['transferred'] == true,
+          sessionId: sessionId,
+          previousHostUserId: map['previousHostUserId']?.toString(),
+          newHostUserId: newHostId,
+          newHostUserName: newHostName,
+        ),
+      );
+      notifyListeners();
+    });
+
+    socket.on('ai_annotations_updated', (dynamic raw) {
+      if (raw is! Map) return;
+      final map = Map<String, dynamic>.from(raw);
+      final eventDiagramId = map['diagramId']?.toString();
+      if (eventDiagramId != null &&
+          _currentDiagramId != null &&
+          eventDiagramId != _currentDiagramId) {
+        return;
+      }
+      final rawAnnots = (map['aiAnnotations'] as List?) ?? const [];
+      final list = rawAnnots
+          .map((a) => AiAnnotationItem.fromJson(Map<String, dynamic>.from(a as Map)))
+          .toList();
+      _aiAnnotationsCtrl.add(list);
+      notifyListeners();
+    });
+
+    socket.on('notification_created', (dynamic raw) {
+      if (raw is! Map) return;
+      final notif = CollabNotificationItem.fromJson(Map<String, dynamic>.from(raw));
+      if (notif.diagramId.isNotEmpty &&
+          _currentDiagramId != null &&
+          notif.diagramId != _currentDiagramId) {
+        return;
+      }
+      final uid = _currentUser?.id;
+      if (notif.recipientUserId != 'ROOM' &&
+          uid != null &&
+          notif.recipientUserId != uid) {
+        return;
+      }
+      if (_notifications.any((n) => n.id == notif.id)) return;
+      final next = [notif, ..._notifications];
+      _notifications = next.length > 60 ? next.sublist(0, 60) : next;
+      _notificationCtrl.add(notif);
+      notifyListeners();
     });
 
     socket.on('chat_message_received', (dynamic raw) {
@@ -328,6 +467,8 @@ class CollaborationSocketService extends ChangeNotifier {
       _activeLocks.clear();
       _participants = [];
       _activeRoomCode = null;
+      _sessionMeta = null;
+      _notifications = [];
     }
 
     _currentUser = user;
@@ -361,8 +502,12 @@ class CollaborationSocketService extends ChangeNotifier {
         if (map['success'] != true) return;
 
         final session = map['session'];
-        if (session is Map && session['roomCode'] != null) {
-          _activeRoomCode = session['roomCode'].toString();
+        if (session is Map) {
+          _sessionMeta =
+              CollabSessionMeta.fromJson(Map<String, dynamic>.from(session));
+          if (session['roomCode'] != null) {
+            _activeRoomCode = session['roomCode'].toString();
+          }
         }
 
         final rawParticipants = map['participants'];
@@ -417,6 +562,8 @@ class CollaborationSocketService extends ChangeNotifier {
     _chatMessages = [];
     _activityLogs = [];
     _unreadChatCount = 0;
+    _sessionMeta = null;
+    _notifications = [];
     notifyListeners();
   }
 
@@ -551,6 +698,7 @@ class CollaborationSocketService extends ChangeNotifier {
     String action, {
     String? detail,
     String category = 'uml',
+    List<String>? affectedClasses,
   }) {
     final clean = action.trim();
     final user = _currentUser;
@@ -565,6 +713,7 @@ class CollaborationSocketService extends ChangeNotifier {
         detail: detail,
         category: category,
         color: _myColor,
+        affectedClasses: affectedClasses,
       );
       _activityLogs = [..._activityLogs, local];
       notifyListeners();
@@ -580,6 +729,8 @@ class CollaborationSocketService extends ChangeNotifier {
       if (detail != null && detail.isNotEmpty) 'detail': detail,
       'category': category,
       'color': _myColor,
+      if (affectedClasses != null && affectedClasses.isNotEmpty)
+        'affectedClasses': affectedClasses,
     });
   }
 
@@ -590,6 +741,9 @@ class CollaborationSocketService extends ChangeNotifier {
     _remoteSyncCtrl.close();
     _lockRejectedCtrl.close();
     _permissionsCtrl.close();
+    _hostTransferredCtrl.close();
+    _aiAnnotationsCtrl.close();
+    _notificationCtrl.close();
     super.dispose();
   }
 }

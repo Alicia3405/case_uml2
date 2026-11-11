@@ -30,6 +30,13 @@ class _VisionScannerBodyState extends State<_VisionScannerBody> {
   PickedImagePayload? _picked;
   final _hintCtrl = TextEditingController();
   bool _processing = false;
+  bool _adviseOnly = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _adviseOnly = widget.provider.isReadOnly;
+  }
 
   @override
   void dispose() {
@@ -55,10 +62,12 @@ class _VisionScannerBodyState extends State<_VisionScannerBody> {
     if (_picked == null) return;
     setState(() => _processing = true);
 
+    final mode = (widget.provider.isReadOnly || _adviseOnly) ? 'advise' : 'auto';
     final ok = await widget.provider.executeVisionDigitization(
       imageBase64: _picked!.base64Data,
       mimeType: _picked!.mimeType,
       prompt: _hintCtrl.text.trim(),
+      mode: mode,
     );
 
     if (!mounted) return;
@@ -67,9 +76,11 @@ class _VisionScannerBodyState extends State<_VisionScannerBody> {
     if (ok) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📷 Pizarra digitalizada con Gemini Vision AI'),
-          backgroundColor: Color(0xFF047857),
+        SnackBar(
+          content: Text(mode == 'advise'
+              ? '📷 Análisis visual completado (sin editar lienzo)'
+              : '📷 Pizarra digitalizada con Vision AI (Ollama / Gemini)'),
+          backgroundColor: const Color(0xFF047857),
         ),
       );
     } else {
@@ -154,7 +165,21 @@ class _VisionScannerBodyState extends State<_VisionScannerBody> {
                   border: OutlineInputBorder(),
                 ),
               ),
-              const SizedBox(height: 14),
+              if (!widget.provider.isReadOnly) ...[
+                const SizedBox(height: 6),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: _adviseOnly,
+                  onChanged: _processing
+                      ? null
+                      : (v) => setState(() => _adviseOnly = v),
+                  title: const Text(
+                    'Solo analizar y sugerir (sin editar lienzo)',
+                    style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
               ElevatedButton.icon(
                 onPressed: _processing ? null : _analyze,
                 style: ElevatedButton.styleFrom(
@@ -173,8 +198,10 @@ class _VisionScannerBodyState extends State<_VisionScannerBody> {
                       )
                     : const Icon(Icons.auto_awesome),
                 label: Text(_processing
-                    ? 'Analizando con Gemini Vision...'
-                    : 'Digitalizar Diagrama UML'),
+                    ? 'Analizando pizarra con Vision AI...'
+                    : (_adviseOnly || widget.provider.isReadOnly)
+                        ? 'Analizar Imagen (Solo Opinar)'
+                        : 'Digitalizar Diagrama UML'),
               ),
             ],
           ],

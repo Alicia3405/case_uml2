@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_uml_voice/models/uml_models.dart';
+import 'package:mobile_uml_voice/services/ai_api_service.dart';
 import 'package:mobile_uml_voice/services/api_client.dart';
 import 'package:mobile_uml_voice/services/uml_audit_helper.dart';
 import 'package:mobile_uml_voice/services/uml_voice_commander.dart';
@@ -154,6 +155,220 @@ void main() {
       final issues = UmlAuditHelper.auditDiagram(diagram);
       expect(issues.any((i) => i.severity == 'error'), isTrue);
       expect(issues.any((i) => i.title.contains('sin clave primaria')), isTrue);
+    });
+  });
+
+  group('2do Parcial: Continuidad Multi-Día, Copiloto IA & Pizarra', () {
+    test('UmlNode preserva autoría en colaborativo/deepCopy pero la omite en toSaveAstJson', () {
+      final node = UmlNode.fromJson({
+        'id': 'n_author',
+        'name': 'Factura',
+        'elementType': 'class',
+        'positionX': 100,
+        'positionY': 200,
+        'createdByUserId': 'u-cesar',
+        'createdByName': 'Cesar Quispe',
+        'lastModifiedByUserId': 'u-ana',
+        'lastModifiedByName': 'Ana Gómez',
+        'lastModifiedAt': '2026-11-11T10:00:00Z',
+        'attributes': [],
+        'methods': [],
+      });
+
+      expect(node.authorBadgeName, 'Ana Gómez');
+      expect(node.deepCopy().lastModifiedByName, 'Ana Gómez');
+
+      final collabJson = node.toCollaborativeJson();
+      expect(collabJson['createdByUserId'], 'u-cesar');
+      expect(collabJson['lastModifiedByName'], 'Ana Gómez');
+
+      final astJson = node.toSaveAstJson();
+      expect(astJson.containsKey('createdByUserId'), isFalse);
+      expect(astJson.containsKey('createdByName'), isFalse);
+      expect(astJson.containsKey('lastModifiedByUserId'), isFalse);
+      expect(astJson.containsKey('lastModifiedByName'), isFalse);
+      expect(astJson.containsKey('lastModifiedAt'), isFalse);
+    });
+
+    test('UmlDiagram.openAnnotationsForNode filtra por nodo/clase solo en estado open', () {
+      final diagram = UmlDiagram.fromJson({
+        'id': 'd-notes',
+        'name': 'Notas',
+        'nodes': [
+          {'id': 'n1', 'name': 'Pedido', 'elementType': 'class', 'positionX': 0, 'positionY': 0},
+        ],
+        'aiAnnotations': [
+          {
+            'id': 'a1',
+            'targetNodeId': 'n1',
+            'severity': 'warning',
+            'title': 'Falta FK cliente',
+            'message': 'Relaciona Pedido con Cliente',
+            'status': 'open',
+          },
+          {
+            'id': 'a2',
+            'targetClassName': 'pedido',
+            'severity': 'idea',
+            'title': 'Índice sugerido',
+            'message': 'Agrega fecha',
+            'status': 'open',
+          },
+          {
+            'id': 'a3',
+            'targetNodeId': 'n1',
+            'severity': 'discipline',
+            'title': 'Resuelta',
+            'message': 'Ya aplicada',
+            'status': 'applied',
+          },
+        ],
+      });
+
+      expect(diagram.openAiAnnotations.length, 2);
+      final forPedido = diagram.openAnnotationsForNode('n1', 'Pedido');
+      expect(forPedido.map((e) => e.id).toList(), ['a1', 'a2']);
+      expect(diagram.toSaveAstPayload().containsKey('aiAnnotations'), isFalse);
+    });
+
+    test('AiMutationResult.fromJson parsea respuesta consultiva sin mutar diagrama', () {
+      final res = AiMutationResult.fromJson({
+        'success': true,
+        'action': 'review',
+        'intentMode': 'REVIEW',
+        'mutatedDiagram': false,
+        'broadcastedToRoom': true,
+        'message': 'Conviene separar Pago de Pedido.',
+        'providerUsed': 'ollama',
+        'modelUsed': 'qwen2.5:3b',
+        'suggestions': [
+          {
+            'id': 'sug_1',
+            'severity': 'idea',
+            'targetClassName': 'Pedido',
+            'title': 'Crear entidad Pago',
+            'message': 'Desacopla cobros.',
+            'suggestedPrompt': 'Agrega clase Pago relacionada 1..1 con Pedido',
+          },
+        ],
+        'disciplineAlerts': [
+          {
+            'code': 'OMT_NO_PK',
+            'severity': 'discipline',
+            'className': 'Detalle',
+            'message': 'Falta PK UUID',
+          },
+        ],
+        'annotationsAdded': [
+          {
+            'id': 'note_1',
+            'targetClassName': 'Pedido',
+            'severity': 'warning',
+            'title': 'Revisar FK',
+            'message': 'Agrega relación explícita',
+            'status': 'open',
+          },
+        ],
+      });
+
+      expect(res.mutatedDiagram, isFalse);
+      expect(res.intentMode, 'REVIEW');
+      expect(res.broadcastedToRoom, isTrue);
+      expect(res.suggestions.length, 1);
+      expect(res.disciplineAlerts.first.code, 'OMT_NO_PK');
+      expect(res.annotationsAdded.first.isOpen, isTrue);
+      expect(AiPromptMode.fromString('discipline').isConsultative, isTrue);
+      expect(AiPromptMode.mutate.isConsultative, isFalse);
+    });
+
+    test('ResumeBundleDto y mensajes/bitácora parsean createdAt y metadatos multi-día', () {
+      final bundle = ResumeBundleDto.fromJson({
+        'diagram': {
+          'id': 'd1',
+          'name': 'E-Commerce',
+          'revisionCount': 7,
+          'openAiAnnotationsCount': 2,
+        },
+        'session': {
+          'id': 's1',
+          'diagramId': 'd1',
+          'roomCode': 'ROOM-EC1',
+          'sessionNumber': 3,
+          'hostUserId': 'u-ana',
+          'hostUserName': 'Ana Gómez',
+          'activeDateKeys': ['2026-11-10', '2026-11-11'],
+        },
+        'sinceLastVisit': {
+          'changesCount': 5,
+          'contributors': ['Ana Gómez'],
+          'touchedClasses': ['Pedido', 'Pago'],
+          'highlights': ['Se añadió Pago'],
+        },
+        'contributorStats': [
+          {
+            'userId': 'ai_copilot',
+            'userName': 'Copiloto IA',
+            'actorType': 'ai',
+            'totalEvents': 3,
+            'aiInteractions': 3,
+          },
+        ],
+        'snapshots': [
+          {
+            'id': 'snap-1',
+            'diagramId': 'd1',
+            'sessionNumber': 2,
+            'label': 'Fin Día 2',
+            'savedByName': 'Cesar Quispe',
+            'nodeCount': 4,
+            'connectionCount': 3,
+          },
+        ],
+        'unreadNotifications': [
+          {
+            'id': 'notif-1',
+            'diagramId': 'd1',
+            'severity': 'mention',
+            'title': 'Ana te mencionó',
+            'body': '@cesar revisa Pago',
+            'readByUserIds': ['u-ana'],
+          },
+        ],
+        'recentMessages': [
+          {
+            'id': 'msg-1',
+            'userId': 'ai_copilot',
+            'userName': 'Copiloto IA',
+            'senderType': 'ai',
+            'aiMode': 'ADVISE',
+            'message': 'Sugiero agregar Enum EstadoPago',
+            'createdAt': '2026-11-11T09:30:00Z',
+          },
+        ],
+        'recentEvents': [
+          {
+            'id': 'ev-1',
+            'userId': 'u-ana',
+            'userName': 'Ana Gómez',
+            'action': 'Editó Pago',
+            'affectedClasses': ['Pago'],
+            'sessionNumber': 3,
+            'createdAt': '2026-11-11T09:35:00Z',
+          },
+        ],
+      });
+
+      expect(bundle.session?.sessionNumber, 3);
+      expect(bundle.session?.hostUserName, 'Ana Gómez');
+      expect(bundle.sinceLastVisit.changesCount, 5);
+      expect(bundle.snapshots.first.label, 'Fin Día 2');
+      expect(bundle.recentMessages.first.isAi, isTrue);
+      expect(bundle.recentMessages.first.aiMode, 'ADVISE');
+      expect(bundle.recentEvents.first.affectedClasses, ['Pago']);
+
+      final notif = bundle.unreadNotifications.first;
+      expect(notif.isReadBy('u-cesar'), isFalse);
+      expect(notif.copyWithReadBy('u-cesar').isReadBy('u-cesar'), isTrue);
     });
   });
 }

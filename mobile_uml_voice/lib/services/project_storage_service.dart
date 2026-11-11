@@ -251,6 +251,110 @@ class ProjectStorageService {
     await apiClient.deleteJson('/projects/$projectId/members/$targetUserId');
   }
 
+  // --- Continuidad Multi-Sesión, Checkpoints, Anotaciones IA y Notificaciones ---
+
+  Future<ResumeBundleDto> fetchResumeBundle(String diagramId) async {
+    final data = await apiClient.getJson('/collaboration/diagrams/$diagramId/resume');
+    if (data is Map) {
+      return ResumeBundleDto.fromJson(Map<String, dynamic>.from(data));
+    }
+    throw ApiException('No se pudo cargar el resumen de sesiones.');
+  }
+
+  Future<List<CollabNotificationItem>> fetchNotifications({
+    String? diagramId,
+    bool unreadOnly = false,
+  }) async {
+    final params = <String>[];
+    if (diagramId != null && diagramId.isNotEmpty) {
+      params.add('diagramId=${Uri.encodeQueryComponent(diagramId)}');
+    }
+    if (unreadOnly) {
+      params.add('unreadOnly=true');
+    }
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    final data = await apiClient.getJson('/collaboration/notifications$query');
+    if (data is! List) return [];
+    return data
+        .map((n) => CollabNotificationItem.fromJson(Map<String, dynamic>.from(n as Map)))
+        .toList();
+  }
+
+  Future<void> markNotificationRead(String notificationId) async {
+    await apiClient.patchJson('/collaboration/notifications/$notificationId/read', null);
+  }
+
+  Future<void> markAllNotificationsRead(String diagramId) async {
+    await apiClient.postJson(
+      '/collaboration/diagrams/$diagramId/notifications/read-all',
+      null,
+    );
+  }
+
+  Future<Map<String, dynamic>> transferHost({
+    required String sessionId,
+    required String targetUserId,
+  }) async {
+    final data = await apiClient.postJson(
+      '/collaboration/sessions/$sessionId/transfer-host',
+      {'targetUserId': targetUserId},
+    );
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return {};
+  }
+
+  Future<List<DiagramSnapshotItem>> listSnapshots(String diagramId) async {
+    final data = await apiClient.getJson('/diagrams/$diagramId/snapshots');
+    if (data is! List) return [];
+    return data
+        .map((s) => DiagramSnapshotItem.fromJson(Map<String, dynamic>.from(s as Map)))
+        .toList();
+  }
+
+  Future<DiagramSnapshotItem> createSnapshot(
+    String diagramId, {
+    String? label,
+  }) async {
+    final data = await apiClient.postJson(
+      '/diagrams/$diagramId/snapshots',
+      {
+        if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
+      },
+    );
+    if (data is Map) {
+      return DiagramSnapshotItem.fromJson(Map<String, dynamic>.from(data));
+    }
+    throw ApiException('No se pudo crear el checkpoint.');
+  }
+
+  Future<UmlDiagram> restoreSnapshot(String diagramId, String snapshotId) async {
+    final data = await apiClient.postJson(
+      '/diagrams/$diagramId/snapshots/$snapshotId/restore',
+      null,
+    );
+    if (data is Map) {
+      return UmlDiagram.fromJson(Map<String, dynamic>.from(data));
+    }
+    throw ApiException('No se pudo restaurar el checkpoint.');
+  }
+
+  Future<UmlDiagram> updateAnnotationStatus({
+    required String diagramId,
+    required String annotationId,
+    required String status,
+  }) async {
+    final data = await apiClient.patchJson(
+      '/diagrams/$diagramId/annotations/$annotationId',
+      {'status': status},
+    );
+    if (data is Map) {
+      return UmlDiagram.fromJson(Map<String, dynamic>.from(data));
+    }
+    throw ApiException('No se pudo actualizar la anotación IA.');
+  }
+
   // --- Cola real de sincronización offline ---
 
   Future<List<OfflineSyncMutation>> getPendingMutations(String userId) async {

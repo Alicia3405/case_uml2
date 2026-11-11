@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/uml_models.dart';
 import '../providers/project_provider.dart';
 import '../services/stt_service.dart';
+import '../widgets/collab_insights_sheet.dart';
 import '../widgets/voice_orb_widget.dart';
 
 class VoiceAssistantScreen extends StatefulWidget {
@@ -19,10 +21,11 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   bool _useGenerativeAi = true; // true = Canal 1 IA backend, false = Canal 2 atómico
 
   static const _examples = [
+    '¿Qué clases o atributos faltan y qué reglas OMT debo corregir?',
+    'Audita relaciones y compatibilidad Spring Boot del diagrama',
+    'Resume qué avanzó el equipo en esta sesión',
     'Crea un sistema de biblioteca con Libro, Socio, Prestamo y Categoría usando herencia y composición',
     'Agrega una clase Factura con id UUID, fecha LocalDate y montoTotal BigDecimal',
-    'Crear interfaz Notificable',
-    'Conectar herencia Paciente con Persona',
   ];
 
   @override
@@ -65,18 +68,36 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     }
   }
 
+  AiPromptMode _effectiveMode(ProjectProvider provider) {
+    if (provider.isReadOnly &&
+        (provider.selectedAiMode == AiPromptMode.mutate ||
+            provider.selectedAiMode == AiPromptMode.auto)) {
+      return AiPromptMode.advise;
+    }
+    return provider.selectedAiMode;
+  }
+
   Future<void> _submitPrompt(String raw) async {
     final text = raw.trim();
     if (text.isEmpty) return;
 
     final provider = context.read<ProjectProvider>();
-    if (_useGenerativeAi) {
-      final ok = await provider.executeAiPrompt(text, isAudio: true);
+    if (_useGenerativeAi || provider.isReadOnly) {
+      final mode = _effectiveMode(provider);
+      final ok = await provider.executeAiPrompt(
+        text,
+        isAudio: true,
+        mode: mode,
+      );
       if (ok && mounted) {
+        final mutated =
+            (provider.latestAiIntentMode ?? '').toUpperCase() == 'MUTATE';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✨ Arquitectura UML actualizada en el lienzo'),
-            backgroundColor: Color(0xFF047857),
+          SnackBar(
+            content: Text(mutated
+                ? '✨ Arquitectura UML actualizada en el lienzo'
+                : '💡 Respuesta del Copiloto IA (${provider.latestAiIntentMode ?? mode.label})'),
+            backgroundColor: const Color(0xFF047857),
           ),
         );
       }
@@ -89,6 +110,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   Widget build(BuildContext context) {
     final provider = context.watch<ProjectProvider>();
     final diagram = provider.activeDiagram;
+    final useAi = _useGenerativeAi || provider.isReadOnly;
+    final activeMode = _effectiveMode(provider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF090D16),
@@ -108,6 +131,11 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Configurar runtime Ollama / Google Colab',
+            icon: const Icon(Icons.tune, color: Color(0xFFA78BFA)),
+            onPressed: () => showOllamaConfigDialog(context, provider),
+          ),
           IconButton(
             tooltip: provider.ttsService.isMuted ? 'Activar voz TTS' : 'Silenciar voz TTS',
             icon: Icon(
@@ -143,35 +171,110 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                 label: Text('Canal 2: Atómico Offline'),
               ),
             ],
-            selected: {_useGenerativeAi},
-            onSelectionChanged: (vals) =>
-                setState(() => _useGenerativeAi = vals.first),
+            selected: {useAi},
+            onSelectionChanged: (vals) {
+              if (!vals.first && provider.isReadOnly) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Modo solo lectura: usa Canal 1 en modos Opinar, Revisar, OMT o Resumen.',
+                    ),
+                  ),
+                );
+                return;
+              }
+              setState(() => _useGenerativeAi = vals.first);
+            },
           ),
-          if (_useGenerativeAi && provider.availableAiModels.isNotEmpty) ...[
-            const SizedBox(height: 10),
+          if (useAi) ...[
+            if (provider.availableAiModels.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 38,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: provider.availableAiModels.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 6),
+                  itemBuilder: (ctx, i) {
+                    final m = provider.availableAiModels[i];
+                    final selected = m.id == provider.selectedAiModel &&
+                        m.provider == provider.selectedAiProvider;
+                    return ChoiceChip(
+                      selected: selected,
+                      label: Text(
+                        '${m.isLocal ? "🦙 " : "✨ "}${m.name}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      onSelected: (_) => provider.setSelectedAiModel(m),
+                    );
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
             SizedBox(
-              height: 38,
+              height: 36,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: provider.availableAiModels.length,
+                itemCount: AiPromptMode.values.length,
                 separatorBuilder: (_, _) => const SizedBox(width: 6),
-                itemBuilder: (ctx, i) {
-                  final m = provider.availableAiModels[i];
-                  final selected = m.id == provider.selectedAiModel &&
-                      m.provider == provider.selectedAiProvider;
+                itemBuilder: (_, i) {
+                  final mode = AiPromptMode.values[i];
+                  final disabled =
+                      provider.isReadOnly && mode == AiPromptMode.mutate;
                   return ChoiceChip(
-                    selected: selected,
+                    selected: activeMode == mode,
                     label: Text(
-                      '${m.isLocal ? "🦙 " : "✨ "}${m.name}',
-                      style: const TextStyle(fontSize: 11),
+                      mode.label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: disabled ? Colors.white30 : null,
+                      ),
                     ),
-                    onSelected: (_) => provider.setSelectedAiModel(m),
+                    onSelected: disabled
+                        ? null
+                        : (_) => provider.setSelectedAiMode(mode),
                   );
                 },
               ),
             ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilterChip(
+                  selected: provider.broadcastAiToRoom,
+                  label: const Text('Difundir chat',
+                      style: TextStyle(fontSize: 11)),
+                  onSelected: provider.setBroadcastAiToRoom,
+                ),
+                if (!provider.isReadOnly)
+                  FilterChip(
+                    selected: provider.createAiWhiteboardNotes,
+                    label: const Text('Notas pizarra',
+                        style: TextStyle(fontSize: 11)),
+                    onSelected: provider.setCreateAiWhiteboardNotes,
+                  ),
+                if (diagram != null && provider.openAiAnnotations.isNotEmpty)
+                  ActionChip(
+                    backgroundColor: const Color(0xFF422006),
+                    label: Text(
+                      '💡 ${provider.openAiAnnotations.length} nota(s) pizarra',
+                      style: const TextStyle(
+                          color: Color(0xFFFDE68A), fontSize: 11),
+                    ),
+                    onPressed: () => showCollabInsightsSheet(
+                      context,
+                      provider,
+                      initialTab: 2,
+                    ),
+                  ),
+              ],
+            ),
           ],
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Center(
             child: VoiceOrbWidget(
               isListening: _isListening,
@@ -201,15 +304,161 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: const Color(0xFF1E293B)),
             ),
-            child: Text(
-              provider.voiceDialogue,
-              style: const TextStyle(
-                color: Color(0xFFE2E8F0),
-                fontSize: 13.5,
-                height: 1.4,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (provider.latestAiIntentMode != null) ...[
+                  Text(
+                    'Modo detectado: ${provider.latestAiIntentMode}',
+                    style: const TextStyle(
+                      color: Color(0xFFA78BFA),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Text(
+                  provider.voiceDialogue,
+                  style: const TextStyle(
+                    color: Color(0xFFE2E8F0),
+                    fontSize: 13.5,
+                    height: 1.4,
+                  ),
+                ),
+              ],
             ),
           ),
+          if (provider.latestDisciplineAlerts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Alertas de Disciplina OMT / Spring:',
+              style: TextStyle(
+                  color: Color(0xFFFBBF24),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            ...provider.latestDisciplineAlerts.map(
+              (alert) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F160A),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.55)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.rule_folder_outlined,
+                            color: Color(0xFFFBBF24), size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '${alert.code}${alert.className != null ? " • ${alert.className}" : ""}',
+                            style: const TextStyle(
+                              color: Color(0xFFFDE68A),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      alert.message,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    if (alert.suggestedPrompt != null &&
+                        !provider.isReadOnly) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: provider.isBusy
+                              ? null
+                              : () => provider.executeAiPrompt(
+                                    alert.suggestedPrompt!,
+                                    isAudio: false,
+                                    mode: AiPromptMode.mutate,
+                                  ),
+                          icon: const Icon(Icons.auto_fix_high, size: 15),
+                          label: const Text('Aplicar corrección',
+                              style: TextStyle(fontSize: 11.5)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (provider.latestAiSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Sugerencias del Copiloto IA:',
+              style: TextStyle(
+                  color: Color(0xFF38BDF8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            ...provider.latestAiSuggestions.map(
+              (sug) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0xFF38BDF8).withValues(alpha: 0.45)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      sug.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sug.message,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    if (sug.suggestedPrompt != null && !provider.isReadOnly) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: OutlinedButton.icon(
+                          onPressed: provider.isBusy
+                              ? null
+                              : () => provider.executeAiPrompt(
+                                    sug.suggestedPrompt!,
+                                    isAudio: false,
+                                    mode: AiPromptMode.mutate,
+                                  ),
+                          icon: const Icon(Icons.auto_awesome, size: 14),
+                          label: const Text('Aplicar sugerencia',
+                              style: TextStyle(fontSize: 11.5)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Row(
             children: [
@@ -219,10 +468,12 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                   minLines: 1,
                   maxLines: 3,
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    hintText: 'Dicta o escribe tu arquitectura UML...',
-                    hintStyle: TextStyle(color: Colors.white38),
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: useAi
+                        ? 'Consulta al Copiloto o dicta tu arquitectura UML...'
+                        : 'Dicta un comando atómico UML...',
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    border: const OutlineInputBorder(),
                   ),
                 ),
               ),
@@ -255,10 +506,12 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                   ex,
                   style: const TextStyle(color: Colors.white70, fontSize: 11.5),
                 ),
-                onPressed: () {
-                  _promptCtrl.text = ex;
-                  _submitPrompt(ex);
-                },
+                onPressed: provider.isBusy
+                    ? null
+                    : () {
+                        _promptCtrl.text = ex;
+                        _submitPrompt(ex);
+                      },
               );
             }).toList(),
           ),
