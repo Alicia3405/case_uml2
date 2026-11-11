@@ -1,0 +1,137 @@
+@if (isOpen()) {
+  <aside class="w-56 bg-[#EAEAEA] dark:bg-[#121629] border-r border-[#B8B8B8] dark:border-[#283256] flex flex-col shrink-0 select-none text-xs text-slate-800 dark:text-slate-200 shadow-sm overflow-y-auto z-20 animate-in slide-in-from-left duration-150 transition-colors">
+
+    <!-- Cabecera del Toolbox con botón de colapso -->
+    <div class="px-2.5 py-1.5 bg-[#DFDFDF] dark:bg-[#181D35] border-b border-[#C0C0C0] dark:border-[#283256] flex items-center justify-between font-mono font-bold text-[10.5px] text-slate-700 dark:text-slate-300">
+      <div class="flex items-center gap-1.5">
+        <ng-icon name="heroBars3" class="text-xs text-slate-600 dark:text-slate-400"></ng-icon>
+        <span>{{ 'toolbar.title' | translate }}</span>
+      </div>
+      <button
+        (click)="closeToolbox.emit()"
+        [title]="'toolbar.hideToolbox' | translate"
+        class="text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-300 dark:hover:bg-[#252E56] rounded px-1.5 py-0.5 cursor-pointer text-xs flex items-center gap-0.5 transition-colors">
+        <ng-icon name="heroChevronLeft" class="text-xs"></ng-icon>
+      </button>
+    </div>
+
+    <!-- Panel 1: Class Relationships -->
+    <div class="border-b border-[#C8C8C8] dark:border-[#283256]">
+      <div
+        (click)="isRelationshipsOpen.set(!isRelationshipsOpen())"
+        class="bg-gradient-to-b from-[#EFEFEF] to-[#DCDCDC] dark:from-[#1E2442] dark:to-[#161B33] px-2.5 py-1.5 font-bold text-[#1E293B] dark:text-slate-200 flex items-center justify-between cursor-pointer border-b border-[#CCCCCC] dark:border-[#283256] hover:from-[#F5F5F5] hover:to-[#E2E2E2] dark:hover:from-[#252E56] dark:hover:to-[#1D2240]">
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+          <ng-icon [name]="isRelationshipsOpen() ? 'heroChevronDown' : 'heroChevronRight'" class="text-xs text-slate-600 dark:text-slate-400"></ng-icon>
+          {{ 'toolbar.relationships.title' | translate }}
+        </span>
+        @if (selectedRelationType()) {
+          <span (click)="$event.stopPropagation(); onSelectPointer()" [title]="'toolbar.relationships.deselect' | translate" class="text-[10px] text-slate-700 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 font-normal cursor-pointer">
+            {{ 'toolbar.relationships.deselect' | translate }}
+          </span>
+        }
+      </div>
+
+      @if (isRelationshipsOpen()) {
+        <div class="p-1.5 space-y-1 bg-[#F5F5F5] dark:bg-[#0E1222]">
+
+          <!-- Herramienta Puntero / Mover -->
+          <button
+            (click)="onSelectPointer()"
+            [ngClass]="{'bg-white dark:bg-[#151A30] border-slate-400 dark:border-[#2D3762] font-semibold shadow-xs text-slate-900 dark:text-slate-100': selectedRelationType() === null, 'hover:bg-[#E8EEF5] dark:hover:bg-[#1C2242] text-slate-600 dark:text-slate-400 border-transparent': selectedRelationType() !== null}"
+            class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 border transition-colors mb-1 cursor-pointer">
+            <ng-icon name="heroCursorArrowRays" class="text-sm text-slate-700 dark:text-slate-300 shrink-0"></ng-icon>
+            <div>
+              <div class="text-xs font-medium text-slate-800 dark:text-slate-200">{{ 'toolbar.pointer' | translate }}</div>
+              <div class="text-[9.5px] text-slate-500 dark:text-slate-400">{{ 'toolbar.pointerDesc' | translate }}</div>
+            </div>
+          </button>
+
+          <div class="border-t border-slate-200 dark:border-[#283256] my-1"></div>
+
+          <!-- Lista de relaciones UML 2.5 -->
+          @for (rel of relationTypes(); track rel.id) {
+            <button
+              (click)="onSelectRelation(rel.id)"
+              [ngClass]="{
+                'bg-blue-100 dark:bg-indigo-950/80 border-blue-500 dark:border-indigo-400 font-semibold shadow-xs text-blue-900 dark:text-indigo-200': selectedRelationType() === rel.id,
+                'hover:bg-[#E8EEF5] dark:hover:bg-[#1C2242] text-slate-700 dark:text-slate-300 border-transparent': selectedRelationType() !== rel.id
+              }"
+              class="w-full text-left px-2 py-1 rounded flex items-center justify-between border transition-all cursor-pointer group">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="font-mono font-bold text-xs shrink-0 text-slate-800 dark:text-slate-200 w-11 text-center bg-white/80 dark:bg-[#151A30] py-0.5 border border-slate-300 dark:border-[#2D3762] rounded-[2px]">
+                  {{ rel.icon }}
+                </span>
+                <div class="truncate">
+                  <div class="text-[11.5px] leading-tight font-medium">{{ rel.label }}</div>
+                  <div class="text-[9.5px] text-slate-500 dark:text-slate-400 truncate" [title]="rel.description">{{ rel.description }}</div>
+                </div>
+              </div>
+            </button>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Panel 2: Line Style (Routing) -->
+    <div class="border-b border-[#C8C8C8] dark:border-[#283256]">
+      <div
+        (click)="isLineStylesOpen.set(!isLineStylesOpen())"
+        class="bg-gradient-to-b from-[#EFEFEF] to-[#DCDCDC] dark:from-[#1E2442] dark:to-[#161B33] px-2.5 py-1.5 font-bold text-[#1E293B] dark:text-slate-200 flex items-center justify-between cursor-pointer border-b border-[#CCCCCC] dark:border-[#283256] hover:from-[#F5F5F5] hover:to-[#E2E2E2] dark:hover:from-[#252E56] dark:hover:to-[#1D2240]">
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+          <ng-icon [name]="isLineStylesOpen() ? 'heroChevronDown' : 'heroChevronRight'" class="text-xs text-slate-600 dark:text-slate-400"></ng-icon>
+          {{ 'toolbar.lineStylesTitle' | translate }}
+        </span>
+      </div>
+
+      @if (isLineStylesOpen()) {
+        <div class="p-1.5 space-y-1 bg-[#F5F5F5] dark:bg-[#0E1222]">
+          @for (style of lineStyles(); track style.id) {
+            <button
+              (click)="onSetLineStyle(style.id)"
+              [ngClass]="{
+                'bg-white dark:bg-[#151A30] border-slate-400 dark:border-[#2D3762] font-semibold shadow-xs text-slate-900 dark:text-slate-100': defaultLineStyle() === style.id,
+                'hover:bg-[#E8EEF5] dark:hover:bg-[#1C2242] text-slate-600 dark:text-slate-400 border-transparent': defaultLineStyle() !== style.id
+              }"
+              class="w-full text-left px-2 py-1 rounded flex items-center justify-between border transition-all cursor-pointer">
+              <span class="text-xs">{{ style.label }}</span>
+              @if (defaultLineStyle() === style.id) {
+                <ng-icon name="heroCheck" class="text-xs text-blue-600 dark:text-indigo-400 font-bold"></ng-icon>
+              }
+            </button>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Panel 3: Zoom y Vistas Rápidas -->
+    <div class="p-2 border-b border-[#C8C8C8] dark:border-[#283256] bg-[#F5F5F5] dark:bg-[#0E1222]">
+      <div class="flex items-center justify-between gap-1">
+        <button (click)="zoomIn.emit()" [title]="'toolbar.canvas.zoomIn' | translate" class="p-1 bg-white dark:bg-[#151A30] hover:bg-slate-200 dark:hover:bg-[#20274A] border border-slate-300 dark:border-[#2D3762] text-slate-700 dark:text-slate-200 rounded flex-1 flex items-center justify-center cursor-pointer">
+          <ng-icon name="heroMagnifyingGlassPlus" class="text-xs"></ng-icon>
+        </button>
+        <button (click)="zoomOut.emit()" [title]="'toolbar.canvas.zoomOut' | translate" class="p-1 bg-white dark:bg-[#151A30] hover:bg-slate-200 dark:hover:bg-[#20274A] border border-slate-300 dark:border-[#2D3762] text-slate-700 dark:text-slate-200 rounded flex-1 flex items-center justify-center cursor-pointer">
+          <ng-icon name="heroMagnifyingGlassMinus" class="text-xs"></ng-icon>
+        </button>
+        <button (click)="resetView.emit()" title="1:1" class="p-1 bg-white dark:bg-[#151A30] hover:bg-slate-200 dark:hover:bg-[#20274A] border border-slate-300 dark:border-[#2D3762] text-slate-700 dark:text-slate-200 rounded flex-1 text-[10px] font-mono leading-none cursor-pointer">
+          1:1
+        </button>
+        <button (click)="fitView.emit()" [title]="'toolbar.canvas.fitView' | translate" class="p-1 bg-white dark:bg-[#151A30] hover:bg-slate-200 dark:hover:bg-[#20274A] border border-slate-300 dark:border-[#2D3762] text-slate-700 dark:text-slate-200 rounded flex-1 flex items-center justify-center cursor-pointer">
+          <ng-icon name="heroArrowsPointingOut" class="text-xs"></ng-icon>
+        </button>
+      </div>
+    </div>
+
+    <!-- Botón Agregar Nueva Clase UML -->
+    <div class="p-3 mt-auto bg-[#DFDFDF] dark:bg-[#181D35] border-t border-[#C0C0C0] dark:border-[#283256]">
+      <button
+        (click)="addClass.emit()"
+        [disabled]="isReadOnly()"
+        [title]="isReadOnly() ? ('toolbar.readOnlyMode' | translate) : ('toolbar.addClassTooltip' | translate)"
+        class="w-full py-2 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-indigo-600 dark:hover:bg-indigo-500 active:translate-y-0.5 text-white font-mono text-xs font-bold tracking-wider uppercase border border-[#2A201B] dark:border-indigo-700 shadow-[2px_2px_0px_rgba(0,0,0,0.2)] transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+        <ng-icon name="heroPlus" class="text-xs"></ng-icon>
+        <span>{{ 'toolbar.newClassBtn' | translate }}</span>
+      </button>
+    </div>
+
+  </aside>
+}

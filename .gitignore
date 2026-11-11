@@ -1,0 +1,33 @@
+# CASE Studio AI - Git Ignore
+node_modules/
+dist/
+.angular/
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+*.log
+
+# Flutter
+mobile/.dart_tool/
+mobile/.packages
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
+# Entorno y Secretos
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# Docker Volumes
+pgdata/
+ollama_data/
+
+test_generated/
+

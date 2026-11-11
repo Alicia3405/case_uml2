@@ -1,0 +1,52 @@
+/* Estilos complementarios para la Guía Interactiva */
+:host {
+  display: block;
+}
+
+/* Barra de desplazamiento visible, estilizada y moderna para la sección de Temas */
+.topics-scrollbar::-webkit-scrollbar {
+  height: 5px;
+}
+
+.topics-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 9999px;
+}
+
+.topics-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+.topics-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 70, 229, 0.8);
+}
+
+:host-context(.dark) .topics-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:host-context(.dark) .topics-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+}
+
+:host-context(.dark) .topics-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(129, 140, 248, 0.8);
+}
+
+/* Animaciones suaves para la ventana */
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-in-window {
+  animation: fadeInScale 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,19 @@
+# =========================================================================
+# STAGE 1: BUILD JAR CON GRADLE
+# =========================================================================
+FROM gradle:jdk{{javaVer}}-alpine AS builder
+WORKDIR /app
+COPY build.gradle settings.gradle ./
+COPY src ./src
+RUN gradle bootJar --no-daemon -x test
+
+# =========================================================================
+# STAGE 2: RUNTIME CONTAINER LIGERO
+# =========================================================================
+FROM eclipse-temurin:{{javaVer}}-jre-alpine
+WORKDIR /app
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+COPY --from=builder /app/build/libs/*.jar app.jar
+EXPOSE {{serverPort}}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "app.jar"]

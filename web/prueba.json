@@ -1,0 +1,73 @@
+{
+  "version": "1.0.0",
+  "name": "EnterpriseArchitect_ClassDiagram",
+  "createdDate": "2026-08-27T05:47:06.342Z",
+  "defaultLineStyle": "segment",
+  "nodes": [
+    {
+      "id": "node_1787809321026",
+      "name": "User",
+      "position": {
+        "x": 51,
+        "y": 156
+      },
+      "width": 236,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "name",
+          "type": "String"
+        },
+        {
+          "name": "last_name",
+          "type": "String"
+        },
+        {
+          "name": "password",
+          "type": "String"
+        }
+      ],
+      "methods": []
+    },
+    {
+      "id": "node_1787809409216",
+      "name": "Role",
+      "position": {
+        "x": 530,
+        "y": 166
+      },
+      "width": 244,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "name",
+          "type": "String"
+        },
+        {
+          "name": "Description",
+          "type": "String"
+        }
+      ],
+      "methods": []
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_1787809467658",
+      "sourceNodeId": "node_1787809321026",
+      "targetNodeId": "node_1787809409216",
+      "sourceId": "node_1787809321026_right",
+      "targetId": "node_1787809409216_left",
+      "type": "association",
+      "lineStyle": "straight",
+      "sourceMultiplicity": "1",
+      "targetMultiplicity": "1"
+    }
+  ]
+}

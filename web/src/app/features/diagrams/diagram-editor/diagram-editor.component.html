@@ -1,0 +1,806 @@
+<div class="h-screen w-screen flex flex-col bg-[#F9F7F5] dark:bg-[#0D1124] select-none overflow-hidden font-sans transition-colors duration-200">
+
+  <!-- 1. [TOPBAR] REFACTORIZADO EN COMPONENTE SEPARADO -->
+  <app-diagram-appbar class="relative z-50 block shrink-0"
+    [diagramTitle]="currentDiagramName()"
+    [diagramId]="currentDiagramId()"
+    [isSaving]="diagramService.isSaving()"
+    [saveSuccessMessage]="saveSuccessMessage()"
+    [isReadOnly]="isReadOnly()"
+    (saveDiagram)="saveToBackend()"
+    (exportBmp)="downloadBmpFile()"
+    (exportXmi)="downloadXmiFile()"
+    (exportJson)="downloadJsonFile()"
+    (viewJson)="openExportModal()"
+    (fileSelected)="onFileSelected($event)"
+    (openImportJson)="openImportModal()"
+    (openSpringBoot)="showSpringBootModal.set(true)"
+    (openProfile)="openProfileModal()">
+  </app-diagram-appbar>
+
+  <!-- 2. [BODY] TOOLBOX IZQUIERDO + CANVAS FOBLEX FLOW + ASISTENTE IA DERECHO -->
+  <div class="flex-1 flex overflow-hidden relative">
+
+    <!-- 2.1 [TOOLBOX LATERAL IZQUIERDO] HERRAMIENTAS Y RELACIONES UML 2.5 REFACTORIZADO EN COMPONENTE SEPARADO -->
+    <app-diagram-toolbox
+      [isOpen]="isToolboxOpen()"
+      [selectedRelationType]="selectedRelationType()"
+      [defaultLineStyle]="defaultLineStyle()"
+      [isReadOnly]="isReadOnly()"
+      (closeToolbox)="isToolboxOpen.set(false)"
+      (setPointerMode)="setPointerMode()"
+      (selectRelationType)="selectRelationType($event)"
+      (setDefaultLineStyle)="setDefaultLineStyle($event)"
+      (zoomIn)="zoomIn()"
+      (zoomOut)="zoomOut()"
+      (resetView)="resetView()"
+      (fitView)="fitView()"
+      (addClass)="addClass()">
+    </app-diagram-toolbox>
+
+    <!-- 2.2 [CONTENEDOR CENTRAL]: BARRA DE PESTAÑAS EA + CANVAS FOBLEX FLOW -->
+    <div class="flex-1 flex flex-col overflow-hidden relative">
+
+      <!-- Barra de Pestañas y Breadcrumbs estilo Enterprise Architect -->
+      <div class="bg-[#ECEEF2] dark:bg-[#101426] border-b border-[#D0D4DC] dark:border-[#283256] px-3 py-1 flex items-center justify-between z-10 shrink-0 select-none">
+        <div class="flex items-center gap-1">
+          <div class="bg-white dark:bg-[#14182E] border-t-2 border-t-blue-600 border-x border-b-0 border-[#D0D4DC] dark:border-[#2D3762] px-3 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5 shadow-xs rounded-t-[2px]">
+            <ng-icon name="heroRectangleStack" class="text-xs text-blue-600 dark:text-blue-400"></ng-icon>
+            <span>{{ hasUnsavedChanges() ? '*' : '' }}{{ currentDiagramName() || 'Diagrama Principal' }}</span>
+          </div>
+        </div>
+
+        <div class="hidden sm:flex items-center gap-1.5 text-[10.5px] text-slate-500 dark:text-slate-400 font-sans">
+          <ng-icon name="heroHome" class="text-xs text-slate-400"></ng-icon>
+          <span>/</span>
+          <span>Model</span>
+          <span>/</span>
+          <span class="font-medium text-slate-700 dark:text-slate-200">{{ currentDiagramName() }}</span>
+        </div>
+      </div>
+
+      <!-- CANVAS INTERACTIVO FOBLEX FLOW -->
+      <div
+        #flowContainer
+        (mousemove)="onCanvasMouseMove($event)"
+        (click)="onCanvasBackgroundClick()"
+        class="flex-1 relative w-full h-full uml-canvas-container cursor-default overflow-hidden">
+
+      <!-- Botón Flotante para reabrir Toolbox cuando está oculto -->
+      @if (!isToolboxOpen()) {
+        <button
+          (click)="isToolboxOpen.set(true)"
+          [title]="'toolbar.showToolbox' | translate"
+          class="absolute top-3.5 left-3.5 z-40 bg-white/95 hover:bg-white dark:bg-[#14182E]/95 dark:hover:bg-[#1C2242] text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-[#2D3762] shadow-md rounded-md px-2.5 py-1.5 flex items-center gap-1.5 text-xs font-mono font-bold cursor-pointer transition-all hover:scale-105 backdrop-blur-xs">
+          <ng-icon name="heroBars3" class="text-sm text-[#6B5A52] dark:text-amber-400"></ng-icon>
+          <span class="text-[11px] text-[#2A201B] dark:text-slate-200">Toolbox</span>
+        </button>
+      }
+
+      <!-- Botón Flotante para reabrir Copilot IA cuando está oculto -->
+      @if (!isAiPanelOpen()) {
+        <button
+          (click)="isAiPanelOpen.set(true)"
+          [title]="'toolbar.openAiTooltip' | translate"
+          class="absolute top-3.5 right-3.5 z-40 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-700 text-white shadow-lg rounded-full px-3.5 py-1.5 flex items-center gap-1.5 text-xs font-mono font-bold cursor-pointer transition-all hover:scale-105">
+          <ng-icon name="heroSparkles" class="text-xs text-amber-300"></ng-icon>
+          <span>{{ 'toolbar.aiCopilot' | translate }}</span>
+          <ng-icon name="heroBars3CenterLeft" class="text-xs opacity-80"></ng-icon>
+        </button>
+      }
+
+      <!-- Banner Informativo del Modo de Creación de Relaciones -->
+      @if (selectedRelationType()) {
+        <div class="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-blue-900/90 text-white border border-blue-400 px-4 py-1.5 rounded-full shadow-lg text-xs font-mono flex items-center gap-2 animate-in fade-in slide-in-from-top-2 backdrop-blur-xs">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+          <span>
+            @if (selectedSourceNodeId() === null) {
+              {{ 'toolbar.step1' | translate }} <strong>{{ selectedRelationType() }}</strong>
+            } @else {
+              {{ 'toolbar.step2' | translate }}
+            }
+          </span>
+          <button (click)="setPointerMode()" class="ml-2 bg-blue-800 hover:bg-blue-700 px-2 py-0.5 rounded text-[10px] cursor-pointer">
+            {{ 'toolbar.cancelEsc' | translate }}
+          </button>
+        </div>
+      }
+
+      <!-- Cursores Remotos Colaborativos en Vivo -->
+      @for (cursor of collaborationService.remoteCursors(); track cursor.userId) {
+        <div
+          class="absolute pointer-events-none z-40 flex items-center gap-1 transition-all duration-75"
+          [style.left.px]="cursor.x"
+          [style.top.px]="cursor.y">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="drop-shadow-md">
+            <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.86a.5.5 0 0 0-.85.35Z" [attr.fill]="cursor.color" stroke="white" stroke-width="1.5" />
+          </svg>
+          <span
+            class="text-[9.5px] font-mono font-bold text-white px-1.5 py-0.5 rounded shadow-md whitespace-nowrap"
+            [style.backgroundColor]="cursor.color">
+            {{ cursor.userName }}
+          </span>
+        </div>
+      }
+
+      <!-- FOBLEX FLOW INTERACTIVE CANVAS -->
+      <f-flow
+        fDraggable
+        [fCanvasMoveTrigger]="canvasMoveTrigger"
+        (fLoaded)="onFlowLoaded()"
+        (fCreateConnection)="onConnectionCreated($event)"
+        (fReassignConnection)="onConnectionReassigned($event)"
+        class="w-full h-full block">
+
+        <f-canvas
+          fZoom
+          (fCanvasChangeEvent)="onCanvasChange($any($event))">
+
+          <!-- CONEXIONES UML SEGÚN RELACIÓN -->
+          <ng-container ngProjectAs="[fConnections]">
+            @for (conn of connections(); track conn.id) {
+              <f-connection
+                [fConnectionId]="conn.id"
+                [fOutputId]="conn.sourceId"
+                [fInputId]="conn.targetId"
+                [fType]="conn.lineStyle || defaultLineStyle()"
+                [fBehavior]="'floating'"
+                (dblclick)="openEditConnModal(conn, $event)"
+                [class]="'uml-relation-' + (conn.type || 'association')"
+                [class.ring-2]="isConnectionSelected(conn.id)"
+                [class.ring-purple-500]="isConnectionSelected(conn.id)"
+                [class.shadow-md]="isConnectionSelected(conn.id)"
+                [class.opacity-30]="isConnectionDimmed(conn.id)">
+
+                <!-- Marcadores Visuales según el tipo de Relación UML 2.5 -->
+                @if (conn.type === 'generalization' || conn.type === 'realization') {
+                  <svg fMarker [width]="16" [height]="16" [refX]="15" [refY]="8" viewBox="0 0 16 16" markerUnits="userSpaceOnUse" type="end-all-states">
+                    <polygon points="1,1 15,8 1,15" class="uml-marker-hollow" />
+                  </svg>
+                } @else if (conn.type === 'composition') {
+                  @if (isDiamondAtStart(conn)) {
+                    <svg fMarker [width]="18" [height]="14" [refX]="1" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="start-all-states">
+                      <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-filled" />
+                    </svg>
+                  } @else {
+                    <svg fMarker [width]="18" [height]="14" [refX]="17" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="end-all-states">
+                      <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-filled" />
+                    </svg>
+                  }
+                } @else if (conn.type === 'aggregation') {
+                  @if (isDiamondAtStart(conn)) {
+                    <svg fMarker [width]="18" [height]="14" [refX]="1" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="start-all-states">
+                      <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-hollow" />
+                    </svg>
+                  } @else {
+                    <svg fMarker [width]="18" [height]="14" [refX]="17" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="end-all-states">
+                      <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-hollow" />
+                    </svg>
+                  }
+                } @else if (conn.type === 'dependency') {
+                  <svg fMarker [width]="16" [height]="16" [refX]="14" [refY]="8" viewBox="0 0 16 16" markerUnits="userSpaceOnUse" type="end-all-states">
+                    <polyline points="2,2 14,8 2,14" class="uml-marker-open" />
+                  </svg>
+                }
+
+                <!-- Etiquetas de Multiplicidad y Nombre -->
+                @if (conn.sourceMultiplicity) {
+                  <div
+                    fConnectionContent
+                    [position]="0.15"
+                    [offset]="-12"
+                    (dblclick)="openEditConnModal(conn, $event)"
+                    title="Multiplicidad Origen (doble clic para editar)"
+                    class="uml-multiplicity-badge">
+                    {{ conn.sourceMultiplicity }}
+                  </div>
+                }
+
+                @if (conn.name) {
+                  <div
+                    fConnectionContent
+                    [position]="0.5"
+                    [offset]="-14"
+                    (dblclick)="openEditConnModal(conn, $event)"
+                    title="Nombre de Relación (doble clic para editar)"
+                    class="uml-relation-name-badge">
+                    {{ conn.name }}
+                  </div>
+                }
+
+                @if (conn.targetMultiplicity) {
+                  <div
+                    fConnectionContent
+                    [position]="0.85"
+                    [offset]="-12"
+                    (dblclick)="openEditConnModal(conn, $event)"
+                    title="Multiplicidad Destino (doble clic para editar)"
+                    class="uml-multiplicity-badge">
+                    {{ conn.targetMultiplicity }}
+                  </div>
+                }
+
+              </f-connection>
+            }
+          </ng-container>
+
+          <!-- Previsualización de conexión al arrastrar -->
+          <f-connection-for-create
+            [fType]="defaultLineStyle()"
+            [fBehavior]="'floating'"
+            [class]="'uml-relation-' + (selectedRelationType() || 'association')">
+            @if (selectedRelationType() === 'generalization' || selectedRelationType() === 'realization') {
+              <svg fMarker [width]="16" [height]="16" [refX]="15" [refY]="8" viewBox="0 0 16 16" markerUnits="userSpaceOnUse" type="end-all-states">
+                <polygon points="1,1 15,8 1,15" class="uml-marker-hollow" />
+              </svg>
+            } @else if (selectedRelationType() === 'composition') {
+              <svg fMarker [width]="18" [height]="14" [refX]="1" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="start-all-states">
+                <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-filled" />
+              </svg>
+            } @else if (selectedRelationType() === 'aggregation') {
+              <svg fMarker [width]="18" [height]="14" [refX]="1" [refY]="7" viewBox="0 0 18 14" markerUnits="userSpaceOnUse" type="start-all-states">
+                <polygon points="1,7 9,1 17,7 9,13" class="uml-marker-hollow" />
+              </svg>
+            } @else if (selectedRelationType() === 'dependency') {
+              <svg fMarker [width]="16" [height]="16" [refX]="14" [refY]="8" viewBox="0 0 16 16" markerUnits="userSpaceOnUse" type="end-all-states">
+                <polyline points="2,2 14,8 2,14" class="uml-marker-open" />
+              </svg>
+            }
+          </f-connection-for-create>
+
+          <!-- NODOS DE CLASE UML -->
+          <ng-container ngProjectAs="[fNodes]">
+            @for (node of nodes(); track node.id) {
+              <div
+                fNode
+                fDragHandle
+                [fNodeDraggingDisabled]="node.isAnchor || selectedRelationType() !== null || isNodeLockedByOther(node.id)"
+                [(fNodePosition)]="node.position"
+                (fNodePositionChange)="onNodePositionChange(node, $event)"
+                (dblclick)="openEditNodeModal(node, $event)"
+                [style.width.px]="node.isAnchor ? 0 : node.width"
+                [style.minWidth.px]="node.isAnchor ? 0 : node.width"
+                [style.minHeight.px]="node.isAnchor ? 0 : (node.height || null)"
+                [style.outline]="(!node.isAnchor && isNodeLockedByOther(node.id)) ? ('2px solid ' + (getNodeLock(node.id)?.color || '#EF4444')) : null"
+                [ngClass]="{
+                  'w-0 h-0 opacity-0 pointer-events-none absolute': node.isAnchor,
+                  'font-sans text-[#241C18] dark:text-slate-100 select-none relative group/node transition-shadow rounded-none overflow-hidden': !node.isAnchor,
+                  'ring-2 ring-blue-600 shadow-[0_0_10px_rgba(37,99,235,0.35)] z-30': !node.isAnchor && selectedNodeId() === node.id,
+                  'ring-2 ring-indigo-400 z-20': !node.isAnchor && isNeighborNode(node.id),
+                  'ring-2 ring-[#796354] dark:ring-[#94A3B8] shadow-md': !node.isAnchor && selectedSourceNodeId() === node.id && selectedNodeId() !== node.id,
+                  'opacity-80': !node.isAnchor && selectedNodeId() !== null && selectedNodeId() !== node.id && !isNeighborNode(node.id),
+                  'cursor-crosshair': !node.isAnchor && selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                  'cursor-move': !node.isAnchor && selectedRelationType() === null && !isNodeLockedByOther(node.id),
+                  'cursor-not-allowed opacity-95': !node.isAnchor && isNodeLockedByOther(node.id)
+                }">
+
+                <!-- Contenido Nodo Ancla -->
+                @if (node.isAnchor) {
+                  <div fConnector fConnectorType="source-target" [fConnectorId]="node.id" class="w-0 h-0"></div>
+                }
+
+                <!-- Contenido Nodo de Clase Estándar -->
+                @else {
+
+                  <!-- BADGE VISUAL DE EXCLUSIÓN MUTUA / BLOQUEO POR OTRO USUARIO -->
+                  @if (isNodeLockedByOther(node.id)) {
+                    <div
+                      class="absolute -top-4.5 left-2 px-2 py-0.5 rounded-full text-[9.5px] font-mono font-bold text-white flex items-center gap-1 shadow-md z-50 animate-bounce select-none"
+                      [style.backgroundColor]="getNodeLock(node.id)?.color || '#EF4444'"
+                      [title]="'Editando actualmente por ' + getNodeLock(node.id)?.userName">
+                      <ng-icon name="heroLockClosed" class="text-[10px]"></ng-icon>
+                      <span>{{ getNodeLock(node.id)?.userName }} (editando...)</span>
+                    </div>
+                  }
+
+                  <!-- CAPA TOTAL DE CONEXIÓN EN MODO RELACIÓN -->
+                  <div
+                    fConnector
+                    fConnectorType="source-target"
+                    [fConnectorId]="node.id"
+                    [fConnectorSelfConnectable]="false"
+                    [fConnectorDisabled]="selectedRelationType() === null || isNodeLockedByOther(node.id)"
+                    [ngClass]="{
+                      'pointer-events-auto cursor-crosshair': selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                      'pointer-events-none': selectedRelationType() === null || isNodeLockedByOther(node.id)
+                    }"
+                    class="absolute inset-0 z-40 bg-transparent"
+                    (click)="onTableClick(node.id, $event)">
+                  </div>
+
+                  <!-- 4 PUNTOS DE REFERENCIA GUÍA -->
+                  <div
+                    fConnector
+                    fConnectorType="source-target"
+                    [fConnectorId]="node.id + '_top'"
+                    [fConnectorSelfConnectable]="false"
+                    [fConnectorDisabled]="selectedRelationType() === null || isNodeLockedByOther(node.id)"
+                    (click)="onTableClick(node.id, $event)"
+                    title="Conectar por arriba"
+                    [ngClass]="{
+                      'uml-connector-active': selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                      'uml-connector-inactive': selectedRelationType() === null || isNodeLockedByOther(node.id)
+                    }"
+                    class="uml-connector-point absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full shadow-xs z-50 transition-transform hover:scale-125 cursor-crosshair">
+                  </div>
+
+                  <div
+                    fConnector
+                    fConnectorType="source-target"
+                    [fConnectorId]="node.id + '_right'"
+                    [fConnectorSelfConnectable]="false"
+                    [fConnectorDisabled]="selectedRelationType() === null || isNodeLockedByOther(node.id)"
+                    (click)="onTableClick(node.id, $event)"
+                    title="Conectar por la derecha"
+                    [ngClass]="{
+                      'uml-connector-active': selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                      'uml-connector-inactive': selectedRelationType() === null || isNodeLockedByOther(node.id)
+                    }"
+                    class="uml-connector-point absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs z-50 transition-transform hover:scale-125 cursor-crosshair">
+                  </div>
+
+                  <div
+                    fConnector
+                    fConnectorType="source-target"
+                    [fConnectorId]="node.id + '_bottom'"
+                    [fConnectorSelfConnectable]="false"
+                    [fConnectorDisabled]="selectedRelationType() === null || isNodeLockedByOther(node.id)"
+                    (click)="onTableClick(node.id, $event)"
+                    title="Conectar por abajo"
+                    [ngClass]="{
+                      'uml-connector-active': selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                      'uml-connector-inactive': selectedRelationType() === null || isNodeLockedByOther(node.id)
+                    }"
+                    class="uml-connector-point absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full shadow-xs z-50 transition-transform hover:scale-125 cursor-crosshair">
+                  </div>
+
+                  <div
+                    fConnector
+                    fConnectorType="source-target"
+                    [fConnectorId]="node.id + '_left'"
+                    [fConnectorSelfConnectable]="false"
+                    [fConnectorDisabled]="selectedRelationType() === null || isNodeLockedByOther(node.id)"
+                    (click)="onTableClick(node.id, $event)"
+                    title="Conectar por la izquierda"
+                    [ngClass]="{
+                      'uml-connector-active': selectedRelationType() !== null && !isNodeLockedByOther(node.id),
+                      'uml-connector-inactive': selectedRelationType() === null || isNodeLockedByOther(node.id)
+                    }"
+                    class="uml-connector-point absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs z-50 transition-transform hover:scale-125 cursor-crosshair">
+                  </div>
+
+                  <!-- 1. CABECERA: TÍTULO DE LA CLASE UML (ESTILO ENTERPRISE ARCHITECT) -->
+                  <div
+                    (click)="onNodeSelect(node.id, $event)"
+                    [ngClass]="{
+                      'bg-blue-600 text-white border-b border-blue-700': selectedNodeId() === node.id,
+                      'bg-indigo-100 text-indigo-950 border-b border-indigo-300': isNeighborNode(node.id),
+                      'bg-[#FFFDF9] dark:bg-[#1A203E] border-b border-[#796354] dark:border-[#3B487A] text-[#241C18] dark:text-slate-100': selectedNodeId() !== node.id && !isNeighborNode(node.id)
+                    }"
+                    class="flex items-center justify-between px-2.5 py-1.5 cursor-pointer transition-colors">
+                    <span class="font-bold text-[12px] font-sans text-center w-full tracking-tight truncate flex items-center justify-center gap-1" title="Clic para resaltar relaciones / Doble clic para editar">
+                      @if (isNodeLockedByOther(node.id)) {
+                        <ng-icon name="heroLockClosed" class="text-xs text-red-600 shrink-0"></ng-icon>
+                      }
+                      {{ node.name }}
+                    </span>
+                    <button
+                      (click)="removeClass(node.id, $event)"
+                      [disabled]="isNodeLockedByOther(node.id)"
+                      title="Eliminar clase"
+                      class="opacity-0 group-hover/node:opacity-100 hover:text-red-600 text-slate-400 p-0.5 cursor-pointer transition-opacity disabled:opacity-0">
+                      <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+                    </button>
+                  </div>
+
+                  <!-- 2. CUERPO: ATRIBUTOS TIPADOS ESTILO EA -->
+                  <div class="px-2.5 py-1.5 space-y-0.5 bg-[#FFFDF9] dark:bg-[#101428]/40 min-h-[28px]">
+                    @if (node.attributes && node.attributes.length > 0) {
+                      @for (attr of node.attributes; track attr.name) {
+                        <div class="flex items-center text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200">
+                          <span class="shrink-0 font-medium select-none mr-1.5 text-[#5A4537] dark:text-slate-400">-</span>
+                          <span class="truncate font-medium">{{ attr.name }}</span>
+                          <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal">: {{ attr.type }}</span>
+                        </div>
+                      }
+                    }
+                  </div>
+
+                  <!-- 3. CUERPO: MÉTODOS / OPERACIONES CON RETORNO ESTILO EA (SOLO SI TIENE MÉTODOS) -->
+                  @if (node.methods && node.methods.length > 0) {
+                    <div class="px-2.5 py-1.5 space-y-0.5 border-t border-[#796354] dark:border-[#3B487A] bg-[#FFFDF9] dark:bg-[#101428]/40">
+                      @for (m of node.methods; track m.name) {
+                        <div class="flex items-center text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200">
+                          <span class="shrink-0 font-medium select-none mr-1.5 text-[#5A4537] dark:text-slate-400">+</span>
+                          <span class="truncate font-medium">{{ m.name }}({{ m.parameters || '' }})</span>
+                          <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal">: {{ m.returnType || 'void' }}</span>
+                        </div>
+                      }
+                    </div>
+                  }
+
+                }
+
+              </div>
+            }
+          </ng-container>
+
+        </f-canvas>
+      </f-flow>
+
+    </div>
+  </div>
+
+    <!-- 2.3 [PANEL LATERAL DERECHO] COPILOT IA REFACTORIZADO EN COMPONENTE SEPARADO -->
+    <app-ai-assistant-panel
+      [isOpen]="isAiPanelOpen()"
+      [diagramId]="currentDiagramId()"
+      [roomCode]="collaborationService.activeRoomCode()"
+      [currentNodes]="nodes()"
+      [currentConnections]="connections()"
+      (closePanel)="isAiPanelOpen.set(false)"
+      (applyMutation)="onAiMutation($event)">
+    </app-ai-assistant-panel>
+
+  </div>
+
+  <!-- 3. [STATUSBAR INFERIOR] -->
+  <footer class="bg-gradient-to-r from-slate-800 to-slate-900 text-slate-300 border-t border-slate-950 px-3 py-1 text-[11px] font-mono flex items-center justify-between z-30 shrink-0">
+    <div class="flex items-center gap-3">
+      <!-- Estado WebSockets Yjs -->
+      <div class="flex items-center gap-1.5">
+        <span
+          class="w-2 h-2 rounded-full"
+          [ngClass]="collaborationService.isConnected() ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'"></span>
+        <span [ngClass]="collaborationService.isConnected() ? 'text-emerald-300' : 'text-red-400'">
+          {{ collaborationService.isConnected() ? ('editor.statusbar.connected' | translate) : ('editor.statusbar.disconnected' | translate) }}
+        </span>
+      </div>
+
+      <div class="h-3 w-px bg-slate-700"></div>
+
+      <!-- Resumen Nodos / Conexiones -->
+      <span class="text-slate-400">
+        {{ 'editor.statusbar.classes' | translate }}: <strong class="text-slate-200">{{ nodes().length }}</strong> |
+        {{ 'editor.statusbar.relations' | translate }}: <strong class="text-slate-200">{{ connections().length }}</strong>
+      </span>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <!-- Estilo de Línea Activo -->
+      <span class="text-slate-400">
+        Routing: <strong class="text-amber-300">{{ defaultLineStyle() }}</strong>
+      </span>
+
+      <div class="h-3 w-px bg-slate-700"></div>
+
+      <!-- Nivel de Zoom -->
+      <span class="text-slate-400">
+        Zoom: <strong class="text-slate-200">{{ zoomLevel() }}%</strong>
+      </span>
+
+      <div class="h-3 w-px bg-slate-700"></div>
+
+      <span class="text-slate-500">UTF-8 • XMI 2.1 / JSON AST</span>
+    </div>
+  </footer>
+
+  <!-- 4. MODAL PERFIL DE USUARIO REFACTORIZADO EN COMPONENTE SEPARADO -->
+  <app-user-profile-modal
+    [isOpen]="isProfileModalOpen()"
+    (close)="isProfileModalOpen.set(false)">
+  </app-user-profile-modal>
+
+  <!-- 5. MODAL: EDITAR CLASE (DOBLE CLIC) -->
+  @if (isEditNodeModalOpen() && editingNode()) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] max-w-lg w-full overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
+        
+        <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/40 px-4 py-2.5 flex items-center justify-between">
+          <h3 class="font-bold text-[#2A201B] dark:text-slate-100 uppercase tracking-wide">{{ 'editor.nodeModal.title' | translate }}</h3>
+          <button (click)="closeEditNodeModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-bold text-base cursor-pointer">&times;</button>
+        </div>
+
+        <div class="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
+          
+          <!-- Nombre de la Clase -->
+          <div>
+            <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.nodeModal.className' | translate }}</label>
+            <input
+              type="text"
+              [(ngModel)]="editingNode()!.name"
+              placeholder="e.g. Usuario, Pedido"
+              class="w-full px-3 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner font-medium text-xs"
+            />
+          </div>
+
+          <!-- Atributos con Tipos Estrictamente Predefinidos -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.attributes' | translate }}</label>
+              <button
+                (click)="addAttributeToEditingNode()"
+                class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
+                {{ 'editor.nodeModal.addAttribute' | translate }}
+              </button>
+            </div>
+            <div class="space-y-1.5">
+              @for (attr of editingNode()!.attributes; track $index) {
+                <div class="flex items-center gap-2">
+                  <span class="font-mono font-bold text-[#6B5A52] dark:text-slate-400 select-none text-xs">-</span>
+                  <input
+                    type="text"
+                    [(ngModel)]="attr.name"
+                    placeholder="nombre"
+                    class="flex-1 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                  />
+                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono">:</span>
+                  
+                  <select
+                    [(ngModel)]="attr.type"
+                    class="w-36 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                    @for (t of predefinedTypes; track t) {
+                      <option [value]="t">{{ t }}</option>
+                    }
+                  </select>
+
+                  <button
+                    (click)="removeAttributeFromEditingNode($index)"
+                    [title]="'editor.nodeModal.deleteAttribute' | translate"
+                    class="text-red-600 hover:text-red-800 p-1 font-bold text-sm cursor-pointer">
+                    &times;
+                  </button>
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- Métodos con Retorno Estrictamente Predefinido -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.operations' | translate }}</label>
+              <button
+                (click)="addMethodToEditingNode()"
+                class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
+                {{ 'editor.nodeModal.addOperation' | translate }}
+              </button>
+            </div>
+            <div class="space-y-1.5">
+              @for (m of editingNode()!.methods; track $index) {
+                <div class="flex items-center gap-2">
+                  <span class="font-mono font-bold text-[#6B5A52] dark:text-slate-400 select-none text-xs">+</span>
+                  <input
+                    type="text"
+                    [(ngModel)]="m.name"
+                    placeholder="método"
+                    class="flex-1 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                  />
+                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">(</span>
+                  <input
+                    type="text"
+                    [(ngModel)]="m.parameters"
+                    placeholder="params"
+                    class="w-24 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                  />
+                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">):</span>
+                  
+                  <select
+                    [(ngModel)]="m.returnType"
+                    class="w-32 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                    @for (rt of predefinedReturnTypes; track rt) {
+                      <option [value]="rt">{{ rt }}</option>
+                    }
+                  </select>
+
+                  <button
+                    (click)="removeMethodFromEditingNode($index)"
+                    [title]="'editor.nodeModal.deleteOperation' | translate"
+                    class="text-red-600 hover:text-red-800 p-1 font-bold text-sm cursor-pointer">
+                    &times;
+                  </button>
+                </div>
+              }
+            </div>
+          </div>
+
+        </div>
+
+        <div class="p-3 border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex justify-end gap-2 bg-white/30 dark:bg-[#101428]/40">
+          <button
+            (click)="closeEditNodeModal()"
+            class="px-3.5 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono cursor-pointer">
+            {{ 'common.cancel' | translate }}
+          </button>
+          <button
+            (click)="saveEditedNode()"
+            class="px-4 py-1.5 bg-[#6B5A52] dark:bg-[#4F46E5] hover:bg-[#52443E] dark:hover:bg-[#4338CA] text-white font-mono font-bold uppercase border border-[#2A201B] dark:border-[#3730A3] cursor-pointer">
+            {{ 'editor.nodeModal.save' | translate }}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- 6. MODAL: EDITAR CONEXIÓN (DOBLE CLIC EN LÍNEA / MULTIPLICIDAD) -->
+  @if (isEditConnModalOpen() && editingConnection()) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] max-w-md w-full overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
+        
+        <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/40 px-4 py-2.5 flex items-center justify-between">
+          <h3 class="font-bold text-[#2A201B] dark:text-slate-100 uppercase tracking-wide">{{ 'editor.connModal.title' | translate }}</h3>
+          <button (click)="closeEditConnModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-bold text-base cursor-pointer">&times;</button>
+        </div>
+
+        <div class="p-4 space-y-3.5">
+
+          <div>
+            <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.connModal.type' | translate }}</label>
+            <select
+              [(ngModel)]="editingConnection()!.type"
+              class="w-full px-2 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500">
+              @for (rel of relationTypes; track rel.id) {
+                <option [value]="rel.id">{{ rel.label }} ({{ rel.icon }})</option>
+              }
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.connModal.lineStyle' | translate }}</label>
+            <select
+              [(ngModel)]="editingConnection()!.lineStyle"
+              class="w-full px-2 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500">
+              @for (style of lineStyles; track style.id) {
+                <option [value]="style.id">{{ style.label }}</option>
+              }
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">Multiplicidades</span>
+            <button
+              type="button"
+              (click)="swapEditingConnectionDirection()"
+              title="Invertir dirección (Origen ⇄ Destino)"
+              class="flex items-center gap-1 text-[10px] font-mono font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+              <ng-icon name="heroArrowsRightLeft" class="text-xs"></ng-icon>
+              <span>Invertir dirección</span>
+            </button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-medium font-mono text-[#43352B] dark:text-slate-300 uppercase text-[10px] mb-1">{{ 'editor.connModal.sourceMult' | translate }}</label>
+              <input
+                type="text"
+                [(ngModel)]="editingConnection()!.sourceMultiplicity"
+                list="multiplicity-options"
+                placeholder="1, 0..1, *"
+                class="w-full px-2.5 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label class="block font-medium font-mono text-[#43352B] dark:text-slate-300 uppercase text-[10px] mb-1">{{ 'editor.connModal.targetMult' | translate }}</label>
+              <input
+                type="text"
+                [(ngModel)]="editingConnection()!.targetMultiplicity"
+                list="multiplicity-options"
+                placeholder="0..*, 1..*, *"
+                class="w-full px-2.5 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.connModal.name' | translate }}</label>
+            <input
+              type="text"
+              [(ngModel)]="editingConnection()!.name"
+              placeholder="e.g. posee, genera, pertenece a"
+              class="w-full px-2.5 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+            />
+          </div>
+
+        </div>
+
+        <div class="p-3 border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex justify-between items-center bg-white/30 dark:bg-[#101428]/40">
+          <button
+            (click)="removeConnection(editingConnection()!.id); closeEditConnModal()"
+            class="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-mono font-bold cursor-pointer flex items-center gap-1">
+            <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+            <span>{{ 'editor.connModal.delete' | translate }}</span>
+          </button>
+          <div class="flex gap-2">
+            <button
+              (click)="closeEditConnModal()"
+              class="px-3 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono cursor-pointer">
+              {{ 'common.cancel' | translate }}
+            </button>
+            <button
+              (click)="saveEditedConnection()"
+              class="px-4 py-1.5 bg-[#6B5A52] dark:bg-[#4F46E5] hover:bg-[#52443E] dark:hover:bg-[#4338CA] text-white font-mono font-bold uppercase border border-[#2A201B] dark:border-[#3730A3] cursor-pointer">
+              {{ 'common.save' | translate }}
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- 7. MODAL: GENERADOR SPRING BOOT 4 + FLYWAY -->
+  <app-spring-boot-modal
+    [isOpen]="showSpringBootModal()"
+    [diagramId]="currentDiagramId()"
+    [diagramName]="currentDiagramName()"
+    [nodes]="nodes()"
+    [connections]="connections()"
+    (closeModal)="showSpringBootModal.set(false)">
+  </app-spring-boot-modal>
+
+  <!-- DATALISTS PARA OPCIONES PREDEFINIDAS -->
+  <datalist id="multiplicity-options">
+    @for (m of multiplicityOptions; track m) {
+      <option [value]="m"></option>
+    }
+  </datalist>
+
+  <!-- 8. MODAL JSON (INTEROPERABILIDAD) -->
+  @if (showJsonModal()) {
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-white dark:bg-[#14182E] rounded shadow-2xl border border-slate-300 dark:border-[#2D3762] w-full max-w-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+
+        <div class="px-4 py-2.5 bg-slate-800 dark:bg-[#101426] text-white flex items-center justify-between border-b border-transparent dark:border-[#2D3762]">
+          <div class="flex items-center gap-2">
+            <ng-icon name="heroDocumentText" class="text-slate-300 text-base"></ng-icon>
+            <h2 class="text-xs font-bold">
+              {{ jsonModalMode() === 'export' ? ('editor.jsonModal.exportTitle' | translate) : ('editor.jsonModal.importTitle' | translate) }}
+            </h2>
+          </div>
+          <button (click)="showJsonModal.set(false)" class="text-slate-400 hover:text-white p-1 cursor-pointer">
+            <ng-icon name="heroXMark" class="text-base"></ng-icon>
+          </button>
+        </div>
+
+        <div class="p-4 flex-1 flex flex-col gap-2">
+          <p class="text-xs text-slate-600 dark:text-slate-300">
+            {{ jsonModalMode() === 'export'
+               ? ('editor.jsonModal.exportDesc' | translate)
+               : ('editor.jsonModal.importDesc' | translate) }}
+          </p>
+
+          <textarea
+            [(ngModel)]="jsonContent"
+            rows="14"
+            class="w-full bg-slate-950 text-emerald-400 font-mono text-xs p-3 rounded border border-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-500 resize-none"
+            [placeholder]="'editor.jsonModal.placeholder' | translate"></textarea>
+        </div>
+
+        <div class="px-4 py-2.5 bg-slate-50 dark:bg-[#0E1225] border-t border-slate-200 dark:border-[#2D3762] flex justify-end gap-2">
+          <button
+            (click)="showJsonModal.set(false)"
+            class="px-3 py-1 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#1E2442] rounded font-medium cursor-pointer">
+            {{ 'common.close' | translate }}
+          </button>
+
+          @if (jsonModalMode() === 'export') {
+            <button
+              (click)="copyJsonToClipboard()"
+              class="px-3.5 py-1 text-xs bg-slate-800 hover:bg-slate-900 dark:bg-[#252E56] dark:hover:bg-[#323D70] text-white rounded font-medium shadow-xs flex items-center gap-1.5 border border-slate-700 dark:border-[#3B487A] cursor-pointer">
+              <ng-icon name="heroClipboardDocument" class="text-sm"></ng-icon>
+              {{ 'editor.jsonModal.copy' | translate }}
+            </button>
+          } @else {
+            <button
+              (click)="applyImportedJson()"
+              class="px-3.5 py-1 text-xs bg-amber-600 hover:bg-amber-700 text-white rounded font-medium shadow-xs flex items-center gap-1.5 cursor-pointer">
+              <ng-icon name="heroCheck" class="text-sm"></ng-icon>
+              {{ 'editor.jsonModal.apply' | translate }}
+            </button>
+          }
+        </div>
+
+      </div>
+    </div>
+  }
+
+</div>

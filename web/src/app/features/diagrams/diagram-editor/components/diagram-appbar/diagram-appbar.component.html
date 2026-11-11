@@ -1,0 +1,223 @@
+  <!-- 1. [TOPBAR] LOGO | PROYECTO | AVATARES COLABORADORES | EXPORTAR | GENERAR SPRING BOOT - ESTILO ENTERPRISE ARCHITECT -->
+  <header class="bg-[#090D16]/95 backdrop-blur-md border-b border-cyan-500/20 text-white shadow-lg shadow-black/40 shadow-md px-3 py-1.5 flex items-center justify-between gap-3 z-30 shrink-0">
+
+    <!-- Izquierda: Logo & Nombre del Proyecto -->
+    <div class="flex items-center gap-2.5">
+      <a
+        routerLink="/projects"
+        [title]="'appbar.projects' | translate"
+        class="bg-slate-900/80 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-400 text-cyan-200 shadow-[0_0_10px_rgba(0,240,255,0.1)] px-2 py-1 rounded text-xs text-white dark:text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs">
+        <ng-icon name="heroFolder" class="text-xs text-sky-200 dark:text-slate-300"></ng-icon>
+        <span class="font-mono text-[11px]">{{ 'appbar.projects' | translate }}</span>
+      </a>
+
+      <div class="h-4 w-px bg-[#356AA3] dark:bg-[#283256]"></div>
+
+      <div class="bg-gradient-to-br from-cyan-500/20 to-purple-500/20 border border-cyan-400/40 shadow-[0_0_10px_rgba(0,240,255,0.2)] p-1 rounded shadow-inner flex items-center justify-center">
+        <ng-icon name="heroCube" class="text-base text-sky-200 dark:text-slate-100"></ng-icon>
+      </div>
+      <div>
+        <h1 class="text-xs font-bold tracking-wide uppercase text-white flex items-center gap-1.5">
+          {{ diagramTitle() }}
+        </h1>
+        <p class="text-[9.5px] font-mono text-sky-200 dark:text-slate-400">CASE STUDIO AI</p>
+      </div>
+    </div>
+
+    <!-- Centro: Avatares de Colaboradores Conectados en Tiempo Real -->
+    <div class="flex items-center gap-2">
+      @if (collaborationService.activeRoomCode()) {
+        <div class="flex items-center gap-2 bg-slate-900/90 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)] px-2.5 py-0.5 rounded-full shadow-inner">
+          <button
+            (click)="copyRoomCode()"
+            [title]="'appbar.clickToCopy' | translate"
+            class="text-emerald-300 text-[10.5px] font-mono flex items-center gap-1.5 cursor-pointer hover:text-emerald-200">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>{{ 'appbar.room' | translate }}: <strong>{{ collaborationService.activeRoomCode() }}</strong></span>
+          </button>
+
+          <div class="h-3 w-px bg-[#356AA3] dark:bg-[#283256]"></div>
+
+          <!-- Avatares con colores diferenciados -->
+          <div class="flex items-center -space-x-1.5">
+            @for (collab of collaborationService.collaborators(); track collab.userId) {
+              <div
+                class="w-5.5 h-5.5 rounded-full border-2 border-[#1B4E8C] dark:border-[#14182E] text-white font-bold text-[9.5px] flex items-center justify-center shadow-md select-none transition-transform hover:scale-125 cursor-default"
+                [style.backgroundColor]="collab.color"
+                [title]="collab.userName">
+                {{ collab.userName.charAt(0).toUpperCase() }}
+              </div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Derecha: Acciones, Exportar, Spring Boot, Selector de Idioma y Perfil -->
+    <div class="flex items-center gap-2">
+
+      <!-- Badge de Rol Espectador si aplica -->
+      @if (isReadOnly()) {
+        <div class="bg-amber-950/80 text-amber-300 border border-amber-600/70 px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1.5 shadow-inner">
+          <ng-icon name="heroEye" class="text-xs"></ng-icon>
+          <span>{{ 'appbar.spectatorMode' | translate }}</span>
+        </div>
+      }
+
+      <!-- Botón Guardar en Base de Datos (Oculto o Deshabilitado para VIEWER) -->
+      @if (diagramId() && !isReadOnly()) {
+        <button
+          (click)="saveDiagram.emit()"
+          [disabled]="isSaving()"
+          [title]="'appbar.saveTooltip' | translate"
+          class="bg-[#0078D4] hover:bg-[#106EBE] dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-mono text-xs font-bold px-2.5 py-1 rounded flex items-center gap-1.5 border border-[#005A9E] dark:border-blue-700 shadow-xs transition-all cursor-pointer disabled:opacity-50">
+          @if (isSaving()) {
+            <span class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            <span>{{ 'appbar.saving' | translate }}</span>
+          } @else if (saveSuccessMessage()) {
+            <ng-icon name="heroCheck" class="text-xs text-green-300"></ng-icon>
+            <span class="text-green-200">{{ 'appbar.saved' | translate }}</span>
+          } @else {
+            <ng-icon name="heroCloudArrowUp" class="text-sm"></ng-icon>
+            <span>{{ 'appbar.save' | translate }}</span>
+          }
+        </button>
+      }
+
+      <!-- 1. Botón Exportar ▾ -->
+      <div class="relative">
+        <button
+          (click)="isExportDropdownOpen.set(!isExportDropdownOpen()); isImportDropdownOpen.set(false)"
+          class="bg-[#1A4C84] hover:bg-[#153D6B] dark:bg-[#1C2242] dark:hover:bg-[#252E56] text-white text-xs px-2.5 py-1 rounded flex items-center gap-1 border border-[#3972AF] dark:border-[#283256] shadow-xs cursor-pointer">
+          <ng-icon name="heroArrowDownTray" class="text-xs text-sky-200"></ng-icon>
+          <span>{{ 'appbar.export' | translate }}</span>
+          <ng-icon name="heroChevronDown" class="text-[10px] ml-0.5"></ng-icon>
+        </button>
+
+        @if (isExportDropdownOpen()) {
+          <div class="absolute right-0 mt-1 w-72 bg-white dark:bg-[#14182E] border border-slate-300 dark:border-[#2D3762] shadow-2xl rounded-lg py-1.5 z-[9999] text-xs text-slate-800 dark:text-slate-200 animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100 dark:divide-[#283256]">
+            <div class="py-0.5">
+              <button
+                (click)="exportBmp.emit(); isExportDropdownOpen.set(false)"
+                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-[#2A201B] dark:text-slate-200">
+                <ng-icon name="heroPhoto" class="text-sm text-purple-600 dark:text-purple-400"></ng-icon>
+                <span>{{ 'appbar.exportBmp' | translate }}</span>
+              </button>
+              <button
+                (click)="exportXmi.emit(); isExportDropdownOpen.set(false)"
+                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-[#2A201B] dark:text-slate-200">
+                <ng-icon name="heroDocumentText" class="text-sm text-blue-600 dark:text-blue-400"></ng-icon>
+                <span>{{ 'appbar.exportXmi' | translate }}</span>
+              </button>
+            </div>
+            <div class="py-0.5">
+              <button
+                (click)="exportJson.emit(); isExportDropdownOpen.set(false)"
+                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-[#2A201B] dark:text-slate-200">
+                <ng-icon name="heroDocumentText" class="text-sm text-emerald-600 dark:text-emerald-400"></ng-icon>
+                <span>{{ 'appbar.exportJson' | translate }}</span>
+              </button>
+              <button
+                (click)="viewJson.emit(); isExportDropdownOpen.set(false)"
+                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-[#2A201B] dark:text-slate-200">
+                <ng-icon name="heroDocumentText" class="text-sm text-slate-600 dark:text-slate-400"></ng-icon>
+                <span>JSON</span>
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- 2. Botón Importar ▾ -->
+      <div class="relative">
+        <button
+          (click)="isImportDropdownOpen.set(!isImportDropdownOpen()); isExportDropdownOpen.set(false)"
+          class="bg-[#1A4C84] hover:bg-[#153D6B] dark:bg-[#1C2242] dark:hover:bg-[#252E56] text-white text-xs px-2.5 py-1 rounded flex items-center gap-1 border border-[#3972AF] dark:border-[#283256] shadow-xs cursor-pointer">
+          <ng-icon name="heroArrowUpTray" class="text-xs text-amber-300"></ng-icon>
+          <span>{{ 'appbar.import' | translate }}</span>
+          <ng-icon name="heroChevronDown" class="text-[10px] ml-0.5"></ng-icon>
+        </button>
+
+        @if (isImportDropdownOpen()) {
+          <div class="absolute right-0 mt-1 w-72 bg-white dark:bg-[#14182E] border border-slate-300 dark:border-[#2D3762] shadow-2xl rounded-lg py-1.5 z-[9999] text-xs text-slate-800 dark:text-slate-200 animate-in fade-in zoom-in-95 duration-100">
+            <button
+              (click)="triggerFileInput()"
+              class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-amber-700 dark:text-amber-400">
+              <ng-icon name="heroArrowUpTray" class="text-sm"></ng-icon>
+              <span>{{ 'appbar.importXmi' | translate }}</span>
+            </button>
+            <button
+              (click)="openImportJson.emit(); isImportDropdownOpen.set(false)"
+              class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#1E2442] flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+              <ng-icon name="heroDocumentText" class="text-sm text-slate-500 dark:text-slate-400"></ng-icon>
+              <span>JSON</span>
+            </button>
+          </div>
+        }
+        <input #fileInput type="file" accept=".json,.xml,.xmi" (change)="fileSelected.emit($event)" class="hidden">
+      </div>
+
+      <!-- Botón Generar Full Stack (Spring Boot & Flutter) -->
+      <button
+        (click)="openSpringBoot.emit()"
+        [title]="'appbar.generateTooltip' | translate"
+        class="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-mono text-xs font-bold px-3 py-1 rounded flex items-center gap-2 border border-emerald-400/40 shadow-xs cursor-pointer transition-all">
+        <span class="whitespace-nowrap">{{ 'appbar.generateCode' | translate }}</span>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <!-- Spring Boot Icon -->
+          <svg class="w-4 h-4 shrink-0 inline-block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+            <path d="M116.452 6.643a59.104 59.104 0 01-6.837 12.136A64.249 64.249 0 0064.205-.026C28.984-.026 0 28.982 0 64.242a64.316 64.316 0 0019.945 46.562l2.368 2.1a64.22 64.22 0 0041.358 15.122c33.487 0 61.637-26.24 64.021-59.683 1.751-16.371-3.051-37.077-11.24-61.7zM29.067 111.17a5.5 5.5 0 01-4.269 2.034c-3.018 0-5.487-2.484-5.487-5.502 0-3.017 2.485-5.501 5.487-5.501 1.25 0 2.485.433 3.452 1.234 2.351 1.9 2.718 5.384.817 7.735zm87.119-19.238c-15.843 21.122-49.68 14.003-71.376 15.02 0 0-3.852.234-7.721.867 0 0 1.45-.617 3.335-1.334 15.226-5.301 22.43-6.335 31.685-11.086 17.427-8.869 34.654-28.274 38.24-48.463-6.637 19.422-26.75 36.11-45.077 42.895-12.557 4.635-35.238 9.136-35.238 9.136l-.917-.484c-15.442-7.518-15.91-40.977 12.157-51.78 12.291-4.735 24.048-2.134 37.323-5.302 14.175-3.367 30.568-14.004 37.238-27.874 7.471 22.19 16.46 56.932.35 78.405z" fill="#77bc1f"/>
+          </svg>
+          <!-- Flutter Icon -->
+          <svg class="w-4 h-4 shrink-0 inline-block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+            <g fill="#3FB6D3"><path d="M12.3 64.2L76.3 0h39.4L32.1 83.6zM76.3 128h39.4L81.6 93.9l34.1-34.8H76.3L42.2 93.5z"/></g>
+            <path fill="#27AACD" d="M81.6 93.9l-20-20-19.4 19.6 19.4 19.6z"/>
+            <path fill="#19599A" d="M115.7 128L81.6 93.9l-20 19.2L76.3 128z"/>
+            <linearGradient id="flutter-original-appbar" gradientUnits="userSpaceOnUse" x1="59.365" y1="116.36" x2="86.825" y2="99.399">
+              <stop offset="0" stop-color="#1b4e94"/>
+              <stop offset=".63" stop-color="#1a5497"/>
+              <stop offset="1" stop-color="#195a9b"/>
+            </linearGradient>
+            <path fill="url(#flutter-original-appbar)" d="M61.6 113.1l30.8-8.4-10.8-10.8z"/>
+          </svg>
+        </div>
+      </button>
+
+      <!-- Botón Manual Interactivo / Guía -->
+      <button
+        (click)="openGuide()"
+        [title]="'guide.openTooltip' | translate"
+        class="bg-[#163D6C] hover:bg-[#123158] dark:bg-[#101426] px-2.5 py-1 rounded border border-[#366FA8] dark:border-[#283256] text-amber-300 hover:text-amber-200 text-xs font-mono font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
+        <ng-icon name="heroAcademicCap" class="text-sm"></ng-icon>
+        <span class="hidden xl:inline">{{ 'guide.manual' | translate }}</span>
+      </button>
+
+      <!-- Selector de Tema (Claro / Oscuro) -->
+      <app-theme-toggle [variant]="'dark'" />
+
+      <!-- Selector de Idioma (Español / English) -->
+      <app-language-selector [theme]="'dark'" />
+
+      <!-- Usuario & Salir -->
+      @if (authService.currentUser()) {
+        <div class="flex items-center gap-1.5 pl-2 border-l border-[#356AA3] dark:border-[#283256]">
+          <button
+            (click)="openProfile.emit()"
+            [title]="'appbar.profileTooltip' | translate"
+            class="flex items-center gap-1 bg-[#163D6C] hover:bg-[#123158] dark:bg-[#101426] px-2 py-0.5 rounded border border-[#366FA8] dark:border-[#283256] text-white transition-all cursor-pointer">
+            <div class="w-5 h-5 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 text-white flex items-center justify-center font-bold text-[9.5px]">
+              {{ authService.currentUser()?.fullName?.charAt(0)?.toUpperCase() }}
+            </div>
+            <span class="text-[11px] font-medium max-w-[100px] truncate text-sky-100 dark:text-slate-200">{{ authService.currentUser()?.fullName }}</span>
+          </button>
+          <button
+            (click)="authService.logout()"
+            [title]="'appbar.logoutTooltip' | translate"
+            class="bg-[#1A477C] hover:bg-red-900/80 dark:bg-[#1C2242] text-sky-100 hover:text-white dark:text-slate-300 text-[11px] px-2 py-0.5 rounded border border-[#366FA8] dark:border-[#283256] cursor-pointer">
+            {{ 'appbar.logout' | translate }}
+          </button>
+        </div>
+      }
+
+    </div>
+  </header>

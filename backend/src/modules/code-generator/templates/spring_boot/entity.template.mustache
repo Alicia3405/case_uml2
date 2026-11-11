@@ -1,0 +1,73 @@
+package {{basePackage}}.entities;
+
+{{#imports}}
+import {{.}};
+{{/imports}}
+import lombok.Getter;
+import lombok.Setter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+
+/**
+ * Entidad JPA para la tabla '{{tableName}}'.
+ * Generada automáticamente con Project Lombok por UML Studio Architecture Generator.
+ */
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Entity
+@Table(name = "{{tableName}}")
+public class {{className}} {
+
+{{#processedFields}}
+    {{#isId}}
+    @Id
+    @GeneratedValue(strategy = {{genStrategy}})
+    @Column(name = "{{sqlColumnName}}", updatable = false, nullable = false)
+    {{/isId}}
+    {{^isId}}
+    {{#isNotBlank}}
+    @NotBlank(message = "El campo '{{name}}' es obligatorio")
+    {{/isNotBlank}}
+    {{#isNotNull}}
+    @NotNull(message = "El campo '{{name}}' no puede ser nulo")
+    {{/isNotNull}}
+    @Column(name = "{{sqlColumnName}}"{{#isUnique}}, unique = true{{/isUnique}})
+    {{/isId}}
+    private {{javaType}} {{name}};
+
+{{/processedFields}}
+{{#processedRelationships}}
+    {{#isManyToOne}}
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "{{joinColumnName}}")
+    private {{targetClassName}} {{fieldName}};
+    {{/isManyToOne}}
+    {{#isOneToMany}}
+    @OneToMany(mappedBy = "{{mappedBy}}", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    @Builder.Default
+    private List<{{targetClassName}}> {{fieldName}} = new ArrayList<>();
+    {{/isOneToMany}}
+    {{#isOneToOne}}
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "{{joinColumnName}}")
+    private {{targetClassName}} {{fieldName}};
+    {{/isOneToOne}}
+    {{#isManyToMany}}
+    @ManyToMany
+    @JoinTable(
+        name = "{{tableName}}_{{fieldName}}",
+        joinColumns = @JoinColumn(name = "{{tableName}}_id"),
+        inverseJoinColumns = @JoinColumn(name = "{{fieldName}}_id")
+    )
+    @JsonIgnore
+    @Builder.Default
+    private List<{{targetClassName}}> {{fieldName}} = new ArrayList<>();
+    {{/isManyToMany}}
+
+{{/processedRelationships}}
+}

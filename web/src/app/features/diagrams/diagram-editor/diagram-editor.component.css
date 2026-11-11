@@ -1,0 +1,211 @@
+.uml-canvas-container,
+::ng-deep f-flow {
+  background-color: #FFFFFF !important;
+  background-image: none !important;
+}
+
+:host-context(.dark) .uml-canvas-container,
+:host-context(.dark) ::ng-deep f-flow,
+.dark .uml-canvas-container,
+.dark ::ng-deep f-flow {
+  background-color: #0D1124 !important;
+  background-image: none !important;
+}
+
+::ng-deep f-canvas,
+::ng-deep .f-canvas {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
+}
+
+::ng-deep f-flow .f-node {
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background-color: #FFFDF9 !important;
+  border: 1px solid #796354 !important;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.15) !important;
+  box-sizing: border-box !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow .f-node,
+.dark ::ng-deep f-flow .f-node {
+  background-color: #151A30 !important;
+  border: 1px solid #3B487A !important;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.45) !important;
+}
+
+::ng-deep f-flow .uml-connector-point.uml-connector-inactive {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+::ng-deep f-flow .uml-connector-point.uml-connector-active {
+  background-color: #6628d9 !important;
+  border: 1px solid #121111 !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+::ng-deep f-flow circle,
+::ng-deep f-flow f-connection circle,
+::ng-deep f-flow .f-connection-drag-handle {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  fill: none !important;
+  stroke: transparent !important;
+}
+
+::ng-deep f-flow f-connection path,
+::ng-deep f-flow f-connection-for-create path,
+::ng-deep f-flow .f-connection path,
+::ng-deep f-flow path[f-connection-path],
+::ng-deep f-flow .f-connection-path {
+  fill: none !important;
+  stroke: #43352B !important;
+  stroke-width: 1.3px !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow f-connection path,
+:host-context(.dark) ::ng-deep f-flow f-connection-for-create path,
+:host-context(.dark) ::ng-deep f-flow .f-connection path,
+:host-context(.dark) ::ng-deep f-flow path[f-connection-path],
+:host-context(.dark) ::ng-deep f-flow .f-connection-path {
+  stroke: #818CF8 !important;
+}
+
+::ng-deep f-flow f-connection.uml-relation-realization path[f-connection-path],
+::ng-deep f-flow f-connection-for-create.uml-relation-realization path[f-connection-path],
+::ng-deep f-flow .uml-relation-realization path[f-connection-path],
+::ng-deep f-flow f-connection.uml-relation-dependency path[f-connection-path],
+::ng-deep f-flow f-connection-for-create.uml-relation-dependency path[f-connection-path],
+::ng-deep f-flow .uml-relation-dependency path[f-connection-path],
+::ng-deep f-flow f-connection.uml-relation-association_class path[f-connection-path],
+::ng-deep f-flow f-connection-for-create.uml-relation-association_class path[f-connection-path],
+::ng-deep f-flow .uml-relation-association_class path[f-connection-path] {
+  stroke-dasharray: 6 4 !important;
+}
+
+::ng-deep f-flow svg marker polygon.uml-marker-hollow,
+::ng-deep f-flow svg defs marker polygon.uml-marker-hollow,
+::ng-deep f-flow marker polygon.uml-marker-hollow,
+::ng-deep f-flow .f-marker polygon.uml-marker-hollow,
+::ng-deep f-flow .uml-marker-hollow,
+::ng-deep polygon.uml-marker-hollow {
+  fill: #ffffff !important;
+  stroke: #43352B !important;
+  stroke-width: 1.3px !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow svg marker polygon.uml-marker-hollow,
+:host-context(.dark) ::ng-deep f-flow svg defs marker polygon.uml-marker-hollow,
+:host-context(.dark) ::ng-deep f-flow marker polygon.uml-marker-hollow,
+:host-context(.dark) ::ng-deep f-flow .f-marker polygon.uml-marker-hollow,
+:host-context(.dark) ::ng-deep f-flow .uml-marker-hollow,
+:host-context(.dark) ::ng-deep polygon.uml-marker-hollow {
+  fill: #151A30 !important;
+  stroke: #818CF8 !important;
+}
+
+::ng-deep f-flow svg marker polygon.uml-marker-filled,
+::ng-deep f-flow svg defs marker polygon.uml-marker-filled,
+::ng-deep f-flow marker polygon.uml-marker-filled,
+::ng-deep f-flow .f-marker polygon.uml-marker-filled,
+::ng-deep f-flow .uml-marker-filled,
+::ng-deep polygon.uml-marker-filled {
+  fill: #43352B !important;
+  stroke: #43352B !important;
+  stroke-width: 1.3px !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow svg marker polygon.uml-marker-filled,
+:host-context(.dark) ::ng-deep f-flow svg defs marker polygon.uml-marker-filled,
+:host-context(.dark) ::ng-deep f-flow marker polygon.uml-marker-filled,
+:host-context(.dark) ::ng-deep f-flow .f-marker polygon.uml-marker-filled,
+:host-context(.dark) ::ng-deep f-flow .uml-marker-filled,
+:host-context(.dark) ::ng-deep polygon.uml-marker-filled {
+  fill: #818CF8 !important;
+  stroke: #818CF8 !important;
+}
+
+::ng-deep f-flow svg marker polyline.uml-marker-open,
+::ng-deep f-flow svg defs marker polyline.uml-marker-open,
+::ng-deep f-flow marker polyline.uml-marker-open,
+::ng-deep f-flow .f-marker polyline.uml-marker-open,
+::ng-deep f-flow .uml-marker-open,
+::ng-deep polyline.uml-marker-open {
+  fill: none !important;
+  stroke: #43352B !important;
+  stroke-width: 1.5px !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow svg marker polyline.uml-marker-open,
+:host-context(.dark) ::ng-deep f-flow svg defs marker polyline.uml-marker-open,
+:host-context(.dark) ::ng-deep f-flow marker polyline.uml-marker-open,
+:host-context(.dark) ::ng-deep f-flow .f-marker polyline.uml-marker-open,
+:host-context(.dark) ::ng-deep f-flow .uml-marker-open,
+:host-context(.dark) ::ng-deep polyline.uml-marker-open {
+  stroke: #818CF8 !important;
+}
+
+/* =========================================================================
+   RESALTADO DE CONEXIONES Y RELACIONES ESTILO DBDiagram.io
+   ========================================================================= */
+
+::ng-deep f-flow f-connection.conn-highlighted {
+  z-index: 25 !important;
+}
+
+::ng-deep f-flow f-connection.conn-highlighted path[f-connection-path],
+::ng-deep f-flow f-connection.conn-highlighted .f-connection-path,
+::ng-deep f-flow f-connection.conn-highlighted path {
+  stroke: #7C3AED !important;
+  stroke-width: 2.6px !important;
+}
+
+::ng-deep f-flow f-connection.conn-highlighted polygon.uml-marker-hollow {
+  stroke: #7C3AED !important;
+  stroke-width: 2px !important;
+  fill: #FAF5FF !important;
+}
+
+::ng-deep f-flow f-connection.conn-highlighted polygon.uml-marker-filled {
+  fill: #7C3AED !important;
+  stroke: #7C3AED !important;
+}
+
+::ng-deep f-flow f-connection.conn-highlighted polyline.uml-marker-open {
+  stroke: #7C3AED !important;
+  stroke-width: 2.2px !important;
+}
+
+/* Conexión Atenuada */
+::ng-deep f-flow f-connection.conn-dimmed {
+  opacity: 0.22 !important;
+}
+
+::ng-deep f-flow f-connection.conn-dimmed path[f-connection-path],
+::ng-deep f-flow f-connection.conn-dimmed .f-connection-path,
+::ng-deep f-flow f-connection.conn-dimmed path {
+  stroke: #94A3B8 !important;
+  stroke-width: 1.2px !important;
+}
+
+/* =========================================================================
+   ETIQUETAS DE MULTIPLICIDAD Y NOMBRE DE RELACIONES UML
+   ========================================================================= */
+
+::ng-deep f-flow .f-connection-content {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  pointer-events: all !important;
+}
+
+
+

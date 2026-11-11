@@ -1,0 +1,322 @@
+/* ==========================================================================
+   CASE STUDIO AI — DARK STUDIO GLASSMORPHISM DESIGN SYSTEM
+   Author: Cesar (julioficctcr7) - UAGRM FICCT
+   Stack: Angular 22, @foblex/flow, TailwindCSS, Highlight.js
+   ========================================================================== */
+
+@import 'tailwindcss';
+@import 'highlight.js/styles/github-dark.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --ff-connection-drag-handle-stroke: transparent;
+  --ff-connection-drag-handle-fill: transparent;
+  --ff-node-padding: 0px !important;
+  --ff-node-border-radius: 6px !important;
+  --ff-node-border-color: transparent !important;
+  --ff-node-background-color: #0F172A !important;
+  --ff-node-shadow: none !important;
+  --ff-canvas-background-color: #090D16 !important;
+  --ff-flow-background-color: #090D16 !important;
+  --ff-color-surface-canvas: #090D16 !important;
+  --ff-color-surface-page: #090D16 !important;
+
+  /* Accent Tokens */
+  --accent-cyan: #00F0FF;
+  --accent-purple: #7928CA;
+  --accent-glow: rgba(0, 240, 255, 0.15);
+  --glass-bg: rgba(15, 23, 42, 0.82);
+  --glass-border: rgba(56, 189, 248, 0.18);
+}
+
+.dark {
+  --ff-connection-drag-handle-stroke: transparent;
+  --ff-connection-drag-handle-fill: transparent;
+  --ff-node-padding: 0px !important;
+  --ff-node-border-radius: 6px !important;
+  --ff-node-border-color: transparent !important;
+  --ff-node-background-color: #0F172A !important;
+  --ff-node-shadow: none !important;
+  --ff-canvas-background-color: #090D16 !important;
+  --ff-flow-background-color: #090D16 !important;
+  --ff-color-surface-canvas: #090D16 !important;
+  --ff-color-surface-page: #090D16 !important;
+}
+
+html, body {
+  background-color: #090D16;
+  color: #F1F5F9;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #090D16;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E293B;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Canvas Milimétrico Dark Studio */
+f-flow .f-canvas,
+f-flow f-canvas,
+.f-canvas {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: radial-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 0) !important;
+  background-size: 24px 24px !important;
+  box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
+}
+
+.uml-canvas-container,
+f-flow {
+  background-color: #090D16 !important;
+  background-image: radial-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 0) !important;
+  background-size: 24px 24px !important;
+}
+
+.dark .uml-canvas-container,
+.dark f-flow {
+  background-color: #090D16 !important;
+}
+
+/* Nodos UML 2.5 — Glassmorphism Cards */
+f-flow .f-node {
+  padding: 0 !important;
+  border-radius: 6px !important;
+  background: rgba(15, 23, 42, 0.88) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(56, 189, 248, 0.22) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 240, 255, 0.04) !important;
+  box-sizing: border-box !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease !important;
+}
+
+f-flow .f-node:hover {
+  border-color: rgba(0, 240, 255, 0.45) !important;
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 240, 255, 0.12) !important;
+}
+
+f-flow .f-connector-source-target,
+f-flow .f-connector-source,
+f-flow .f-connector-target,
+f-flow .f-connector-connected,
+f-flow .f-node-output-connected,
+f-flow .f-node-input-connected,
+f-flow .f-connector-connectable {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+/* Ocultar céntrico drag handle */
+f-flow circle,
+f-connection circle,
+f-flow .f-connection-drag-handle,
+f-flow circle[f-connection-drag-handle-end],
+f-flow circle[f-connection-drag-handle-start],
+f-flow circle.f-connection-drag-handle {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  stroke: transparent !important;
+  fill: none !important;
+  pointer-events: none !important;
+}
+
+/* Badges de Multiplicidad y Nombre de Relación UML — Cyber Studio Pills */
+.uml-multiplicity-badge {
+  background: rgba(15, 23, 42, 0.92);
+  color: #38BDF8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.uml-multiplicity-badge:hover {
+  background: rgba(14, 165, 233, 0.25);
+  border-color: #00F0FF;
+  color: #FFFFFF;
+  transform: scale(1.1);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+
+.dark .uml-multiplicity-badge {
+  background: rgba(15, 23, 42, 0.92);
+  color: #38BDF8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.uml-relation-name-badge {
+  background: rgba(15, 23, 42, 0.92);
+  color: #C084FC;
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 10.5px;
+  font-style: italic;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.uml-relation-name-badge:hover {
+  background: rgba(147, 51, 234, 0.25);
+  border-color: #A855F7;
+  color: #FFFFFF;
+  transform: scale(1.08);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
+}
+
+.dark .uml-relation-name-badge {
+  background: rgba(15, 23, 42, 0.92);
+  color: #C084FC;
+}
+
+f-flow input::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Conectores UML Neón */
+f-flow f-connection path,
+f-flow f-connection-for-create path,
+f-flow .f-connection path,
+f-flow path[f-connection-path],
+f-flow .f-connection-path {
+  fill: none !important;
+  stroke: #38BDF8 !important;
+  stroke-width: 1.5px !important;
+  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.3)) !important;
+}
+
+.dark f-flow f-connection path,
+.dark f-flow f-connection-for-create path,
+.dark f-flow .f-connection path,
+.dark f-flow path[f-connection-path],
+.dark f-flow .f-connection-path {
+  stroke: #38BDF8 !important;
+}
+
+/* Relaciones discontinuas */
+f-flow f-connection.uml-relation-realization path[f-connection-path],
+f-flow f-connection-for-create.uml-relation-realization path[f-connection-path],
+f-flow .uml-relation-realization path[f-connection-path],
+f-flow f-connection.uml-relation-dependency path[f-connection-path],
+f-flow f-connection-for-create.uml-relation-dependency path[f-connection-path],
+f-flow .uml-relation-dependency path[f-connection-path],
+f-flow f-connection.uml-relation-association_class path[f-connection-path],
+f-flow f-connection-for-create.uml-relation-association_class path[f-connection-path],
+f-flow .uml-relation-association_class path[f-connection-path] {
+  stroke-dasharray: 6 4 !important;
+}
+
+f-flow marker,
+f-flow svg[fMarker],
+f-flow .f-marker {
+  overflow: visible !important;
+}
+
+/* Marcadores UML huecos */
+f-flow svg marker polygon.uml-marker-hollow,
+f-flow svg defs marker polygon.uml-marker-hollow,
+f-flow marker polygon.uml-marker-hollow,
+f-flow .f-marker polygon.uml-marker-hollow,
+f-flow .uml-marker-hollow,
+polygon.uml-marker-hollow,
+path.uml-marker-hollow {
+  fill: #0F172A !important;
+  stroke: #38BDF8 !important;
+  stroke-width: 1.5px !important;
+}
+
+.dark f-flow svg marker polygon.uml-marker-hollow,
+.dark f-flow svg defs marker polygon.uml-marker-hollow,
+.dark f-flow marker polygon.uml-marker-hollow,
+.dark f-flow .f-marker polygon.uml-marker-hollow,
+.dark f-flow .uml-marker-hollow,
+.dark polygon.uml-marker-hollow,
+.dark path.uml-marker-hollow {
+  fill: #0F172A !important;
+  stroke: #38BDF8 !important;
+}
+
+/* Marcadores UML sólidos (Composición) */
+f-flow svg marker polygon.uml-marker-filled,
+f-flow svg defs marker polygon.uml-marker-filled,
+f-flow marker polygon.uml-marker-filled,
+f-flow .f-marker polygon.uml-marker-filled,
+f-flow .uml-marker-filled,
+polygon.uml-marker-filled,
+path.uml-marker-filled {
+  fill: #38BDF8 !important;
+  stroke: #38BDF8 !important;
+  stroke-width: 1.5px !important;
+}
+
+.dark f-flow svg marker polygon.uml-marker-filled,
+.dark f-flow svg defs marker polygon.uml-marker-filled,
+.dark f-flow marker polygon.uml-marker-filled,
+.dark f-flow .f-marker polygon.uml-marker-filled,
+.dark f-flow .uml-marker-filled,
+.dark polygon.uml-marker-filled,
+.dark path.uml-marker-filled {
+  fill: #38BDF8 !important;
+  stroke: #38BDF8 !important;
+}
+
+/* Marcadores abiertos (Dependencia) */
+f-flow svg marker polyline.uml-marker-open,
+f-flow svg defs marker polyline.uml-marker-open,
+f-flow marker polyline.uml-marker-open,
+f-flow .f-marker polyline.uml-marker-open,
+f-flow .uml-marker-open,
+polyline.uml-marker-open,
+path.uml-marker-open {
+  fill: none !important;
+  stroke: #38BDF8 !important;
+  stroke-width: 1.5px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.dark f-flow svg marker polyline.uml-marker-open,
+.dark f-flow svg defs marker polyline.uml-marker-open,
+.dark f-flow marker polyline.uml-marker-open,
+.dark f-flow .f-marker polyline.uml-marker-open,
+.dark f-flow .uml-marker-open,
+.dark polyline.uml-marker-open,
+.dark path.uml-marker-open {
+  stroke: #38BDF8 !important;
+}

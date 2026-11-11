@@ -1,0 +1,501 @@
+<div class="min-h-screen flex flex-col bg-[#090D16] text-slate-100 select-none font-sans text-slate-900 dark:text-slate-100 relative transition-colors duration-200">
+
+  <!-- Barra Superior EA (Header) -->
+  <header class="bg-[#090D16]/95 backdrop-blur-md border-b border-cyan-500/20 text-white shadow-lg shadow-black/40 shadow-md px-4 py-2 flex items-center justify-between z-30">
+    <div class="flex items-center gap-3">
+      <div class="bg-gradient-to-br from-cyan-500/20 to-purple-500/20 border border-cyan-400/40 shadow-[0_0_12px_rgba(0,240,255,0.25)] p-1.5 rounded shadow-inner flex items-center justify-center">
+        <ng-icon name="heroCube" class="text-lg text-sky-200 dark:text-slate-100"></ng-icon>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-sm tracking-tight leading-none text-white">CASE STUDIO AI</h1>
+          <span class="text-[9.5px] font-mono bg-sky-500/30 text-sky-100 px-1.5 py-0.5 rounded border border-sky-300/30">v3.0 MDD</span>
+        </div>
+        <p class="text-[10px] font-mono text-sky-200 dark:text-slate-400">Herramienta CASE Colaborativa UML 2.5+ & Generador Spring Boot</p>
+      </div>
+    </div>
+
+    <!-- Acciones Usuario y Sistema -->
+    <div class="flex items-center gap-2">
+      <!-- Selector de Idioma -->
+      <app-language-selector></app-language-selector>
+
+      <!-- Botón Switch Tema Claro / Oscuro -->
+      <app-theme-toggle></app-theme-toggle>
+
+      <!-- Botón Manual Interactivo / Guía -->
+      <button
+        (click)="openGuide()"
+        [title]="'guide.openTooltip' | translate"
+        class="flex items-center gap-1.5 bg-[#163D6C] hover:bg-[#123158] dark:bg-[#101426]/60 dark:hover:bg-[#101426] px-2.5 py-1 rounded border border-[#366FA8] dark:border-[#283256] text-xs text-amber-300 hover:text-amber-200 transition-all cursor-pointer shadow-xs">
+        <ng-icon name="heroAcademicCap" class="text-sm"></ng-icon>
+        <span class="font-medium hidden md:inline">{{ 'guide.interactiveManual' | translate }}</span>
+      </button>
+
+      <!-- Perfil de Usuario -->
+      @if (authService.currentUser()) {
+        <button
+          (click)="openProfileModal()"
+          title="Ver y editar perfil de usuario"
+          class="flex items-center gap-1.5 bg-[#163D6C] hover:bg-[#123158] dark:bg-[#101426]/60 dark:hover:bg-[#101426] px-2.5 py-1 rounded border border-[#366FA8] dark:border-[#283256] text-xs text-white dark:text-slate-200 transition-all cursor-pointer">
+          <div class="w-5 h-5 rounded-full bg-purple-700 text-white font-bold text-[10px] flex items-center justify-center">
+            {{ (authService.currentUser()?.fullName || 'U').charAt(0).toUpperCase() }}
+          </div>
+          <span class="font-medium truncate max-w-[150px] text-sky-100 dark:text-slate-200" [title]="authService.currentUser()?.fullName">
+            {{ authService.currentUser()?.fullName }}
+          </span>
+        </button>
+
+        <!-- Botón Salir -->
+        <button
+          (click)="logout()"
+          title="Cerrar sesión"
+          class="bg-[#1A477C] hover:bg-red-900/80 dark:bg-[#1C2242] text-sky-100 hover:text-white dark:text-slate-300 text-xs px-2.5 py-1 rounded flex items-center gap-1 border border-[#366FA8] dark:border-[#283256] transition-colors cursor-pointer">
+          <ng-icon name="heroArrowRightOnRectangle" class="text-xs"></ng-icon>
+          <span class="hidden sm:inline">{{ 'auth.logout' | translate }}</span>
+        </button>
+      }
+    </div>
+  </header>
+
+  <!-- Contenido Central: Proyectos del Usuario -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 z-10">
+    
+    <!-- Encabezado de Sección y Barra de Filtros -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-[#6B5A52]/30 dark:border-[#283256]">
+      <div>
+        <h2 class="text-base font-bold text-[#2A201B] dark:text-slate-100 uppercase tracking-wider font-mono flex items-center gap-2">
+          <ng-icon name="heroFolder" class="text-lg text-[#6B5A52] dark:text-amber-400"></ng-icon>
+          <span>{{ 'projects.headerTitle' | translate }}</span>
+        </h2>
+        <p class="text-xs text-[#6B5A52] dark:text-slate-400 mt-0.5">{{ 'projects.headerSubtitle' | translate }}</p>
+      </div>
+
+      <!-- Buscador y Botón Nuevo Proyecto -->
+      <div class="flex items-center gap-3">
+        <!-- Input de Búsqueda -->
+        <div class="relative w-full sm:w-64">
+          <input
+            type="text"
+            [ngModel]="searchQuery()"
+            (ngModelChange)="searchQuery.set($event)"
+            [placeholder]="'projects.searchPlaceholder' | translate"
+            class="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs text-[#2A201B] dark:text-slate-100 placeholder-[#6B5A52]/50 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+          />
+          <ng-icon name="heroMagnifyingGlass" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#6B5A52] dark:text-slate-400"></ng-icon>
+        </div>
+
+        <!-- Botón Crear Nuevo Proyecto -->
+        <button
+          (click)="openCreateModal()"
+          class="bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] active:translate-y-0.5 text-white font-mono text-xs font-bold py-1.5 px-3 border border-[#2A201B] dark:border-[#3730A3] shadow-[2px_2px_0px_rgba(0,0,0,0.2)] transition-all cursor-pointer flex items-center gap-1.5 shrink-0">
+          <ng-icon name="heroPlus" class="text-xs"></ng-icon>
+          <span>{{ 'projects.newProjectBtn' | translate }}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Estado de Carga -->
+    @if (projectService.isLoading() && projects().length === 0) {
+      <div class="p-12 text-center">
+        <span class="inline-block w-8 h-8 border-3 border-[#6B5A52] dark:border-slate-500 border-t-transparent rounded-full animate-spin"></span>
+        <p class="text-xs font-mono text-[#6B5A52] dark:text-slate-400 mt-3">{{ 'projects.loading' | translate }}</p>
+      </div>
+    } @else if (filteredProjects().length === 0) {
+      <!-- Estado Vacío -->
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] p-12 text-center shadow-[4px_4px_0px_rgba(0,0,0,0.1)] dark:shadow-[4px_4px_0px_rgba(0,0,0,0.5)] max-w-md mx-auto transition-colors">
+        <div class="w-12 h-12 bg-[#6B5A52]/10 dark:bg-[#1A203B] border border-[#6B5A52] dark:border-[#2D3762] text-[#6B5A52] dark:text-slate-300 flex items-center justify-center mx-auto mb-3">
+          <ng-icon name="heroFolderPlus" class="text-2xl"></ng-icon>
+        </div>
+        <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100">{{ 'projects.emptyTitle' | translate }}</h3>
+        <p class="text-xs text-[#6B5A52] dark:text-slate-400 mt-1 mb-4">{{ 'projects.emptySubtitle' | translate }}</p>
+        <button
+          (click)="openCreateModal()"
+          class="bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-mono text-xs font-bold py-1.5 px-4 border border-[#2A201B] dark:border-[#3730A3] shadow-[2px_2px_0px_rgba(0,0,0,0.2)] transition-all cursor-pointer inline-flex items-center gap-1.5">
+          <ng-icon name="heroPlus" class="text-xs"></ng-icon>
+          <span>{{ 'projects.newProjectBtn' | translate }}</span>
+        </button>
+      </div>
+    } @else {
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        @for (project of filteredProjects(); track project.id) {
+          <div
+            (click)="openDiagram(project)"
+            class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[4px_4px_0px_rgba(0,0,0,0.15)] dark:shadow-[4px_4px_0px_rgba(10,13,26,0.6)] hover:shadow-[6px_6px_0px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 transition-all cursor-pointer flex flex-col justify-between group">
+            
+            <!-- Encabezado de la Tarjeta del Proyecto -->
+            <div class="p-4 border-b border-[#6B5A52]/40 dark:border-[#283256] bg-white/40 dark:bg-[#101428]/30">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5 mb-1">
+                    <span class="px-1.5 py-0.2 text-[9.5px] font-mono font-bold uppercase border border-[#6B5A52] dark:border-[#2D3762] bg-[#F2EBE6] dark:bg-[#1A203B] text-[#2A201B] dark:text-slate-200">
+                      {{ project.userRole || 'COLLABORATOR' }}
+                    </span>
+                    <span class="text-[10px] font-mono text-[#6B5A52] dark:text-slate-400">Java {{ project.javaVersion }} • Spring {{ project.springBootVersion }}</span>
+                  </div>
+                  <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 truncate group-hover:text-[#6B5A52] dark:group-hover:text-amber-400 transition-colors" [title]="project.name">
+                    {{ project.name }}
+                  </h3>
+                </div>
+
+                <!-- Acciones Rápidas (Editar y Eliminar) -->
+                <div class="flex items-center gap-1 shrink-0">
+                  <!-- Botón Editar Proyecto (OWNER o EDITOR) -->
+                  @if (project.userRole === 'OWNER' || project.userRole === 'EDITOR') {
+                    <button
+                      (click)="openEditModal(project, $event)"
+                      [title]="'projects.editModal.title' | translate"
+                      class="text-slate-500 hover:text-[#2A201B] dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded transition-colors cursor-pointer">
+                      <ng-icon name="heroPencilSquare" class="text-sm"></ng-icon>
+                    </button>
+                  }
+
+                  <!-- Botón Eliminar Proyecto (Solo OWNER) -->
+                  @if (project.userRole === 'OWNER') {
+                    <button
+                      (click)="onDeleteProject(project, $event)"
+                      [title]="'projects.deleteTooltip' | translate"
+                      class="text-slate-400 hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 p-1 rounded transition-colors cursor-pointer">
+                      <ng-icon name="heroTrash" class="text-sm"></ng-icon>
+                    </button>
+                  }
+                </div>
+              </div>
+
+              <p class="text-xs text-[#6B5A52] dark:text-slate-400 mt-2 line-clamp-2 min-h-[32px]">
+                {{ project.description || ('projects.noDescription' | translate) }}
+              </p>
+            </div>
+
+            <!-- Metadatos y Paquete -->
+            <div class="p-4 space-y-2 text-xs">
+              <div class="flex items-center justify-between text-[11px] font-mono text-[#6B5A52] dark:text-slate-400">
+                <span>{{ 'projects.package' | translate }}:</span>
+                <span class="text-[#2A201B] dark:text-slate-200 font-semibold truncate max-w-[170px]" [title]="project.basePackage">
+                  {{ project.basePackage }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between text-[11px] font-mono text-[#6B5A52] dark:text-slate-400">
+                <span>{{ 'projects.createdBy' | translate }}:</span>
+                <span class="text-[#2A201B] dark:text-slate-200 truncate max-w-[170px]" [title]="project.creatorName">
+                  {{ project.creatorName }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Pie de la Tarjeta con Botones -->
+            <div class="px-4 py-2.5 bg-black/[0.03] dark:bg-[#101428]/30 border-t border-[#6B5A52]/40 dark:border-[#283256] flex items-center justify-between text-xs">
+              <!-- Botón Miembros -->
+              <button
+                (click)="openMembersModal(project, $event)"
+                class="flex items-center gap-1 text-[11px] font-mono text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-medium hover:underline cursor-pointer">
+                <ng-icon name="heroUserGroup" class="text-xs"></ng-icon>
+                <span>{{ 'projects.membersCount' | translate:{ count: project.memberCount } }}</span>
+              </button>
+
+              <!-- Botón Abrir Canvas -->
+              <div class="flex items-center gap-1 font-mono text-[11px] font-bold text-[#6B5A52] dark:text-slate-400 group-hover:text-[#2A201B] dark:group-hover:text-amber-400">
+                <span>{{ 'projects.openCanvas' | translate }}</span>
+                <ng-icon name="heroArrowTopRightOnSquare" class="text-xs"></ng-icon>
+              </div>
+            </div>
+
+          </div>
+        }
+      </div>
+    }
+
+  </main>
+
+  <!-- MODAL: CREAR NUEVO PROYECTO -->
+  @if (isCreateModalOpen()) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+        
+        <!-- Header Modal -->
+        <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/30 px-5 py-3 flex items-center justify-between">
+          <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 tracking-tight uppercase flex items-center gap-2">
+            <ng-icon name="heroFolderPlus" class="text-base text-[#6B5A52] dark:text-amber-400"></ng-icon>
+            {{ 'projects.createModal.title' | translate }}
+          </h3>
+          <button (click)="closeCreateModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-white font-bold text-base cursor-pointer">&times;</button>
+        </div>
+
+        <!-- Formulario -->
+        <form [formGroup]="createForm" (ngSubmit)="onCreateSubmit()" class="p-6 space-y-4 text-xs">
+          
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.createModal.nameLabel' | translate }} *</label>
+            <input
+              type="text"
+              formControlName="name"
+              placeholder="e.g. Sistema de Facturación"
+              class="w-full px-3 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner"
+            />
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.createModal.descLabel' | translate }}</label>
+            <textarea
+              formControlName="description"
+              rows="2"
+              [placeholder]="'projects.createModal.descPlaceholder' | translate"
+              class="w-full px-3 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner"></textarea>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="sm:col-span-2">
+              <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.createModal.basePackageLabel' | translate }}</label>
+              <input
+                type="text"
+                formControlName="basePackage"
+                placeholder="com.example.app"
+                class="w-full px-3 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner"
+              />
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">Java Version</label>
+              <select
+                formControlName="javaVersion"
+                class="w-full px-2 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner cursor-pointer">
+                <option [value]="21">Java 21 (LTS)</option>
+                <option [value]="17">Java 17 (LTS)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">Spring Boot Version</label>
+            <select
+              formControlName="springBootVersion"
+              class="w-full px-2 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner cursor-pointer">
+              <option value="3.3.0">Spring Boot 3.3.0</option>
+              <option value="3.4.0">Spring Boot 3.4.0</option>
+            </select>
+          </div>
+
+          <!-- Botones Acción -->
+          <div class="pt-4 border-t border-[#6B5A52]/30 dark:border-[#283256] flex items-center justify-end gap-2">
+            <button
+              type="button"
+              (click)="closeCreateModal()"
+              class="px-3 py-2 bg-white dark:bg-[#1C2242] hover:bg-slate-100 dark:hover:bg-[#252E56] text-[#2A201B] dark:text-slate-200 font-mono text-xs font-medium border border-[#6B5A52] dark:border-[#2D3762] cursor-pointer">
+              {{ 'common.cancel' | translate }}
+            </button>
+            <button
+              type="submit"
+              [disabled]="projectService.isLoading()"
+              class="px-4 py-2 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-mono text-xs font-bold uppercase border border-[#2A201B] dark:border-[#3730A3] shadow-[2px_2px_0px_rgba(0,0,0,0.2)] dark:shadow-[2px_2px_0px_rgba(10,13,26,0.5)] cursor-pointer disabled:opacity-50">
+              {{ 'projects.createModal.submit' | translate }}
+            </button>
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+  }
+
+  <!-- MODAL: EDITAR PROYECTO EXISTENTE -->
+  @if (isEditModalOpen() && selectedProjectForEdit()) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+        
+        <!-- Header Modal -->
+        <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/30 px-5 py-3 flex items-center justify-between">
+          <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 tracking-tight uppercase flex items-center gap-2">
+            <ng-icon name="heroPencilSquare" class="text-base text-[#6B5A52] dark:text-amber-400"></ng-icon>
+            {{ 'projects.editModal.title' | translate }} {{ selectedProjectForEdit()?.name }}
+          </h3>
+          <button (click)="closeEditModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-white font-bold text-base cursor-pointer">&times;</button>
+        </div>
+
+        <!-- Formulario de Edición -->
+        <form [formGroup]="editForm" (ngSubmit)="onEditSubmit()" class="p-6 space-y-4 text-xs">
+          
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.editModal.nameLabel' | translate }}</label>
+            <input
+              type="text"
+              formControlName="name"
+              placeholder="e.g. Sistema de Facturación"
+              class="w-full px-3 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner font-medium text-xs"
+            />
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.editModal.descLabel' | translate }}</label>
+            <textarea
+              formControlName="description"
+              rows="2"
+              [placeholder]="'projects.createModal.descPlaceholder' | translate"
+              class="w-full px-3 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner"></textarea>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="sm:col-span-2">
+              <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">{{ 'projects.editModal.basePackageLabel' | translate }}</label>
+              <input
+                type="text"
+                formControlName="basePackage"
+                placeholder="com.example.app"
+                class="w-full px-3 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner"
+              />
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">Java Version</label>
+              <select
+                formControlName="javaVersion"
+                class="w-full px-2 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner cursor-pointer">
+                <option [value]="21">Java 21 (LTS)</option>
+                <option [value]="17">Java 17 (LTS)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">Spring Boot Version</label>
+            <select
+              formControlName="springBootVersion"
+              class="w-full px-2 py-2 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner cursor-pointer">
+              <option value="3.3.0">Spring Boot 3.3.0</option>
+              <option value="3.4.0">Spring Boot 3.4.0</option>
+            </select>
+          </div>
+
+          <!-- Botones Acción -->
+          <div class="pt-4 border-t border-[#6B5A52]/30 dark:border-[#283256] flex items-center justify-end gap-2">
+            <button
+              type="button"
+              (click)="closeEditModal()"
+              class="px-3.5 py-2 bg-white dark:bg-[#1C2242] hover:bg-slate-100 dark:hover:bg-[#252E56] text-[#2A201B] dark:text-slate-200 font-mono text-xs font-medium border border-[#6B5A52] dark:border-[#2D3762] cursor-pointer">
+              {{ 'common.cancel' | translate }}
+            </button>
+            <button
+              type="submit"
+              [disabled]="projectService.isLoading()"
+              class="px-4 py-2 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-mono text-xs font-bold uppercase border border-[#2A201B] dark:border-[#3730A3] shadow-[2px_2px_0px_rgba(0,0,0,0.2)] dark:shadow-[2px_2px_0px_rgba(10,13,26,0.5)] cursor-pointer disabled:opacity-50">
+              {{ 'projects.editModal.submit' | translate }}
+            </button>
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+  }
+
+  <!-- MODAL: GESTIÓN DE MIEMBROS COLABORADORES -->
+  @if (isMembersModalOpen() && selectedProjectForMembers()) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+        
+        <!-- Header Modal -->
+        <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/30 px-5 py-3 flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 tracking-tight uppercase flex items-center gap-2">
+              <ng-icon name="heroUserGroup" class="text-base text-[#6B5A52] dark:text-amber-400"></ng-icon>
+              {{ 'projects.membersModal.title' | translate }}
+            </h3>
+            <p class="text-[10.5px] font-mono text-[#6B5A52] dark:text-slate-400 truncate max-w-sm">{{ selectedProjectForMembers()?.name }}</p>
+          </div>
+          <button (click)="closeMembersModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-white font-bold text-base cursor-pointer">&times;</button>
+        </div>
+
+        <div class="p-5 space-y-5 text-xs">
+          
+          <!-- Formulario Agregar Miembro (Solo si es OWNER) -->
+          @if (selectedProjectForMembers()?.userRole === 'OWNER') {
+            <form [formGroup]="addMemberForm" (ngSubmit)="onAddMemberSubmit()" class="p-3 bg-white dark:bg-[#12162A] border border-[#6B5A52] dark:border-[#2D3762] space-y-3">
+              <h4 class="font-bold text-[#2A201B] dark:text-slate-100 text-xs">{{ 'projects.membersModal.inviteTitle' | translate }}</h4>
+              <div class="flex items-center gap-2">
+                <input
+                  type="email"
+                  formControlName="email"
+                  placeholder="correo@uagrm.edu.bo"
+                  class="flex-1 px-3 py-1.5 bg-[#F9F7F5] dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                />
+                <select
+                  formControlName="role"
+                  class="px-2 py-1.5 bg-[#F9F7F5] dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 text-xs font-mono cursor-pointer">
+                  <option value="EDITOR">EDITOR</option>
+                  <option value="VIEWER">VIEWER</option>
+                </select>
+                <button
+                  type="submit"
+                  class="px-3 py-1.5 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-mono font-bold text-xs border border-[#2A201B] dark:border-[#3730A3] cursor-pointer">
+                  {{ 'projects.membersModal.inviteBtn' | translate }}
+                </button>
+              </div>
+            </form>
+          }
+
+          <!-- Lista de Miembros Actuales -->
+          <div>
+            <h4 class="font-bold font-mono text-[#2A201B] dark:text-slate-100 uppercase tracking-wider text-[11px] mb-2">{{ 'projects.membersModal.activeMembers' | translate }} ({{ selectedProjectForMembers()?.members?.length || 0 }})</h4>
+            <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              @for (member of selectedProjectForMembers()?.members; track member.userId) {
+                <div class="flex items-center justify-between p-2 bg-white/70 dark:bg-[#12162A]/80 border border-[#6B5A52]/40 dark:border-[#283256] text-xs">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-6 h-6 rounded-full bg-[#6B5A52] dark:bg-[#252E56] text-white flex items-center justify-center font-bold text-[10px]">
+                      {{ member.fullName.charAt(0).toUpperCase() }}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="font-bold text-[#2A201B] dark:text-slate-100 truncate">{{ member.fullName }}</p>
+                      <p class="text-[10px] font-mono text-[#6B5A52] dark:text-slate-400 truncate">{{ member.email }}</p>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <!-- Selector de Rol o Badge -->
+                    @if (selectedProjectForMembers()?.userRole === 'OWNER' && member.userId !== selectedProjectForMembers()?.createdBy) {
+                      <select
+                        [ngModel]="member.role"
+                        (ngModelChange)="onRoleChange(member.userId, $event)"
+                        class="px-1.5 py-0.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 text-[10px] font-mono cursor-pointer">
+                        <option value="OWNER">OWNER</option>
+                        <option value="EDITOR">EDITOR</option>
+                        <option value="VIEWER">VIEWER</option>
+                      </select>
+
+                      <button
+                        (click)="onRemoveMember(member.userId)"
+                        [title]="'projects.membersModal.removeTooltip' | translate"
+                        class="text-red-500 hover:text-red-700 dark:hover:text-red-400 p-1 cursor-pointer">
+                        <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+                      </button>
+                    } @else {
+                      <span class="px-2 py-0.5 font-mono text-[10px] font-bold border border-[#6B5A52] dark:border-[#2D3762] bg-[#F2EBE6] dark:bg-[#1A203B] text-[#2A201B] dark:text-slate-200">
+                        {{ member.role }}
+                      </span>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- Cerrar -->
+          <div class="pt-3 border-t border-[#6B5A52]/30 dark:border-[#283256] flex justify-end">
+            <button
+              (click)="closeMembersModal()"
+              class="px-4 py-1.5 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#1C2242] dark:hover:bg-[#252E56] text-white font-mono text-xs font-bold border border-[#2A201B] dark:border-[#2D3762] cursor-pointer">
+              {{ 'common.close' | translate }}
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- MODAL: MI PERFIL (COMPONENTE REUTILIZABLE) -->
+  <app-user-profile-modal
+    [isOpen]="isProfileModalOpen()"
+    (close)="isProfileModalOpen.set(false)">
+  </app-user-profile-modal>
+
+</div>

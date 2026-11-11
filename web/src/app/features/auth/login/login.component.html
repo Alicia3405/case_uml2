@@ -1,0 +1,131 @@
+<div class="min-h-screen flex items-center justify-center bg-[#F9F7F5] dark:bg-[#0D1124] px-4 py-8 relative selection:bg-[#6B5A52] selection:text-white transition-colors duration-200">
+  
+  <!-- Patrón de cuadrícula de fondo similar al lienzo -->
+  <div class="absolute inset-0 bg-[radial-gradient(#6B5A52_0.75px,transparent_0.75px)] dark:bg-[radial-gradient(#94A3B8_0.75px,transparent_0.75px)] [background-size:16px_16px] opacity-15 dark:opacity-10 pointer-events-none"></div>
+
+  <div class="w-full max-w-md relative z-10">
+    
+    <!-- Tarjeta Principal con estilo Enterprise Architect -->
+    <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] rounded-none shadow-[6px_6px_0px_rgba(0,0,0,0.15)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] overflow-hidden transition-colors duration-200">
+      
+      <!-- Encabezado de la Tarjeta estilo Barra de Título CASE -->
+      <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/30 px-6 py-4 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 bg-[#6B5A52] dark:bg-[#252E56] text-white flex items-center justify-center text-xs font-bold font-mono shadow-xs">
+            UML
+          </div>
+          <div>
+            <h1 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 tracking-tight uppercase">{{ 'common.appTitle' | translate }}</h1>
+            <p class="text-[10.5px] font-mono text-[#6B5A52] dark:text-slate-400">{{ 'common.appSubtitle' | translate }}</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <app-theme-toggle />
+          <app-language-selector />
+          <span class="text-[11px] font-mono px-2 py-0.5 border border-[#6B5A52] dark:border-[#2D3762] bg-[#F2EBE6] dark:bg-[#1A203B] text-[#2A201B] dark:text-slate-200 font-semibold">
+            {{ 'auth.badge' | translate }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Cuerpo del Formulario -->
+      <div class="p-6 sm:p-8">
+        
+        <div class="mb-6">
+          <h2 class="text-lg font-bold text-[#2A201B] dark:text-slate-100">{{ 'auth.login.title' | translate }}</h2>
+          <p class="text-xs text-[#6B5A52] dark:text-slate-400 mt-0.5">{{ 'auth.login.subtitle' | translate }}</p>
+        </div>
+
+        <!-- Mensaje de Error -->
+        @if (authService.errorMessage()) {
+          <div class="mb-5 p-3 bg-red-50 dark:bg-red-950/50 border border-red-400 dark:border-red-800 text-red-800 dark:text-red-300 text-xs font-mono rounded-none flex items-start gap-2">
+            <span class="font-bold text-red-600 dark:text-red-400">!</span>
+            <span>{{ authService.errorMessage() }}</span>
+          </div>
+        }
+
+        <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="space-y-4">
+          
+          <!-- Campo Email -->
+          <div>
+            <label class="block text-[11.5px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">
+              {{ 'auth.login.emailLabel' | translate }}
+            </label>
+            <input
+              type="email"
+              formControlName="email"
+              [placeholder]="'auth.login.emailPlaceholder' | translate"
+              [class.border-red-500]="loginForm.get('email')?.invalid && loginForm.get('email')?.touched"
+              class="w-full px-3 py-2 text-xs bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 focus:border-transparent transition-all shadow-inner placeholder:text-slate-400 dark:placeholder:text-slate-600"
+            />
+            @if (loginForm.get('email')?.invalid && loginForm.get('email')?.touched) {
+              <p class="text-[10px] text-red-600 dark:text-red-400 font-mono mt-1">{{ 'auth.login.emailInvalid' | translate }}</p>
+            }
+          </div>
+
+          <!-- Campo Contraseña -->
+          <div>
+            <label class="block text-[11.5px] font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase tracking-wider mb-1">
+              {{ 'auth.login.passwordLabel' | translate }}
+            </label>
+            <div class="relative">
+              <input
+                [type]="showPassword() ? 'text' : 'password'"
+                formControlName="password"
+                [placeholder]="'auth.login.passwordPlaceholder' | translate"
+                [class.border-red-500]="loginForm.get('password')?.invalid && loginForm.get('password')?.touched"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 focus:border-transparent transition-all shadow-inner pr-10 placeholder:text-slate-400 dark:placeholder:text-slate-600"
+              />
+              <button
+                type="button"
+                (click)="togglePassword()"
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-mono cursor-pointer select-none">
+                {{ showPassword() ? ('auth.login.hidePassword' | translate) : ('auth.login.showPassword' | translate) }}
+              </button>
+            </div>
+            @if (loginForm.get('password')?.invalid && loginForm.get('password')?.touched) {
+              <p class="text-[10px] text-red-600 dark:text-red-400 font-mono mt-1">{{ 'auth.login.passwordInvalid' | translate }}</p>
+            }
+          </div>
+
+          <!-- Botón de Envío -->
+          <div class="pt-2">
+            <button
+              type="submit"
+              [disabled]="authService.isLoading()"
+              class="w-full py-2.5 px-4 bg-[#6B5A52] hover:bg-[#52443E] dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] active:translate-y-0.5 text-white font-mono text-xs font-bold tracking-wider uppercase border border-[#2A201B] dark:border-[#3730A3] shadow-[3px_3px_0px_rgba(0,0,0,0.2)] dark:shadow-[3px_3px_0px_rgba(10,13,26,0.5)] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              @if (authService.isLoading()) {
+                <span class="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>{{ 'auth.login.submitting' | translate }}</span>
+              } @else {
+                <span>{{ 'auth.login.submit' | translate }}</span>
+              }
+            </button>
+          </div>
+
+        </form>
+
+        <!-- Enlace a Registro -->
+        <div class="mt-6 pt-4 border-t border-[#6B5A52]/30 dark:border-[#283256] text-center">
+          <p class="text-xs text-[#6B5A52] dark:text-slate-400">
+            {{ 'auth.login.noAccount' | translate }}
+            <a routerLink="/register" class="font-bold text-[#2A201B] dark:text-indigo-400 hover:underline ml-1">
+              {{ 'auth.login.createAccount' | translate }}
+            </a>
+          </p>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Pie de página informativo -->
+    <div class="mt-4 text-center">
+      <p class="text-[10.5px] font-mono text-[#6B5A52] dark:text-slate-500">
+        {{ 'common.collaborativeModeling' | translate }}
+      </p>
+    </div>
+
+  </div>
+
+</div>

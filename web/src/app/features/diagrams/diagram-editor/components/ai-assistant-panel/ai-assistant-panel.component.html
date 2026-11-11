@@ -1,0 +1,413 @@
+<!-- 4. [PANEL IA] COPILOT CONTEXTUAL TIPO CHAT (VERTEX AI GEMINI 2.5 FLASH) -->
+@if (isOpen()) {
+  <aside class="w-[430px] bg-[#EFEFEF] dark:bg-[#121629] border-l border-[#B8B8B8] dark:border-[#283256] flex flex-col shrink-0 text-xs text-slate-800 dark:text-slate-200 shadow-2xl z-20 animate-in slide-in-from-right duration-150 h-full">
+    
+    <!-- Header Panel IA con Selector de Modelo -->
+    <div class="bg-gradient-to-b from-[#EAEAEA] to-[#DCDCDC] dark:from-[#1E2442] dark:to-[#161B33] border-b border-[#C0C0C0] dark:border-[#283256] shrink-0 shadow-xs">
+      <div class="px-3.5 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div
+            [ngClass]="selectedProvider() === 'ollama' ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-300 dark:border-emerald-600 text-emerald-600 dark:text-emerald-300' : 'bg-purple-100 dark:bg-purple-900/40 border-purple-300 dark:border-purple-600 text-purple-600 dark:text-purple-300'"
+            class="w-6 h-6 rounded-full border flex items-center justify-center shadow-xs transition-colors">
+            <ng-icon [name]="selectedProvider() === 'ollama' ? 'heroCpuChip' : 'heroSparkles'" class="text-sm"></ng-icon>
+          </div>
+          <div>
+            <div class="font-bold text-slate-900 dark:text-slate-100 leading-tight flex items-center gap-1.5">
+              <span>{{ 'ai.title' | translate }}</span>
+              <span
+                [ngClass]="selectedProvider() === 'ollama' ? 'bg-emerald-700 dark:bg-emerald-600' : 'bg-purple-700 dark:bg-purple-600'"
+                class="px-1.5 py-0.2 rounded-full text-[9px] text-white font-mono font-medium transition-colors">
+                {{ selectedProvider() === 'ollama' ? 'Ollama Local' : 'Vertex AI' }}
+              </span>
+            </div>
+            <span class="text-[9.5px] text-slate-500 dark:text-slate-400 font-mono truncate max-w-[200px] block">
+              {{ getSelectedModel()?.name || 'Copilot UML' }}
+            </span>
+          </div>
+        </div>
+        <button
+          (click)="closePanel.emit()"
+          [title]="'ai.hideTooltip' | translate"
+          class="text-slate-500 hover:text-slate-900 hover:bg-slate-300 dark:text-slate-400 dark:hover:text-white dark:hover:bg-[#252E56] font-bold cursor-pointer text-xs p-1.5 rounded transition-colors flex items-center gap-0.5">
+          <ng-icon name="heroChevronRight" class="text-sm"></ng-icon>
+        </button>
+      </div>
+    </div>
+
+    <!-- Barra de Selección de Modelo de IA (Local Ollama / Nube Vertex) -->
+    <div class="px-3 py-2 bg-white/70 dark:bg-[#151A30] border-b border-[#C0C0C0] dark:border-[#283256] flex flex-col gap-1.5 shrink-0">
+      <div class="flex items-center justify-between">
+        <label for="ai-model-select" class="text-[10px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
+          <ng-icon [name]="selectedProvider() === 'ollama' ? 'heroCpuChip' : 'heroSparkles'" class="text-xs" [ngClass]="selectedProvider() === 'ollama' ? 'text-emerald-600 dark:text-emerald-400' : 'text-purple-600 dark:text-purple-400'"></ng-icon>
+          <span>Modelo de Inferencia</span>
+        </label>
+
+        <div class="flex items-center gap-1.5">
+          @if (isOllamaAvailable()) {
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Ollama Local Activo
+            </span>
+          } @else {
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+              Solo Nube
+            </span>
+          }
+
+          <button
+            (click)="loadAvailableModels()"
+            type="button"
+            title="Actualizar lista de modelos desde Ollama"
+            class="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#252E56] transition-colors cursor-pointer"
+            [disabled]="isLoadingModels()">
+            <ng-icon name="heroArrowPath" class="text-xs" [ngClass]="{ 'animate-spin': isLoadingModels() }"></ng-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- Selector Desplegable Personalizado (Custom Dropdown) -->
+      <div class="relative">
+        <!-- Botón Desplegable -->
+        <button
+          type="button"
+          (click)="toggleModelDropdown()"
+          class="w-full text-left text-xs font-mono py-1.5 px-2.5 bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] hover:border-purple-500 dark:hover:border-purple-500 rounded flex items-center justify-between text-slate-800 dark:text-slate-200 transition-colors cursor-pointer shadow-xs focus:ring-1 focus:ring-purple-600 focus:outline-none">
+          <div class="flex items-center gap-2 truncate">
+            <span class="text-xs shrink-0">{{ getSelectedModel()?.isLocal ? '⚡' : '☁️' }}</span>
+            <span class="font-semibold truncate text-[11.5px]">
+              {{ getSelectedModel()?.name || 'Selecciona un modelo...' }}
+            </span>
+            @if (getSelectedModel()?.parameterSize; as pSize) {
+              <span class="text-[9px] px-1 py-0.2 rounded bg-slate-100 dark:bg-[#1E2442] text-slate-600 dark:text-slate-400 font-mono shrink-0">
+                {{ pSize }}
+              </span>
+            }
+          </div>
+          <ng-icon [name]="isModelDropdownOpen() ? 'heroChevronUp' : 'heroChevronDown'" class="text-xs text-slate-400 shrink-0 ml-1.5"></ng-icon>
+        </button>
+
+        <!-- Menú Desplegable Flotante -->
+        @if (isModelDropdownOpen()) {
+          <!-- Backdrop invisible para capturar clics fuera -->
+          <div (click)="closeModelDropdown()" class="fixed inset-0 z-40 bg-transparent"></div>
+
+          <!-- Panel de opciones -->
+          <div class="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-[#151A30] border border-slate-300 dark:border-[#3B487A] rounded-md shadow-2xl z-50 overflow-hidden text-xs divide-y divide-slate-100 dark:divide-[#222B4D] animate-in fade-in zoom-in-95 duration-100 max-h-64 overflow-y-auto">
+            @for (m of availableModels(); track m.id) {
+              <button
+                type="button"
+                (click)="selectModel(m)"
+                class="w-full text-left p-2 hover:bg-purple-50 dark:hover:bg-[#1E2442] flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                [ngClass]="{ 'bg-purple-50/70 dark:bg-[#1B213D] border-l-2 border-purple-600': m.id === selectedModelId() }">
+                <div class="space-y-0.5 min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5 font-medium text-slate-900 dark:text-slate-100">
+                    <span class="text-[11px]">{{ m.isLocal ? '⚡' : '☁️' }}</span>
+                    <span class="font-semibold text-xs truncate">{{ m.name }}</span>
+                    <span
+                      [ngClass]="m.isLocal ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800' : 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800'"
+                      class="px-1.5 py-0.2 rounded text-[8.5px] font-mono border">
+                      {{ m.isLocal ? 'Local Ollama' : 'Cloud Vertex' }}
+                    </span>
+                  </div>
+                  <div class="text-[9.5px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                    <span class="truncate">{{ m.description }}</span>
+                    @if (m.sizeMb) {
+                      <span class="shrink-0 text-slate-400">• {{ m.sizeMb }} MB</span>
+                    }
+                  </div>
+                </div>
+                @if (m.id === selectedModelId()) {
+                  <span class="text-purple-600 dark:text-purple-400 font-bold text-sm shrink-0 pl-1">✓</span>
+                }
+              </button>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Detalle del Modelo Activo -->
+      @if (getSelectedModel(); as sel) {
+        <div class="text-[9px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between px-0.5">
+          <span class="truncate">{{ sel.description || (sel.isLocal ? 'Ejecución en tu máquina' : 'Google Cloud Vertex AI') }}</span>
+          @if (sel.sizeMb) {
+            <span class="text-slate-400 dark:text-slate-500 shrink-0 ml-1 font-semibold">{{ sel.sizeMb }} MB</span>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Input oculto para subir imágenes de diagramas -->
+    <input
+      #imageInput
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/jpg"
+      (change)="onImageSelected($event)"
+      class="hidden" />
+
+    <!-- 1. FEED CONVERSACIONAL DE CHAT (SCROLLABLE) -->
+    <div #chatScrollContainer class="flex-1 p-3.5 overflow-y-auto space-y-3 min-h-0 bg-[#F4F4F6] dark:bg-[#0D1124]">
+        @for (msg of aiChatMessages(); track msg.id) {
+          
+          <!-- Mensaje del Usuario -->
+          @if (msg.sender === 'user') {
+            <div class="flex items-start justify-end gap-2 animate-in fade-in slide-in-from-bottom-1">
+              <div class="max-w-[85%] space-y-1">
+                @if (msg.imagePreview) {
+                  <div class="p-1 bg-white dark:bg-[#151A30] border border-purple-200 dark:border-purple-800 rounded-md shadow-xs mb-1">
+                    <img [src]="msg.imagePreview" class="max-h-36 max-w-full rounded object-contain" alt="Imagen adjunta" />
+                  </div>
+                }
+                <div class="p-2.5 bg-gradient-to-r from-purple-700 to-indigo-800 dark:from-purple-800 dark:to-indigo-900 text-white rounded-2xl rounded-tr-xs text-[11.5px] shadow-sm leading-relaxed">
+                  <p class="whitespace-pre-wrap">{{ msg.text }}</p>
+                </div>
+                <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500 text-right pr-1">
+                  {{ msg.timestamp | date:'HH:mm:ss' }}
+                </div>
+              </div>
+              <div class="w-6 h-6 rounded-full bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                {{ (authService.currentUser()?.fullName || 'U').charAt(0).toUpperCase() }}
+              </div>
+            </div>
+          }
+
+          <!-- Mensaje del Asistente IA -->
+          @else {
+            <div class="flex items-start gap-2 animate-in fade-in slide-in-from-bottom-1">
+              <div class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                <ng-icon name="heroSparkles" class="text-xs"></ng-icon>
+              </div>
+              <div class="max-w-[85%] space-y-1.5">
+                <div
+                  [ngClass]="{
+                    'bg-white dark:bg-[#151A30] border-slate-300 dark:border-[#2D3762] text-slate-800 dark:text-slate-200': msg.status === 'success' || !msg.status,
+                    'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200': msg.status === 'clarification',
+                    'bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-700 text-red-900 dark:text-red-200': msg.status === 'error'
+                  }"
+                  class="p-2.5 border rounded-2xl rounded-tl-xs text-[11.5px] shadow-xs leading-relaxed space-y-1.5">
+                  
+                  @if (msg.status === 'clarification') {
+                    <div class="flex items-center gap-1 font-bold text-amber-800 dark:text-amber-300 text-[10.5px]">
+                      <span>⚠️ Aclaración Requerida</span>
+                    </div>
+                    <p class="whitespace-pre-wrap text-amber-950 dark:text-amber-100 font-medium">{{ msg.text || 'Por favor especifica las tablas, atributos o relaciones concretas que requieres para el diagrama, o adjunta una imagen.' }}</p>
+                  } @else {
+                    <p class="whitespace-pre-wrap">{{ msg.text }}</p>
+                  }
+
+                  @if (msg.changesSummary) {
+                    <div class="p-1.5 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 rounded text-[10px] font-mono text-purple-900 dark:text-purple-300 flex items-center gap-1">
+                      <span class="text-purple-600 dark:text-purple-400 font-bold">✓</span>
+                      <span class="truncate">{{ msg.changesSummary }}</span>
+                    </div>
+                  }
+
+                  @if (msg.modelUsed) {
+                    <div class="pt-0.5 flex items-center gap-1 text-[9px] font-mono">
+                      <span
+                        [ngClass]="msg.providerUsed === 'ollama' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800' : 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800'"
+                        class="px-1.5 py-0.5 rounded border flex items-center gap-1 font-semibold">
+                        <ng-icon [name]="msg.providerUsed === 'ollama' ? 'heroCpuChip' : 'heroSparkles'" class="text-[10px]"></ng-icon>
+                        <span>{{ msg.providerUsed === 'ollama' ? '⚡ Local' : '☁️ Nube' }}: {{ msg.modelUsed }}</span>
+                      </span>
+                    </div>
+                  }
+                </div>
+                <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500 pl-1">
+                  {{ msg.timestamp | date:'HH:mm:ss' }}
+                </div>
+              </div>
+            </div>
+          }
+        }
+
+        <!-- Indicador de "Escribiendo / Procesando" -->
+        @if (isAiProcessing()) {
+          <div class="flex items-start gap-2 animate-in fade-in">
+            <div class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+              <ng-icon name="heroSparkles" class="text-xs"></ng-icon>
+            </div>
+            <div class="p-2.5 bg-white dark:bg-[#151A30] border border-slate-300 dark:border-[#2D3762] rounded-2xl rounded-tl-xs shadow-xs flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 font-mono">
+              <span class="w-3.5 h-3.5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></span>
+              <span>Copilot está razonando y generando el diagrama...</span>
+            </div>
+          </div>
+        }
+      </div>
+
+    <!-- 2. BANDEJA DE ENTRADA INFERIOR (AMPLIA, TIPO CHAT) -->
+    <div class="p-3 bg-white dark:bg-[#121629] border-t border-[#C0C0C0] dark:border-[#283256] shrink-0 space-y-2">
+      
+      <!-- Chips de Comandos Sugeridos -->
+      <div class="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[10px]">
+        <button
+          (click)="setAiSuggestion('Crea una tabla Producto con atributos id UUID, nombre String, precio Double y relacionala con Usuarios con multiplicidad *')"
+          class="px-2 py-0.5 bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-200 border border-slate-300 dark:border-[#2D3762] rounded-full shrink-0 transition-colors cursor-pointer">
+          ✨ Crear Producto y relación
+        </button>
+        <button
+          (click)="setAiSuggestion('Agrega la clase FacturaDetalle con cantidad Integer, precio_unitario Double y subtotal Double')"
+          class="px-2 py-0.5 bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-200 border border-slate-300 dark:border-[#2D3762] rounded-full shrink-0 transition-colors cursor-pointer">
+          ✨ Agregar FacturaDetalle
+        </button>
+        <button
+          (click)="setAiSuggestion('Crear relación de Composición entre Pedido y DetallePedido con multiplicidad 1 a 1..*')"
+          class="px-2 py-0.5 bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-200 border border-slate-300 dark:border-[#2D3762] rounded-full shrink-0 transition-colors cursor-pointer">
+          ✨ Composición 1 a 1..*
+        </button>
+      </div>
+
+      <!-- Preview de Imagen Adjunta (si hay una cargada) -->
+      @if (attachedImageBase64()) {
+        <div class="p-1.5 bg-purple-50 dark:bg-[#1A203E] border border-purple-300 dark:border-[#3B487A] rounded flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 truncate">
+            <img [src]="attachedImageBase64()" class="w-9 h-9 object-cover rounded border border-purple-200 dark:border-purple-800" alt="Vista previa" />
+            <div class="truncate">
+              <p class="text-[11px] font-mono text-purple-900 dark:text-purple-200 truncate font-medium">{{ attachedImageName() }}</p>
+              <p class="text-[9px] text-purple-600 dark:text-purple-400">
+                Imagen lista para digitalizar con Gemini Vision
+                @if (selectedProvider() === 'ollama') {
+                  <span class="text-amber-600 dark:text-amber-400 font-semibold">(visión multimodal en nube)</span>
+                }
+              </p>
+            </div>
+          </div>
+          <button
+            (click)="removeAttachedImage()"
+            title="Quitar imagen"
+            class="text-purple-600 dark:text-purple-400 hover:text-red-700 dark:hover:text-red-400 font-bold text-base px-1.5 cursor-pointer">
+            &times;
+          </button>
+        </div>
+      }
+
+      <!-- Indicador de Grabación de Voz Activa -->
+      @if (isVoiceListening()) {
+        <div class="px-2.5 py-1 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded text-[10.5px] font-mono text-red-700 dark:text-red-300 flex items-center justify-between animate-pulse">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-red-600"></span>
+            <span>Escuchando tu voz... Habla ahora.</span>
+          </div>
+          <button (click)="toggleVoiceRecognition()" class="text-red-800 dark:text-red-400 font-bold underline text-[10px] cursor-pointer">Detener</button>
+        </div>
+      }
+
+      <!-- Caja de Entrada con Textarea Alto, Drag&Drop y Pegado Directo (Ctrl+V) -->
+      <div
+        (paste)="onPasteImage($event)"
+        (dragover)="$event.preventDefault()"
+        (drop)="onDropImage($event)"
+        class="relative border border-[#6B5A52] dark:border-[#2D3762] rounded bg-white dark:bg-[#0E1225] shadow-inner focus-within:ring-2 focus-within:ring-purple-600 focus-within:border-transparent transition-all">
+        <textarea
+          [ngModel]="aiPrompt()"
+          (ngModelChange)="aiPrompt.set($event)"
+          (keydown)="onAiInputKeyDown($any($event))"
+          (paste)="onPasteImage($event)"
+          rows="4"
+          [placeholder]="attachedImageBase64() ? 'Instrucción opcional para la imagen (o presiona Enter para digitalizar todo)...' : 'Escribe tu instrucción, pega una captura (Ctrl+V) o arrastra una imagen aquí...'"
+          class="w-full p-2.5 text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 bg-transparent focus:outline-none resize-none min-h-[95px] pr-28"></textarea>
+
+        <!-- Botones de Acción Multimedia e interactivos en la esquina inferior derecha -->
+        <div class="absolute bottom-2 right-2 flex items-center gap-1">
+          <!-- Botón Micrófono / Dictado por Voz -->
+          <button
+            (click)="toggleVoiceRecognition()"
+            type="button"
+            [title]="isVoiceListening() ? 'Detener dictado por voz' : 'Dictar comando por voz'"
+            [ngClass]="{
+              'bg-red-600 text-white animate-pulse ring-2 ring-red-400': isVoiceListening(),
+              'bg-slate-100 dark:bg-[#1E2442] text-slate-700 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-[#2E3766] hover:text-purple-800 dark:hover:text-purple-200 border border-slate-300 dark:border-[#3B487A]': !isVoiceListening()
+            }"
+            class="p-1.5 rounded-full transition-all cursor-pointer flex items-center justify-center shadow-xs">
+            <ng-icon [name]="isVoiceListening() ? 'heroStop' : 'heroMicrophone'" class="text-xs"></ng-icon>
+          </button>
+
+          <!-- Botón Pegar del Portapapeles (1 clic) -->
+          <button
+            (click)="pasteFromClipboard()"
+            type="button"
+            title="Pegar captura desde el portapapeles (o presiona Ctrl+V)"
+            class="p-1.5 bg-slate-100 dark:bg-[#1E2442] text-slate-700 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-[#2E3766] hover:text-purple-800 dark:hover:text-purple-200 border border-slate-300 dark:border-[#3B487A] rounded-full transition-all cursor-pointer flex items-center justify-center shadow-xs">
+            <ng-icon name="heroClipboard" class="text-xs"></ng-icon>
+          </button>
+
+          <!-- Botón Tomar Foto con Cámara Web -->
+          <button
+            (click)="openWebcamModal()"
+            type="button"
+            title="Tomar foto con la cámara (pizarra o cuaderno)"
+            class="p-1.5 bg-slate-100 dark:bg-[#1E2442] text-slate-700 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-[#2E3766] hover:text-purple-800 dark:hover:text-purple-200 border border-slate-300 dark:border-[#3B487A] rounded-full transition-all cursor-pointer flex items-center justify-center shadow-xs">
+            <ng-icon name="heroCamera" class="text-xs"></ng-icon>
+          </button>
+
+          <!-- Botón Subir Archivo de Imagen -->
+          <button
+            (click)="triggerImageInput()"
+            type="button"
+            title="Subir archivo de imagen desde disco"
+            class="p-1.5 bg-slate-100 dark:bg-[#1E2442] text-slate-700 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-[#2E3766] hover:text-purple-800 dark:hover:text-purple-200 border border-slate-300 dark:border-[#3B487A] rounded-full transition-all cursor-pointer flex items-center justify-center shadow-xs">
+            <ng-icon name="heroPhoto" class="text-xs"></ng-icon>
+          </button>
+
+          <!-- Botón Enviar Mensaje (Enter) -->
+          <button
+            (click)="applyAiPrompt()"
+            [disabled]="isAiProcessing() || (!aiPrompt().trim() && !attachedImageBase64())"
+            title="Enviar mensaje (Enter)"
+            class="p-1.5 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-700 text-white rounded-full transition-all cursor-pointer flex items-center justify-center shadow-xs disabled:opacity-30 disabled:cursor-not-allowed">
+            <ng-icon name="heroPaperAirplane" class="text-xs"></ng-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- Pie de ayuda -->
+      <div class="flex items-center justify-between text-[9.5px] font-mono text-slate-400 dark:text-slate-500 px-0.5">
+        <span>Enter para enviar • Shift+Enter para salto de línea</span>
+        <span class="text-emerald-700 dark:text-emerald-400 font-bold">● Sincronizado en vivo</span>
+      </div>
+
+    </div>
+
+  </aside>
+}
+
+<!-- MODAL DE CAPTURA CON CÁMARA WEB PARA COPILOT IA -->
+@if (showWebcamModal()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+    <div class="bg-[#F2EBE6] dark:bg-[#151A30] border-[1.5px] border-[#6B5A52] dark:border-[#3B487A] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] max-w-lg w-full overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Header -->
+      <div class="px-4 py-3 bg-[#6B5A52] dark:bg-[#1E2442] text-white flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <ng-icon name="heroCamera" class="text-base text-amber-300"></ng-icon>
+          <h3 class="font-bold uppercase tracking-wider font-mono text-[11px]">Capturar Diagrama con Cámara Web</h3>
+        </div>
+        <button (click)="closeWebcamModal()" class="text-white hover:text-red-200 text-lg font-bold cursor-pointer leading-none">&times;</button>
+      </div>
+
+      <!-- Video en Vivo -->
+      <div class="p-4 bg-slate-900 flex flex-col items-center justify-center min-h-[260px] relative">
+        <video #webcamVideo autoplay playsinline class="w-full max-h-[300px] object-contain rounded border border-slate-700 bg-black"></video>
+        <div class="absolute bottom-6 text-[10px] font-mono text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
+          Apunta la cámara a tu libreta, pizarra o boceto en papel
+        </div>
+      </div>
+
+      <!-- Footer Acciones -->
+      <div class="p-3 border-t border-[#6B5A52]/30 dark:border-[#3B487A] flex justify-between items-center bg-white/30 dark:bg-[#121629]">
+        <button
+          (click)="closeWebcamModal()"
+          class="px-3.5 py-1.5 bg-white dark:bg-[#1E2442] hover:bg-slate-100 dark:hover:bg-[#252E56] border border-[#6B5A52] dark:border-[#3B487A] text-[#2A201B] dark:text-slate-200 font-mono cursor-pointer">
+          Cancelar
+        </button>
+        <button
+          (click)="captureWebcamPhoto()"
+          class="px-4 py-1.5 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-700 text-white font-mono font-bold uppercase border border-purple-950 shadow-xs cursor-pointer flex items-center gap-1.5">
+          <ng-icon name="heroCamera" class="text-xs text-amber-300"></ng-icon>
+          Tomar Foto y Digitalizar
+        </button>
+      </div>
+
+    </div>
+  </div>
+}

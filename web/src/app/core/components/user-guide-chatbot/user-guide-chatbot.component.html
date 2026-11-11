@@ -1,0 +1,290 @@
+<!-- BOTÓN FLOTANTE ACTIVADOR (LAUNCHER) -->
+@if (!isOpen()) {
+  <div class="fixed bottom-5 right-5 z-50 flex items-center gap-3">
+    <!-- Tooltip / Badge de Bienvenida -->
+    <div
+      (click)="toggleOpen()"
+      class="hidden md:flex items-center gap-2 bg-white dark:bg-[#151B38] text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-[#283256] shadow-xl px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer hover:scale-105 transition-all animate-bounce">
+      <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+      <span [innerHTML]="'guide.launcherBadge' | translate"></span>
+    </div>
+
+    <!-- Botón Circular Principal -->
+    <button
+      (click)="toggleOpen()"
+      [title]="'guide.openTooltip' | translate"
+      class="relative group bg-gradient-to-tr from-[#1B4E8C] via-[#2B6CB0] to-indigo-600 hover:from-[#153D6F] hover:to-indigo-500 text-white p-3.5 rounded-full shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95 flex items-center justify-center border-2 border-white/20 cursor-pointer">
+      <ng-icon name="heroAcademicCap" class="text-2xl"></ng-icon>
+      <!-- Indicador online -->
+      <span class="absolute top-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-[#0D1124] bg-emerald-400"></span>
+    </button>
+  </div>
+}
+
+<!-- VENTANA DEL CHATBOT / GUÍA INTERACTIVA -->
+@if (isOpen()) {
+  <div
+    class="fixed z-50 transition-all duration-300 flex flex-col overflow-hidden bg-white dark:bg-[#11162B] border border-slate-300 dark:border-[#283256] shadow-2xl rounded-2xl"
+    [ngClass]="{
+      'inset-4 sm:inset-10 md:inset-16': isExpanded(),
+      'bottom-5 right-5 w-[94vw] sm:w-[460px] h-[620px] max-h-[90vh]': !isExpanded()
+    }">
+
+    <!-- 1. ENCABEZADO DE LA VENTANA -->
+    <div class="bg-gradient-to-r from-[#1B4E8C] via-[#245D9E] to-[#2B6CB0] dark:from-[#151B38] dark:via-[#1A2246] dark:to-[#121730] text-white px-4 py-3 border-b border-[#1A3E6B] dark:border-[#283256] flex items-center justify-between select-none shrink-0 shadow-sm">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center shadow-inner">
+          <ng-icon name="heroSparkles" class="text-lg text-amber-300"></ng-icon>
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5">
+            <h3 class="font-bold text-xs sm:text-sm tracking-tight leading-none text-white">{{ 'guide.title' | translate }}</h3>
+            <span class="text-[9.5px] font-mono bg-emerald-500/20 text-emerald-200 px-1.5 py-0.2 rounded border border-emerald-400/30">
+              UML Studio
+            </span>
+          </div>
+          <p class="text-[10.5px] font-sans text-sky-200 dark:text-slate-300 mt-0.5">{{ 'guide.subtitle' | translate }}</p>
+        </div>
+      </div>
+
+      <!-- Acciones de Ventana -->
+      <div class="flex items-center gap-1">
+        <!-- Reiniciar Chat -->
+        <button
+          (click)="resetChat()"
+          [title]="'guide.resetTooltip' | translate"
+          class="p-1.5 text-sky-100 hover:text-white hover:bg-white/10 rounded transition-colors cursor-pointer">
+          <ng-icon name="heroArrowPath" class="text-sm"></ng-icon>
+        </button>
+
+        <!-- Maximizar / Restaurar -->
+        <button
+          (click)="toggleExpand()"
+          [title]="isExpanded() ? ('guide.restoreTooltip' | translate) : ('guide.maximizeTooltip' | translate)"
+          class="p-1.5 text-sky-100 hover:text-white hover:bg-white/10 rounded transition-colors cursor-pointer">
+          <ng-icon [name]="isExpanded() ? 'heroArrowsPointingIn' : 'heroArrowsPointingOut'" class="text-sm"></ng-icon>
+        </button>
+
+        <!-- Cerrar -->
+        <button
+          (click)="toggleOpen()"
+          [title]="'guide.closeTooltip' | translate"
+          class="p-1.5 text-sky-100 hover:text-red-300 hover:bg-red-500/20 rounded transition-colors cursor-pointer ml-0.5">
+          <ng-icon name="heroXMark" class="text-base"></ng-icon>
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. BARRA DE NAVEGACIÓN DEL TOUR GUIADO (Visible solo si el tour está activo) -->
+    @if (isTourActive()) {
+      <div class="bg-indigo-50 dark:bg-[#1A2246] border-b border-indigo-200 dark:border-[#283256] px-4 py-2 flex items-center justify-between shrink-0 select-none text-xs">
+        <div class="flex items-center gap-2">
+          <span class="font-mono font-bold text-indigo-700 dark:text-indigo-300">
+            {{ 'guide.stepIndicator' | translate:{ current: currentTourStepIndex() + 1, total: currentTourSteps().length } }}
+          </span>
+          <span class="text-slate-400">|</span>
+          <span class="font-medium text-slate-700 dark:text-slate-200 truncate max-w-[170px] sm:max-w-xs">
+            {{ currentTourSteps()[currentTourStepIndex()].title }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <!-- Paso anterior -->
+          <button
+            (click)="prevTourStep()"
+            [disabled]="currentTourStepIndex() === 0"
+            class="px-2 py-1 bg-white dark:bg-[#11162B] border border-slate-300 dark:border-[#283256] text-slate-700 dark:text-slate-200 rounded text-[11px] font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1">
+            <ng-icon name="heroArrowLeft" class="text-xs"></ng-icon>
+            <span class="hidden sm:inline">{{ 'guide.prev' | translate }}</span>
+          </button>
+
+          <!-- Siguiente paso o Finalizar -->
+          @if (currentTourStepIndex() < currentTourSteps().length - 1) {
+            <button
+              (click)="nextTourStep()"
+              class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1 shadow-xs">
+              <span>{{ 'guide.next' | translate }}</span>
+              <ng-icon name="heroArrowRight" class="text-xs"></ng-icon>
+            </button>
+          } @else {
+            <button
+              (click)="finishTour()"
+              class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1 shadow-xs">
+              <ng-icon name="heroCheck" class="text-xs"></ng-icon>
+              <span>{{ 'guide.finish' | translate }}</span>
+            </button>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- 3. CUERPO DE MENSAJES CON SCROLL AUTOMÁTICO -->
+    <div
+      #messagesContainer
+      class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50 dark:bg-[#0D1124] text-xs font-sans">
+      
+      @for (msg of messages(); track msg.id) {
+        <div
+          class="flex flex-col"
+          [ngClass]="{
+            'items-end': msg.sender === 'user',
+            'items-start': msg.sender === 'bot'
+          }">
+          
+          <div class="flex items-end gap-2 max-w-[90%] sm:max-w-[85%]">
+            <!-- Avatar Bot -->
+            @if (msg.sender === 'bot') {
+              <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-[#1B4E8C] to-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs mb-1">
+                <ng-icon name="heroAcademicCap" class="text-sm"></ng-icon>
+              </div>
+            }
+
+            <!-- Burbuja de Mensaje -->
+            <div
+              class="p-3.5 rounded-2xl shadow-sm leading-relaxed"
+              [ngClass]="{
+                'bg-indigo-600 text-white rounded-br-xs': msg.sender === 'user',
+                'bg-white dark:bg-[#151B38] text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-[#283256] rounded-bl-xs': msg.sender === 'bot'
+              }">
+              
+              <!-- Texto del Mensaje Renderizado en HTML/Markdown Enriquecido -->
+              <div
+                class="text-xs leading-relaxed markdown-content"
+                [innerHTML]="formatMarkdown(msg.text, msg.sender)">
+              </div>
+
+              <!-- Bloque de Código ejecutable (si existe) -->
+              @if (msg.codeSnippet) {
+                <div class="mt-3 rounded-lg overflow-hidden border border-slate-700/60 bg-[#1E1E2E] text-slate-200 font-mono text-[11px] shadow-md">
+                  <div class="bg-[#181825] px-3 py-1.5 flex items-center justify-between border-b border-slate-700/40 text-[10px] text-slate-400">
+                    <span class="flex items-center gap-1">
+                      <ng-icon name="heroCommandLine" class="text-xs text-amber-400"></ng-icon>
+                      <span>{{ msg.codeLanguage || 'terminal' }}</span>
+                    </span>
+                    <button
+                      (click)="copyCode(msg.codeSnippet, msg.id)"
+                      class="flex items-center gap-1 hover:text-white transition-colors cursor-pointer text-[10px]">
+                      @if (copiedCodeId() === msg.id) {
+                        <ng-icon name="heroCheck" class="text-xs text-emerald-400"></ng-icon>
+                        <span class="text-emerald-400 font-semibold">{{ 'guide.copied' | translate }}</span>
+                      } @else {
+                        <ng-icon name="heroClipboardDocument" class="text-xs"></ng-icon>
+                        <span>{{ 'guide.copy' | translate }}</span>
+                      }
+                    </button>
+                  </div>
+                  <pre class="p-3 overflow-x-auto text-[11px] leading-relaxed text-sky-300 selection:bg-indigo-500 selection:text-white"><code>{{ msg.codeSnippet }}</code></pre>
+                </div>
+              }
+
+              <!-- Botones de Acción Rápida dentro del Mensaje -->
+              @if (msg.quickActions && msg.quickActions.length > 0) {
+                <div class="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-700/60 flex flex-wrap gap-1.5">
+                  @for (action of msg.quickActions; track action.label) {
+                    <button
+                      (click)="sendMessage(action.query)"
+                      class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-[#1E2548] dark:hover:bg-[#252E56] text-indigo-700 dark:text-indigo-300 font-medium rounded-full text-[10.5px] border border-indigo-200 dark:border-[#2D3762] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs">
+                      <span>{{ action.label }}</span>
+                      <ng-icon name="heroArrowRight" class="text-[9px]"></ng-icon>
+                    </button>
+                  }
+                </div>
+              }
+
+            </div>
+          </div>
+
+          <!-- Hora del mensaje -->
+          <span class="text-[9.5px] text-slate-400 dark:text-slate-500 mt-1 px-1 font-mono">
+            {{ msg.timestamp | date:'shortTime' }}
+          </span>
+
+        </div>
+      }
+
+      <!-- Indicador de Escritura / Pensando -->
+      @if (isTyping()) {
+        <div class="flex items-center gap-2 max-w-[80%]">
+          <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-[#1B4E8C] to-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <ng-icon name="heroAcademicCap" class="text-sm"></ng-icon>
+          </div>
+          <div class="p-3 bg-white dark:bg-[#151B38] border border-slate-200 dark:border-[#283256] rounded-2xl rounded-bl-xs shadow-xs flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <span class="w-1.5 h-1.5 bg-indigo-600 dark:bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+            <span class="w-1.5 h-1.5 bg-indigo-600 dark:bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+            <span class="w-1.5 h-1.5 bg-indigo-600 dark:bg-indigo-400 rounded-full animate-bounce"></span>
+            <span class="ml-1 text-[11px] font-mono">{{ 'guide.searching' | translate }}</span>
+          </div>
+        </div>
+      }
+
+    </div>
+
+    <!-- 4. PÍLDORAS DE PREGUNTAS FRECUENTES (CARRUSEL HORIZONTAL CON CONTROLES Y SCROLLBAR ELEGANTE) -->
+    <div class="px-2 py-2 bg-slate-100 dark:bg-[#151B38]/90 border-t border-slate-200 dark:border-[#283256] flex items-center gap-1 shrink-0 select-none">
+      
+      <!-- Botón Flecha Izquierda -->
+      <button
+        type="button"
+        (click)="scrollPills(-160)"
+        [title]="'guide.scrollLeft' | translate"
+        class="p-1 rounded-full text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-[#1A2246] transition-colors cursor-pointer shrink-0">
+        <ng-icon name="heroChevronLeft" class="text-sm"></ng-icon>
+      </button>
+
+      <!-- Contenedor scrollable horizontal con scrollbar visible y mousewheel horizontal -->
+      <div
+        #pillsContainer
+        (wheel)="onPillsWheel($event)"
+        class="flex-1 overflow-x-auto pb-1.5 pt-0.5 flex items-center gap-1.5 topics-scrollbar">
+        
+        <span class="text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider shrink-0 flex items-center gap-1 sticky left-0 bg-slate-100/90 dark:bg-[#151B38]/90 py-0.5 px-1 rounded backdrop-blur-xs z-10">
+          <ng-icon name="heroLightBulb" class="text-amber-500"></ng-icon>
+          <span>{{ 'guide.topicsLabel' | translate }}</span>
+        </span>
+
+        @for (pill of quickPills(); track pill.label) {
+          <button
+            type="button"
+            (click)="sendMessage(pill.query)"
+            class="px-2.5 py-1 bg-white hover:bg-indigo-50 dark:bg-[#101426] dark:hover:bg-[#1A2246] text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-300 rounded-full text-[10.5px] border border-slate-300 dark:border-[#283256] shrink-0 transition-colors cursor-pointer shadow-2xs font-medium whitespace-nowrap">
+            {{ pill.label }}
+          </button>
+        }
+      </div>
+
+      <!-- Botón Flecha Derecha -->
+      <button
+        type="button"
+        (click)="scrollPills(160)"
+        [title]="'guide.scrollRight' | translate"
+        class="p-1 rounded-full text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-[#1A2246] transition-colors cursor-pointer shrink-0">
+        <ng-icon name="heroChevronRight" class="text-sm"></ng-icon>
+      </button>
+
+    </div>
+
+    <!-- 5. BARRA INFERIOR DE ENTRADA DE TEXTO -->
+    <div class="p-3 bg-white dark:bg-[#11162B] border-t border-slate-200 dark:border-[#283256] shrink-0">
+      <form (ngSubmit)="sendMessage()" class="flex items-center gap-2">
+        <input
+          type="text"
+          [ngModel]="userInput()"
+          (ngModelChange)="userInput.set($event)"
+          name="guideQuery"
+          [placeholder]="'guide.inputPlaceholder' | translate"
+          class="flex-1 px-3.5 py-2 bg-slate-50 dark:bg-[#0D1124] border border-slate-300 dark:border-[#283256] rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+        />
+        <button
+          type="submit"
+          [disabled]="!userInput().trim()"
+          class="p-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center shrink-0">
+          <ng-icon name="heroPaperAirplane" class="text-sm transform rotate-45"></ng-icon>
+        </button>
+      </form>
+      <p class="text-[9.5px] text-slate-400 dark:text-slate-500 mt-1.5 text-center font-mono">
+        {{ 'guide.inputTip' | translate }}
+      </p>
+    </div>
+
+  </div>
+}
