@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Plantilla CloudFormation para desplegar una nueva instancia EC2
+  en AWS (Cuenta 886595575652) dedicada exclusivamente a case_uml2
+  sin interferir con el despliegue existente.
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de llaves SSH (Key Pair) existente en tu cuenta de AWS.
+    Default: case-studio-key
+
+  InstanceType:
+    Type: String
+    Description: Tipo de instancia EC2 para case_uml2.
+    Default: t3.medium
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t2.medium
+
+  LatestUbuntuAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id'
+    Description: AMI oficial más reciente de Ubuntu 24.04 LTS.
+
+  VolumeSizeGB:
+    Type: Number
+    Description: Tamaño del disco raíz (gp3) en Gigabytes.
+    Default: 30
+    MinValue: 20
+    MaxValue: 100
+
+Resources:
+  # --- Grupo de Seguridad Aislado para case_uml2 ---
+  CaseUml2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Reglas de firewall exclusivas para case_uml2 (SSH, HTTP, HTTPS, Web y API)
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH Acceso remoto
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP Trafico Web (Nginx)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS Trafico Seguro (SSL Let's Encrypt)
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+          Description: Web Frontend Directo
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          CidrIp: 0.0.0.0/0
+          Description: Backend NestJS API Directo
+      Tags:
+        - Key: Name
+          Value: case_uml2-sg
+        - Key: Project
+          Value: case_uml2
+        - Key: Account
+          Value: "886595575652"
+
+  # --- Instancia EC2 Nueva Aislada ---
+  CaseUml2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestUbuntuAmiId
+      SecurityGroupIds:
+        - !GetAtt CaseUml2SecurityGroup.GroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref VolumeSizeGB
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: case_uml2-ec2-instance
+        - Key: Project
+          Value: case_uml2
+        - Key: Account
+          Value: "886595575652"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec > >(tee -a /var/log/user-data.log) 2>&1
+          echo "🚀 [INIT] Configurando servidor EC2 para case_uml2 en cuenta 886595575652..."
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y ca-certificates curl gnupg lsb-release git ufw jq
+
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+          apt-get update -y
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ubuntu
+          chmod 666 /var/run/docker.sock || true
+
+          if [ ! -f /swapfile ]; then
+              fallocate -l 4G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=4096
+              chmod 600 /swapfile
+              mkswap /swapfile
+              swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          fi
+
+          APP_DIR="/home/ubuntu/case_uml2"
+          git clone https://github.com/Alicia3405/case_uml2.git "$APP_DIR" || true
+          chown -R ubuntu:ubuntu "$APP_DIR" || true
+
+          echo "✅ [DONE] Instancia EC2 lista exclusivamente para case_uml2."
+
+Outputs:
+  InstanceId:
+    Description: ID de la nueva instancia EC2 para case_uml2
+    Value: !Ref CaseUml2Instance
+
+  PublicIP:
+    Description: Dirección IP Pública de la nueva instancia EC2
+    Value: !GetAtt CaseUml2Instance.PublicIp
+
+  PublicDNS:
+    Description: Nombre DNS Público de la nueva instancia EC2
+    Value: !GetAtt CaseUml2Instance.PublicDnsName
+
+  SSHAccess:
+    Description: Comando para conectarse vía SSH a la nueva instancia
+    Value: !Sub "ssh -i ${KeyName}.pem ubuntu@${CaseUml2Instance.PublicIp}"
+
+  WebUrl:
+    Description: URL de acceso a la aplicación web (HTTP)
+    Value: !Sub "http://${CaseUml2Instance.PublicIp}"

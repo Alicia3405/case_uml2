@@ -1,77 +1,71 @@
-# === CASE Studio AI — Docker Compose (Producción AWS EC2) ===
+# ==============================================================================
+# CASE Studio AI — Docker Compose (Producción AWS EC2 - Proyecto: case_uml2)
+# Cuenta AWS: 886595575652
+# Despliegue con MongoDB NoSQL (Integración completa de Alison)
+# ==============================================================================
+name: case_uml2
+
 services:
-  # --- PostgreSQL Database ---
-  db:
-    image: postgres:16-alpine
+  # --- MongoDB NoSQL Database ---
+  mongodb:
+    container_name: case_uml2_mongodb
+    image: mongo:7-jammy
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-casestudio_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-casestudio_secret_2026}
-      POSTGRES_DB: ${POSTGRES_DB:-casestudio}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - case_uml2_mongodata:/data/db
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:27018:27017"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-casestudio_user} -d ${POSTGRES_DB:-casestudio}"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - case_uml2_network
 
-  # --- CASE Engine (NestJS / TypeORM Backend) ---
+  # --- CASE Engine (NestJS / Mongoose Backend) ---
   backend:
-    image: ${DOCKER_REGISTRY:-casestudio}/case-backend:${IMAGE_TAG:-latest}
+    container_name: case_uml2_backend
+    image: ${DOCKER_REGISTRY:-casestudio}/case_uml2-backend:${IMAGE_TAG:-latest}
     build:
       context: ../backend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      db:
+      mongodb:
         condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: ${POSTGRES_USER:-casestudio_user}
-      DB_PASS: ${POSTGRES_PASSWORD:-casestudio_secret_2026}
-      DB_NAME: ${POSTGRES_DB:-casestudio}
-      DB_SYNCHRONIZE: "true"
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/case_studio_ai}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-case_studio_ai}
       JWT_SECRET: ${JWT_SECRET:-super_secret_case_studio_jwt_token_key_2026}
       CORS_ORIGINS: "*"
-      AI_PROVIDER: ${AI_PROVIDER:-vertex}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       OLLAMA_BASE_URL: http://ollama:11434
-      # Fallback Spring datasource properties
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-casestudio}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-casestudio_user}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-casestudio_secret_2026}
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:3002:3000"
+    networks:
+      - case_uml2_network
 
   # --- Web CASE Studio Frontend (Angular + Nginx) ---
   web:
-    image: ${DOCKER_REGISTRY:-casestudio}/case-web:${IMAGE_TAG:-latest}
+    container_name: case_uml2_web
+    image: ${DOCKER_REGISTRY:-casestudio}/case_uml2-web:${IMAGE_TAG:-latest}
     build:
       context: ../web
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:80"
-
-  # --- Ollama (IA Local para Inferencia) ---
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "127.0.0.1:11434:11434"
+      - "127.0.0.1:3003:80"
+    networks:
+      - case_uml2_network
 
   # --- Nginx Reverse Proxy + SSL ---
   nginx:
+    container_name: case_uml2_nginx
     image: nginx:alpine
     restart: unless-stopped
     depends_on:
@@ -83,19 +77,27 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - certbot_webroot:/var/www/certbot:ro
-      - certbot_certs:/etc/letsencrypt:ro
+      - case_uml2_certbot_webroot:/var/www/certbot:ro
+      - case_uml2_certbot_certs:/etc/letsencrypt:ro
+    networks:
+      - case_uml2_network
 
   # --- Certbot (SSL Let's Encrypt) ---
   certbot:
+    container_name: case_uml2_certbot
     image: certbot/certbot
     volumes:
-      - certbot_webroot:/var/www/certbot
-      - certbot_certs:/etc/letsencrypt
+      - case_uml2_certbot_webroot:/var/www/certbot
+      - case_uml2_certbot_certs:/etc/letsencrypt
     entrypoint: "true"
+    networks:
+      - case_uml2_network
 
 volumes:
-  pgdata:
-  ollama_data:
-  certbot_webroot:
-  certbot_certs:
+  case_uml2_mongodata:
+  case_uml2_certbot_webroot:
+  case_uml2_certbot_certs:
+
+networks:
+  case_uml2_network:
+    name: case_uml2_network
