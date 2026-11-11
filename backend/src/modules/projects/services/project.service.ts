@@ -48,6 +48,8 @@ export class ProjectService {
       name: `${savedProject.name}`,
       version: '1.0.0',
       defaultLineStyle: 'segment',
+      lastModifiedByUserId: userId,
+      lastModifiedAt: new Date(),
     });
     await this.diagramRepository.save(defaultDiagram);
 

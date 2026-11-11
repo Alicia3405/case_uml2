@@ -8,9 +8,13 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { YjsSyncService } from '../services/yjs-sync.service';
+import { DiagramRepository } from '../../diagrams/repositories/diagram.repository';
+import type { AiAssistantService } from '../../ai-assistant/services/ai-assistant.service';
 import { getAllowedCorsOrigins } from '../../../config/cors.config';
+import { isValidUuid } from '../../../common/utils/mongoose-entity.util';
+import { AiInteractionMode, RoomSenderType } from '../entities/room-message.entity';
 
 interface ClientMetadata {
   userId: string;
@@ -37,6 +41,15 @@ export interface ChatMessageRecord {
   message: string;
   color?: string;
   timestamp: string;
+  senderType?: RoomSenderType;
+  aiMode?: AiInteractionMode | null;
+  requestedByUserName?: string | null;
+  targetNodes?: string[];
+  mutatedDiagram?: boolean;
+  providerUsed?: string | null;
+  modelUsed?: string | null;
+  sessionNumber?: number;
+  sessionDate?: string;
 }
 
 export interface ActivityLogRecord {
@@ -48,9 +61,11 @@ export interface ActivityLogRecord {
   category: 'uml' | 'ai' | 'voice' | 'permission' | 'system';
   color?: string;
   timestamp: string;
+  actorType?: 'human' | 'ai';
+  affectedClasses?: string[];
+  sessionNumber?: number;
+  sessionDate?: string;
 }
-
-const MAX_ROOM_HISTORY = 50;
 
 @WebSocketGateway({
   namespace: '/collaboration',
@@ -77,30 +92,20 @@ export class CollaborationGateway
   private readonly clientMap = new Map<string, ClientMetadata>();
   // Mapa de bloqueo de nodos por exclusión mutua: `${diagramId}_${nodeId}` => NodeLockInfo
   private readonly nodeLocks = new Map<string, NodeLockInfo>();
-  // Historial acotado en memoria por sala/diagrama para chat y bitácora de auditoría en vivo
-  private readonly roomChatHistory = new Map<string, ChatMessageRecord[]>();
-  private readonly roomActivityHistory = new Map<string, ActivityLogRecord[]>();
 
-  constructor(private readonly yjsSyncService: YjsSyncService) { }
+  constructor(
+    private readonly yjsSyncService: YjsSyncService,
+    @Optional()
+    @Inject('AI_ASSISTANT_SERVICE')
+    private readonly aiAssistantService?: AiAssistantService,
+    @Optional()
+    private readonly diagramRepository?: DiagramRepository,
+  ) {}
 
   private getRoomTargets(diagramId?: string, roomCode?: string): string[] {
     return Array.from(
       new Set([diagramId ? `diagram_${diagramId}` : '', roomCode || ''].filter(Boolean)),
     );
-  }
-
-  private getHistoryKey(diagramId?: string, roomCode?: string): string | null {
-    return diagramId || roomCode || null;
-  }
-
-  private appendBoundedHistory<T>(map: Map<string, T[]>, key: string | null, item: T): void {
-    if (!key) return;
-    const list = map.get(key) ?? [];
-    list.push(item);
-    if (list.length > MAX_ROOM_HISTORY) {
-      list.splice(0, list.length - MAX_ROOM_HISTORY);
-    }
-    map.set(key, list);
   }
 
   handleConnection(client: Socket): void {
@@ -114,10 +119,6 @@ export class CollaborationGateway
         `[WebSocket] Cliente ${meta.userName} (${meta.userId}) desconectado de sala ${meta.roomCode}`,
       );
 
-      if (meta.sessionId) {
-        await this.yjsSyncService.leaveSession(meta.sessionId, meta.userId);
-      }
-
       const targets = this.getRoomTargets(meta.diagramId, meta.roomCode);
 
       // Liberar cualquier bloqueo de tabla que tuviera este usuario
@@ -125,7 +126,7 @@ export class CollaborationGateway
       for (const [lockKey, lockInfo] of this.nodeLocks.entries()) {
         if (lockInfo.userId === meta.userId && lockInfo.diagramId === meta.diagramId) {
           locksToRelease.push(lockKey);
-          if (targets.length > 0) {
+          if (targets.length > 0 && this.server) {
             this.server.to(targets).emit('node_unlocked', {
               nodeId: lockInfo.nodeId,
               userId: meta.userId,
@@ -145,15 +146,35 @@ export class CollaborationGateway
       );
 
       const uniqueParticipants = Array.from(
-        new Map(connectedClients.map((c) => [c.userId, {
-          userId: c.userId,
-          userName: c.userName,
-          color: c.color,
-          isConnected: true,
-        }])).values()
+        new Map(
+          connectedClients.map((c) => [
+            c.userId,
+            {
+              userId: c.userId,
+              userName: c.userName,
+              color: c.color,
+              isConnected: true,
+            },
+          ]),
+        ).values(),
       );
 
-      if (targets.length > 0) {
+      if (meta.sessionId) {
+        try {
+          const transfer = await this.yjsSyncService.handleHostDisconnectOrTransfer(
+            meta.sessionId,
+            meta.userId,
+            uniqueParticipants.map((p) => p.userId),
+          );
+          if (transfer?.transferred && targets.length > 0 && this.server) {
+            this.server.to(targets).emit('host_transferred', transfer);
+          }
+        } catch (err: any) {
+          this.logger.warn(`No se pudo evaluar traspaso de anfitrión: ${err?.message || err}`);
+        }
+      }
+
+      if (targets.length > 0 && this.server) {
         this.server.to(targets).emit('user_left', {
           userId: meta.userId,
           userName: meta.userName,
@@ -191,10 +212,25 @@ export class CollaborationGateway
     recentActivityLogs: ActivityLogRecord[];
   }> {
     try {
-      // Validar que el diagramId sea un UUID válido antes de consultar la BD
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!data.diagramId || !uuidRegex.test(data.diagramId)) {
-        this.logger.warn(`[WebSocket] join_room ignorado: diagramId inválido "${data.diagramId}" (no es UUID)`);
+      // Validar tanto diagramId como userId como UUID reales para evitar errores con IDs anónimos (ej. anon_xxx)
+      if (!isValidUuid(data?.diagramId)) {
+        this.logger.warn(
+          `[WebSocket] join_room ignorado: diagramId inválido "${data?.diagramId}" (no es UUID)`,
+        );
+        return {
+          success: false,
+          session: null,
+          participants: [],
+          activeLocks: [],
+          recentChatMessages: [],
+          recentActivityLogs: [],
+        };
+      }
+
+      if (!isValidUuid(data?.userId)) {
+        this.logger.warn(
+          `[WebSocket] join_room rechazado: userId inválido "${data?.userId}" (sesión no autenticada)`,
+        );
         return {
           success: false,
           session: null,
@@ -222,7 +258,6 @@ export class CollaborationGateway
       const diagramRoom = `diagram_${data.diagramId}`;
       const targets = this.getRoomTargets(data.diagramId, targetRoom);
 
-      // Unir socket a ambas salas (código de sala y diagrama)
       await client.join(targetRoom);
       await client.join(diagramRoom);
 
@@ -237,21 +272,24 @@ export class CollaborationGateway
         color,
       });
 
-      // Obtener participantes únicos conectados
       const connectedClients = Array.from(this.clientMap.values()).filter(
         (c) => c.diagramId === data.diagramId || c.roomCode === targetRoom,
       );
 
       const uniqueParticipants = Array.from(
-        new Map(connectedClients.map((c) => [c.userId, {
-          userId: c.userId,
-          userName: c.userName,
-          color: c.color,
-          isConnected: true,
-        }])).values()
+        new Map(
+          connectedClients.map((c) => [
+            c.userId,
+            {
+              userId: c.userId,
+              userName: c.userName,
+              color: c.color,
+              isConnected: true,
+            },
+          ]),
+        ).values(),
       );
 
-      // Obtener bloqueos activos en este diagrama
       const currentLocks = Array.from(this.nodeLocks.values())
         .filter((l) => l.diagramId === data.diagramId)
         .map((l) => ({
@@ -261,8 +299,7 @@ export class CollaborationGateway
           color: l.color,
         }));
 
-      // Notificar a todos los miembros de la sala sin duplicar entregas
-      this.server.to(targets).emit('room_participants_updated', {
+      this.server?.to(targets).emit('room_participants_updated', {
         diagramId: data.diagramId,
         roomCode: targetRoom,
         participants: uniqueParticipants,
@@ -275,17 +312,16 @@ export class CollaborationGateway
         socketId: client.id,
       });
 
-      const historyKey = this.getHistoryKey(data.diagramId, targetRoom);
-      const recentChatMessages = historyKey ? [...(this.roomChatHistory.get(historyKey) ?? [])] : [];
-      const recentActivityLogs = historyKey ? [...(this.roomActivityHistory.get(historyKey) ?? [])] : [];
+      // Hidratar historial persistente desde MongoDB (continuidad entre sesiones/días)
+      const persistedHistory = await this.yjsSyncService.getRoomHistory(data.diagramId, 80);
 
       return {
         success: true,
         session,
         participants: uniqueParticipants,
         activeLocks: currentLocks,
-        recentChatMessages,
-        recentActivityLogs,
+        recentChatMessages: persistedHistory.recentChatMessages,
+        recentActivityLogs: persistedHistory.recentActivityLogs,
       };
     } catch (err) {
       this.logger.error(`Error en handleJoinRoom: ${err}`);
@@ -380,12 +416,12 @@ export class CollaborationGateway
     };
 
     const targets = this.getRoomTargets(data.diagramId, data.roomCode);
-    if (targets.length > 0) {
+    if (targets.length > 0 && this.server) {
       this.server.to(targets).emit('node_unlocked', broadcastPayload);
     }
   }
 
-  // --- MÉTODOS PÚBLICOS DE BLOQUEO PARA COPILOT IA ---
+  // --- MÉTODOS PÚBLICOS PARA COPILOT IA Y EVENTOS DEL BACKEND ---
   lockNodeForAi(
     diagramId: string,
     roomCode: string | undefined,
@@ -446,6 +482,138 @@ export class CollaborationGateway
     }
   }
 
+  async broadcastAiGroupMessage(
+    diagramId: string,
+    roomCode: string | undefined,
+    params: {
+      message: string;
+      aiMode?: AiInteractionMode;
+      requestedByUserId?: string;
+      requestedByUserName?: string;
+      targetNodes?: string[];
+      mutatedDiagram?: boolean;
+      providerUsed?: string;
+      modelUsed?: string;
+      userName?: string;
+      color?: string;
+    },
+  ): Promise<ChatMessageRecord> {
+    const cleanMessage = params.message?.trim() || '';
+    const { savedMessage } = await this.yjsSyncService.recordChatMessage({
+      diagramId,
+      roomCode,
+      senderType: 'ai',
+      userId: 'ai_copilot_partner',
+      userName: params.userName || '✨ Copilot IA',
+      message: cleanMessage,
+      color: params.color || '#8B5CF6',
+      aiMode: params.aiMode,
+      requestedByUserId: params.requestedByUserId,
+      requestedByUserName: params.requestedByUserName,
+      targetNodes: params.targetNodes,
+      mutatedDiagram: params.mutatedDiagram,
+      providerUsed: params.providerUsed,
+      modelUsed: params.modelUsed,
+    });
+
+    const payload: ChatMessageRecord = {
+      id: savedMessage?.id || `ai_msg_${Date.now()}`,
+      userId: 'ai_copilot_partner',
+      userName: params.userName || '✨ Copilot IA',
+      message: cleanMessage,
+      color: params.color || '#8B5CF6',
+      timestamp: savedMessage?.createdAt
+        ? new Date(savedMessage.createdAt).toISOString()
+        : new Date().toISOString(),
+      senderType: 'ai',
+      aiMode: params.aiMode || 'ADVISE',
+      requestedByUserName: params.requestedByUserName ?? null,
+      targetNodes: params.targetNodes || [],
+      mutatedDiagram: Boolean(params.mutatedDiagram),
+      providerUsed: params.providerUsed ?? null,
+      modelUsed: params.modelUsed ?? null,
+      sessionNumber: savedMessage?.sessionNumber,
+      sessionDate: savedMessage?.sessionDate,
+    };
+
+    const targets = this.getRoomTargets(diagramId, roomCode);
+    if (targets.length > 0 && this.server) {
+      this.server.to(targets).emit('chat_message_received', payload);
+    }
+
+    return payload;
+  }
+
+  broadcastActivityRecord(
+    diagramId: string,
+    roomCode: string | undefined,
+    payload: ActivityLogRecord,
+  ): void {
+    try {
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0 && this.server) {
+        this.server.to(targets).emit('activity_logged', payload);
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo emitir activity_logged: ${e}`);
+    }
+  }
+
+  broadcastNotification(
+    diagramId: string,
+    roomCode: string | undefined,
+    notification: any,
+  ): void {
+    try {
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0 && this.server && notification) {
+        this.server.to(targets).emit('notification_created', notification);
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo emitir notification_created: ${e}`);
+    }
+  }
+
+  broadcastAiAnnotationsUpdated(
+    diagramId: string,
+    roomCode: string | undefined,
+    aiAnnotations: any[],
+  ): void {
+    try {
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0 && this.server) {
+        this.server.to(targets).emit('ai_annotations_updated', {
+          diagramId,
+          aiAnnotations,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo emitir ai_annotations_updated: ${e}`);
+    }
+  }
+
+  emitDiagramSynced(
+    diagramId: string,
+    roomCode: string | undefined,
+    payload: {
+      nodes: any[];
+      connections: any[];
+      userId: string;
+      action?: string;
+      aiAnnotations?: any[];
+    },
+  ): void {
+    try {
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0 && this.server) {
+        this.server.to(targets).emit('diagram_synced', payload);
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo emitir diagram_synced: ${e}`);
+    }
+  }
+
   emitProjectPermissionsUpdated(
     diagramIds: string[],
     payload: {
@@ -474,7 +642,8 @@ export class CollaborationGateway
 
   @SubscribeMessage('leave_room')
   async handleLeaveRoom(
-    @MessageBody() data: { diagramId?: string; roomCode?: string; userId: string; sessionId?: string },
+    @MessageBody()
+    data: { diagramId?: string; roomCode?: string; userId: string; sessionId?: string },
     @ConnectedSocket() client: Socket,
   ): Promise<{ success: boolean }> {
     if (data.roomCode) client.leave(data.roomCode);
@@ -567,7 +736,7 @@ export class CollaborationGateway
   }
 
   @SubscribeMessage('chat_message')
-  handleChatMessage(
+  async handleChatMessage(
     @MessageBody()
     data: {
       diagramId?: string;
@@ -577,33 +746,121 @@ export class CollaborationGateway
       message: string;
       color?: string;
     },
-  ): void {
+  ): Promise<void> {
     const cleanMessage = data.message?.trim();
     if (!cleanMessage) return;
 
-    const payload: ChatMessageRecord = {
-      id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    const { savedMessage, notifications } = await this.yjsSyncService.recordChatMessage({
+      diagramId: data.diagramId,
+      roomCode: data.roomCode,
+      senderType: 'human',
       userId: data.userId,
       userName: data.userName,
       message: cleanMessage,
       color: data.color,
-      timestamp: new Date().toISOString(),
+    });
+
+    const payload: ChatMessageRecord = {
+      id: savedMessage?.id || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId: data.userId,
+      userName: data.userName,
+      message: cleanMessage,
+      color: data.color,
+      timestamp: savedMessage?.createdAt
+        ? new Date(savedMessage.createdAt).toISOString()
+        : new Date().toISOString(),
+      senderType: 'human',
+      sessionNumber: savedMessage?.sessionNumber,
+      sessionDate: savedMessage?.sessionDate,
     };
 
-    this.appendBoundedHistory(
-      this.roomChatHistory,
-      this.getHistoryKey(data.diagramId, data.roomCode),
-      payload,
-    );
-
     const targets = this.getRoomTargets(data.diagramId, data.roomCode);
-    if (targets.length > 0) {
+    if (targets.length > 0 && this.server) {
       this.server.to(targets).emit('chat_message_received', payload);
+      for (const notif of notifications) {
+        this.server.to(targets).emit('notification_created', notif);
+      }
+    }
+
+    // Si alguien menciona @IA o @copilot en el chat grupal, el compañero Copilot responde a toda la sala
+    const mentionsCopilot = /(?:^|\s)@(?:ia|copilot)\b/i.test(cleanMessage);
+    if (
+      mentionsCopilot &&
+      !data.userId.startsWith('ai_') &&
+      data.diagramId &&
+      isValidUuid(data.diagramId) &&
+      this.aiAssistantService
+    ) {
+      const cleanPrompt =
+        cleanMessage.replace(/(?:^|\s)@(?:ia|copilot)[:,]?\s*/gi, ' ').trim() ||
+        'Revisa el diagrama actual y aporta observaciones para el equipo.';
+      try {
+        const diagram = this.diagramRepository
+          ? await this.diagramRepository.findById(data.diagramId)
+          : null;
+        const currentNodes = (diagram?.nodes || []).map((n) => ({
+          id: n.id,
+          name: n.name,
+          elementType: n.elementType,
+          stereotype: n.stereotype,
+          noteContent: n.noteContent,
+          position: { x: Number(n.positionX) || 0, y: Number(n.positionY) || 0 },
+          width: n.width,
+          height: n.height ?? undefined,
+          isAnchor: n.isAnchor,
+          assocMainConnId: n.assocMainConnId ?? undefined,
+          createdByName: n.createdByName ?? null,
+          lastModifiedByName: n.lastModifiedByName ?? null,
+          attributes: (n.attributes || []).map((a) => ({
+            name: a.name,
+            type: a.type,
+            visibility: a.visibility,
+            isPrimaryKey: a.isPrimaryKey,
+            isNullable: a.isNullable,
+          })),
+          methods: (n.methods || []).map((m) => ({
+            name: m.name,
+            parameters: m.parameters,
+            returnType: m.returnType,
+            visibility: m.visibility,
+          })),
+        }));
+        const currentConnections = (diagram?.connections || []).map((c) => ({
+          id: c.id,
+          sourceNodeId: c.sourceNodeId,
+          targetNodeId: c.targetNodeId,
+          sourceId: c.sourceId,
+          targetId: c.targetId,
+          type: c.type,
+          lineStyle: c.lineStyle,
+          name: c.name ?? undefined,
+          sourceMultiplicity: c.sourceMultiplicity,
+          targetMultiplicity: c.targetMultiplicity,
+          assocAnchorNodeId: c.assocAnchorNodeId ?? undefined,
+        }));
+
+        await this.aiAssistantService.processTextPrompt({
+          prompt: cleanPrompt,
+          diagramId: data.diagramId,
+          roomCode: data.roomCode || savedMessage?.roomCode || undefined,
+          authorUserId: isValidUuid(data.userId) ? data.userId : undefined,
+          authorUserName: data.userName,
+          currentNodes,
+          currentConnections,
+          broadcastToRoom: true,
+          createWhiteboardNotes: true,
+          persistChanges: true,
+        });
+      } catch (err: any) {
+        this.logger.warn(
+          `[WebSocket] No se pudo responder a @IA en chat grupal: ${err?.message || err}`,
+        );
+      }
     }
   }
 
   @SubscribeMessage('activity_log')
-  handleActivityLog(
+  async handleActivityLog(
     @MessageBody()
     data: {
       diagramId?: string;
@@ -614,30 +871,44 @@ export class CollaborationGateway
       detail?: string;
       category?: ActivityLogRecord['category'];
       color?: string;
+      affectedClasses?: string[];
     },
-  ): void {
+  ): Promise<void> {
     const cleanAction = data.action?.trim();
     if (!cleanAction) return;
 
-    const payload: ActivityLogRecord = {
-      id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    const saved = await this.yjsSyncService.recordAuthorEvent({
+      diagramId: data.diagramId,
+      roomCode: data.roomCode,
+      actorType: data.userId.startsWith('ai_') ? 'ai' : 'human',
       userId: data.userId,
       userName: data.userName,
       action: cleanAction,
       detail: data.detail,
       category: data.category || 'uml',
       color: data.color,
-      timestamp: new Date().toISOString(),
+      affectedClasses: data.affectedClasses,
+    });
+
+    const payload: ActivityLogRecord = {
+      id: saved?.id || `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId: data.userId,
+      userName: data.userName,
+      action: cleanAction,
+      detail: data.detail,
+      category: data.category || 'uml',
+      color: data.color,
+      timestamp: saved?.createdAt
+        ? new Date(saved.createdAt).toISOString()
+        : new Date().toISOString(),
+      actorType: saved?.actorType || (data.userId.startsWith('ai_') ? 'ai' : 'human'),
+      affectedClasses: saved?.affectedClasses || data.affectedClasses || [],
+      sessionNumber: saved?.sessionNumber,
+      sessionDate: saved?.sessionDate,
     };
 
-    this.appendBoundedHistory(
-      this.roomActivityHistory,
-      this.getHistoryKey(data.diagramId, data.roomCode),
-      payload,
-    );
-
     const targets = this.getRoomTargets(data.diagramId, data.roomCode);
-    if (targets.length > 0) {
+    if (targets.length > 0 && this.server) {
       this.server.to(targets).emit('activity_logged', payload);
     }
   }

@@ -407,13 +407,16 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           this.currentDiagramId.set(diagramId);
           this.loadDiagramFromBackend(diagramId);
         } else if (projectId) {
-          this.diagramService.loadDiagramsByProject(projectId).subscribe((diagrams) => {
-            if (diagrams && diagrams.length > 0) {
-              const first = diagrams[0];
-              this.currentDiagramId.set(first.id);
-              this.currentDiagramName.set(first.name);
-              this.loadDiagramFromBackend(first.id);
-            }
+          this.diagramService.loadDiagramsByProject(projectId).subscribe({
+            next: (diagrams) => {
+              if (diagrams && diagrams.length > 0) {
+                const first = diagrams[0];
+                this.currentDiagramId.set(first.id);
+                this.currentDiagramName.set(first.name);
+                this.loadDiagramFromBackend(first.id);
+              }
+            },
+            error: (err) => this.handleProjectAccessError(err),
           });
         }
       }),
@@ -421,6 +424,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
     this.updateConnectionEndpoints();
   }
+
+  private accessRedirectTimer: ReturnType<typeof setTimeout> | null = null;
 
   ngOnDestroy(): void {
     this.subs.unsubscribe();
@@ -431,12 +436,34 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       clearTimeout(this.permissionToastTimer);
       this.permissionToastTimer = null;
     }
+    if (this.accessRedirectTimer) {
+      clearTimeout(this.accessRedirectTimer);
+      this.accessRedirectTimer = null;
+    }
     if (this.editingNode()) {
       this.collaborationService.releaseNodeLock(this.editingNode()!.id);
     }
     this.animationTimers.forEach((t) => clearTimeout(t));
     this.animationTimers = [];
     this.collaborationService.leaveRoom();
+  }
+
+  private handleProjectAccessError(err: any): void {
+    const rawMsg =
+      err?.error?.error?.message ||
+      err?.error?.message ||
+      (err?.status === 403
+        ? 'No tienes permisos para acceder a este proyecto con tu cuenta actual.'
+        : 'El proyecto o diagrama solicitado no está disponible.');
+    const cleanMsg = Array.isArray(rawMsg) ? rawMsg.join(', ') : String(rawMsg);
+    this.showPermissionToast(`⛔ ${cleanMsg} Redirigiendo a tus proyectos...`);
+
+    if (!this.accessRedirectTimer) {
+      this.accessRedirectTimer = setTimeout(() => {
+        this.accessRedirectTimer = null;
+        this.router.navigate(['/projects']);
+      }, 1800);
+    }
   }
 
   refreshProjectPermissions(explicitProjectId?: string | null): void {
@@ -477,7 +504,11 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           }
         }
       },
-      error: () => {},
+      error: (err) => {
+        if (err?.status === 403 || err?.status === 404) {
+          this.handleProjectAccessError(err);
+        }
+      },
     });
   }
 
@@ -598,71 +629,74 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   }
 
   loadDiagramFromBackend(diagramId: string): void {
-    this.diagramService.loadDiagram(diagramId).subscribe((diagram) => {
-      this.currentDiagramName.set(diagram.name);
-      this.defaultLineStyle.set(this.normalizeLineStyle(diagram.defaultLineStyle));
+    this.diagramService.loadDiagram(diagramId).subscribe({
+      next: (diagram) => {
+        this.currentDiagramName.set(diagram.name);
+        this.defaultLineStyle.set(this.normalizeLineStyle(diagram.defaultLineStyle));
 
-      const rawNodes = diagram.nodes || [];
-      const customTypeNames = rawNodes
-        .filter((n) => !n.isAnchor && n.name)
-        .map((n) => n.name.trim());
+        const rawNodes = diagram.nodes || [];
+        const customTypeNames = rawNodes
+          .filter((n) => !n.isAnchor && n.name)
+          .map((n) => n.name.trim());
 
-      this.nodes.set(
-        rawNodes.map((n) => {
-          const elementType = this.normalizeElementType(n.elementType);
-          return {
-            id: n.id,
-            name: n.name,
-            elementType,
-            stereotype: n.stereotype || undefined,
-            noteContent: n.noteContent ?? undefined,
-            position: { x: n.positionX, y: n.positionY },
-            width: n.width || 220,
-            height: n.height || undefined,
-            isAnchor: n.isAnchor,
-            assocMainConnId: n.assocMainConnId || undefined,
-            attributes: (n.attributes || []).map((a, idx) => ({
-              name: a.name,
-              type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
-              visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
-              isPrimaryKey: Boolean(a.isPrimaryKey),
-              isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
-              orderIndex: a.orderIndex ?? idx,
-            })),
-            methods: (n.methods || []).map((m, idx) => ({
-              name: m.name,
-              parameters: m.parameters || '',
-              returnType: this.normalizeReturnType(m.returnType, customTypeNames),
-              visibility: this.normalizeVisibility(m.visibility, '+'),
-              orderIndex: m.orderIndex ?? idx,
-            })),
-          };
-        }),
-      );
+        this.nodes.set(
+          rawNodes.map((n) => {
+            const elementType = this.normalizeElementType(n.elementType);
+            return {
+              id: n.id,
+              name: n.name,
+              elementType,
+              stereotype: n.stereotype || undefined,
+              noteContent: n.noteContent ?? undefined,
+              position: { x: n.positionX, y: n.positionY },
+              width: n.width || 220,
+              height: n.height || undefined,
+              isAnchor: n.isAnchor,
+              assocMainConnId: n.assocMainConnId || undefined,
+              attributes: (n.attributes || []).map((a, idx) => ({
+                name: a.name,
+                type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
+                visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
+                isPrimaryKey: Boolean(a.isPrimaryKey),
+                isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
+                orderIndex: a.orderIndex ?? idx,
+              })),
+              methods: (n.methods || []).map((m, idx) => ({
+                name: m.name,
+                parameters: m.parameters || '',
+                returnType: this.normalizeReturnType(m.returnType, customTypeNames),
+                visibility: this.normalizeVisibility(m.visibility, '+'),
+                orderIndex: m.orderIndex ?? idx,
+              })),
+            };
+          }),
+        );
 
-      this.connections.set(
-        (diagram.connections || []).map((c) => ({
-          id: c.id,
-          sourceNodeId: c.sourceNodeId || undefined,
-          targetNodeId: c.targetNodeId || undefined,
-          sourceId: c.sourceId,
-          targetId: c.targetId,
-          type: c.type as UmlRelationshipType,
-          lineStyle: this.normalizeLineStyle(c.lineStyle),
-          name: c.name || undefined,
-          sourceMultiplicity: c.sourceMultiplicity || '',
-          targetMultiplicity: c.targetMultiplicity || '',
-          assocAnchorNodeId: c.assocAnchorNodeId || undefined,
-        })),
-      );
+        this.connections.set(
+          (diagram.connections || []).map((c) => ({
+            id: c.id,
+            sourceNodeId: c.sourceNodeId || undefined,
+            targetNodeId: c.targetNodeId || undefined,
+            sourceId: c.sourceId,
+            targetId: c.targetId,
+            type: c.type as UmlRelationshipType,
+            lineStyle: this.normalizeLineStyle(c.lineStyle),
+            name: c.name || undefined,
+            sourceMultiplicity: c.sourceMultiplicity || '',
+            targetMultiplicity: c.targetMultiplicity || '',
+            assocAnchorNodeId: c.assocAnchorNodeId || undefined,
+          })),
+        );
 
-      this.collaborationService.joinRoom(diagramId);
+        this.collaborationService.joinRoom(diagramId);
 
-      this.clearHistory();
-      this.hasUnsavedChanges.set(false);
-      setTimeout(() => {
-        this.updateConnectionEndpoints();
-      }, 50);
+        this.clearHistory();
+        this.hasUnsavedChanges.set(false);
+        setTimeout(() => {
+          this.updateConnectionEndpoints();
+        }, 50);
+      },
+      error: (err) => this.handleProjectAccessError(err),
     });
   }
 

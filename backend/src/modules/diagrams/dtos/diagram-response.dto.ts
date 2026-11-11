@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Diagram } from '../entities/diagram.entity';
+import { AiAnnotationItem } from '../entities/ai-annotation.entity';
 import { UmlNodeDto, UmlConnectionDto } from './save-diagram-ast.dto';
 
 export class DiagramResponseDto {
@@ -24,6 +25,21 @@ export class DiagramResponseDto {
   @ApiProperty({ type: [UmlConnectionDto] })
   connections: UmlConnectionDto[];
 
+  @ApiPropertyOptional({ type: [Object] })
+  aiAnnotations?: AiAnnotationItem[];
+
+  @ApiPropertyOptional({ example: '3fa85f64-5717-4562-b3fc-2c963f66afa6' })
+  lastModifiedByUserId?: string | null;
+
+  @ApiPropertyOptional({ example: 'Ana Gómez Rojas' })
+  lastModifiedByName?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-11-11T04:00:00.000Z' })
+  lastModifiedAt?: Date | null;
+
+  @ApiPropertyOptional({ example: 4 })
+  revisionCount?: number;
+
   @ApiProperty({ example: '2026-08-28T14:00:00.000Z' })
   updatedAt: Date;
 
@@ -37,6 +53,11 @@ export class DiagramResponseDto {
     dto.name = diagram.name;
     dto.version = diagram.version;
     dto.defaultLineStyle = diagram.defaultLineStyle || 'segment';
+    dto.aiAnnotations = diagram.aiAnnotations || [];
+    dto.lastModifiedByUserId = diagram.lastModifiedByUserId ?? null;
+    dto.lastModifiedByName = diagram.lastModifiedByName ?? null;
+    dto.lastModifiedAt = diagram.lastModifiedAt ?? null;
+    dto.revisionCount = diagram.revisionCount ?? 0;
     dto.updatedAt = diagram.updatedAt;
     dto.createdAt = diagram.createdAt;
 
@@ -52,24 +73,29 @@ export class DiagramResponseDto {
       height: node.height,
       isAnchor: node.isAnchor,
       assocMainConnId: node.assocMainConnId,
-      attributes: (node.attributes || [])
-        .sort((a, b) => a.orderIndex - b.orderIndex)
+      createdByUserId: node.createdByUserId ?? undefined,
+      createdByName: node.createdByName ?? undefined,
+      lastModifiedByUserId: node.lastModifiedByUserId ?? undefined,
+      lastModifiedByName: node.lastModifiedByName ?? undefined,
+      lastModifiedAt: node.lastModifiedAt ?? undefined,
+      attributes: [...(node.attributes || [])]
+        .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
         .map((a) => ({
           name: a.name,
           type: a.type,
           visibility: a.visibility || '-',
           isPrimaryKey: Boolean(a.isPrimaryKey),
           isNullable: a.isNullable ?? true,
-          orderIndex: a.orderIndex,
+          orderIndex: a.orderIndex ?? 0,
         })),
-      methods: (node.methods || [])
-        .sort((a, b) => a.orderIndex - b.orderIndex)
+      methods: [...(node.methods || [])]
+        .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
         .map((m) => ({
           name: m.name,
           parameters: m.parameters,
           returnType: m.returnType,
           visibility: m.visibility || '+',
-          orderIndex: m.orderIndex,
+          orderIndex: m.orderIndex ?? 0,
         })),
     }));
 

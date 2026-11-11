@@ -1,41 +1,72 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { randomUUID } from 'crypto';
+import { User, UserDocument } from '../entities/user.entity';
+import {
+  pickDefined,
+  toPlainEntities,
+  toPlainEntity,
+} from '../../../common/utils/mongoose-entity.util';
 
 @Injectable()
 export class UserRepository {
   constructor(
-    @InjectRepository(User)
-    private readonly repo: Repository<User>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
   ) {}
 
   async findByEmail(email: string, includePassword = false): Promise<User | null> {
-    const qb = this.repo.createQueryBuilder('user').where('LOWER(user.email) = LOWER(:email)', { email });
+    const normalized = (email || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    const query = this.userModel.findOne({ email: normalized });
     if (includePassword) {
-      qb.addSelect('user.passwordHash');
+      query.select('+passwordHash');
     }
-    return qb.getOne();
+
+    const doc = await query.exec();
+    return toPlainEntity<User>(doc);
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.repo.findOne({ where: { id } });
+    if (!id) return null;
+    const doc = await this.userModel.findById(id).exec();
+    return toPlainEntity<User>(doc);
+  }
+
+  async findByIds(ids: string[]): Promise<User[]> {
+    const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+    const docs = await this.userModel.find({ _id: { $in: uniqueIds } }).exec();
+    return toPlainEntities<User>(docs);
   }
 
   async existsByEmail(email: string): Promise<boolean> {
-    const count = await this.repo
-      .createQueryBuilder('user')
-      .where('LOWER(user.email) = LOWER(:email)', { email })
-      .getCount();
+    const normalized = (email || '').trim().toLowerCase();
+    if (!normalized) return false;
+    const count = await this.userModel.countDocuments({ email: normalized }).exec();
     return count > 0;
   }
 
   async createAndSave(userData: Partial<User>): Promise<User> {
-    const entity = this.repo.create(userData);
-    return this.repo.save(entity);
+    const id = userData._id || userData.id || randomUUID();
+    const doc = new this.userModel({
+      ...pickDefined(userData, ['id', '_id', 'projectsCreated', 'projectMemberships', 'sessionParticipations', 'diagramVersions', 'aiLogs']),
+      _id: id,
+      email: userData.email ? userData.email.trim().toLowerCase() : undefined,
+      createdAt: userData.createdAt || new Date(),
+    });
+    const saved = await doc.save();
+    return toPlainEntity<User>(saved)!;
   }
 
   async update(id: string, partial: Partial<User>): Promise<void> {
-    await this.repo.update(id, partial);
+    const clean = pickDefined(partial, ['id', '_id', 'projectsCreated', 'projectMemberships', 'sessionParticipations', 'diagramVersions', 'aiLogs']);
+    if (clean.email) {
+      clean.email = String(clean.email).trim().toLowerCase();
+    }
+    if (Object.keys(clean).length === 0) return;
+    await this.userModel.updateOne({ _id: id }, { $set: clean }).exec();
   }
 }

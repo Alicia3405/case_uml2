@@ -1,42 +1,37 @@
+import * as os from 'os';
 import { registerAs } from '@nestjs/config';
-import { TypeOrmModuleOptions } from '@nestjs/typeorm';
-
-import { User } from '../modules/auth/entities/user.entity';
-import { Project } from '../modules/projects/entities/project.entity';
-import { ProjectMember } from '../modules/projects/entities/project-member.entity';
-import { Diagram } from '../modules/diagrams/entities/diagram.entity';
-import { UmlNode } from '../modules/diagrams/entities/uml-node.entity';
-import { UmlAttribute } from '../modules/diagrams/entities/uml-attribute.entity';
-import { UmlMethod } from '../modules/diagrams/entities/uml-method.entity';
-import { UmlConnection } from '../modules/diagrams/entities/uml-connection.entity';
-import { CollaborationSession } from '../modules/projects/entities/collaboration-session.entity';
-import { SessionParticipant } from '../modules/projects/entities/session-participant.entity';
-
-export const ALL_ENTITIES = [
-  User,
-  Project,
-  ProjectMember,
-  Diagram,
-  UmlNode,
-  UmlAttribute,
-  UmlMethod,
-  UmlConnection,
-  CollaborationSession,
-  SessionParticipant,
-];
+import { MongooseModuleFactoryOptions } from '@nestjs/mongoose';
 
 export default registerAs(
   'database',
-  (): TypeOrmModuleOptions => ({
-    type: 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    username: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASS || 'postgres',
-    database: process.env.DB_NAME || 'casestudio_db',
-    entities: ALL_ENTITIES,
-    autoLoadEntities: true,
-    synchronize: process.env.DB_SYNCHRONIZE === 'true' || process.env.NODE_ENV !== 'production',
-    logging: process.env.DB_LOGGING === 'true',
-  }),
+  (): MongooseModuleFactoryOptions => {
+    const uri =
+      process.env.MONGODB_URI ||
+      process.env.MONGO_URI ||
+      'mongodb://127.0.0.1:27017/case_studio_ai';
+
+    const dbName = process.env.MONGODB_DB_NAME || 'case_studio_ai';
+
+    return {
+      uri,
+      dbName,
+      serverSelectionTimeoutMS: parseInt(process.env.MONGODB_TIMEOUT_MS || '10000', 10),
+      socketTimeoutMS: 45000,
+      maxPoolSize: 20,
+      autoIndex: process.env.NODE_ENV !== 'production' || process.env.MONGODB_AUTO_INDEX === 'true',
+      // En Jest VM sin --experimental-vm-modules, mongodb@7 falla al hacer `await import('os')` para clientMetadata.
+      ...(process.env.JEST_WORKER_ID
+        ? {
+            runtimeAdapters: {
+              os: {
+                platform: () => os.platform(),
+                arch: () => os.arch(),
+                release: () => os.release(),
+                type: () => os.type(),
+              } as any,
+            },
+          }
+        : {}),
+    };
+  },
 );

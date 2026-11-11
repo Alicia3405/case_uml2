@@ -1,46 +1,47 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  ManyToOne,
-  JoinColumn,
-  Unique,
-} from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { Project } from './project.entity';
 import type { User } from '../../auth/entities/user.entity';
 import { ProjectRole } from './project-role.enum';
 
-@Entity('project_members')
-@Unique(['projectId', 'userId'])
+@Schema({
+  collection: 'project_members',
+  timestamps: { createdAt: 'joinedAt', updatedAt: false },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+})
 export class ProjectMember {
-  @PrimaryGeneratedColumn('uuid')
+  @Prop({ type: String, default: () => randomUUID() })
+  _id?: string;
+
   id: string;
 
-  @Column({ name: 'project_id', type: 'uuid' })
+  @Prop({ type: String, required: true, index: true })
   projectId: string;
 
-  @Column({ name: 'user_id', type: 'uuid' })
+  @Prop({ type: String, required: true, index: true })
   userId: string;
 
-  @Column({
-    type: 'enum',
-    enum: ProjectRole,
+  @Prop({
+    type: String,
+    enum: Object.values(ProjectRole),
     default: ProjectRole.EDITOR,
   })
   role: ProjectRole;
 
-  @Column({ name: 'can_download_code', type: 'boolean', default: true })
+  @Prop({ type: Boolean, default: true })
   canDownloadCode: boolean;
 
-  @CreateDateColumn({ name: 'joined_at', type: 'timestamp' })
+  @Prop({ type: Date })
   joinedAt: Date;
 
-  @ManyToOne('Project', (project: Project) => project.members, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'project_id' })
-  project: Project;
-
-  @ManyToOne('User', (user: User) => user.projectMemberships, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user: User;
+  // Relaciones pobladas en memoria
+  project?: Project;
+  user?: User;
 }
+
+export type ProjectMemberDocument = HydratedDocument<ProjectMember>;
+export const ProjectMemberSchema = SchemaFactory.createForClass(ProjectMember);
+
+ProjectMemberSchema.index({ projectId: 1, userId: 1 }, { unique: true });

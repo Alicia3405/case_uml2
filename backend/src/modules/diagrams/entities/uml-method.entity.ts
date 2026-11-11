@@ -1,36 +1,24 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
-import type { UmlNode } from './uml-node.entity';
+import { Prop, Schema } from '@nestjs/mongoose';
 
-@Entity('uml_methods')
+@Schema({ _id: false })
 export class UmlMethod {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id?: string;
+  nodeId?: string;
 
-  @Column({ name: 'node_id', type: 'varchar', length: 100 })
-  nodeId: string;
-
-  @Column({ type: 'varchar', length: 150 })
+  @Prop({ type: String, required: true, trim: true })
   name: string;
 
-  @Column({ type: 'varchar', length: 255, default: '' })
+  @Prop({ type: String, default: '' })
   parameters: string;
 
-  @Column({ name: 'return_type', type: 'varchar', length: 100, default: 'void' })
+  @Prop({ type: String, default: 'void', trim: true })
   returnType: string;
 
-  @Column({ type: 'varchar', length: 10, default: '+' })
+  @Prop({ type: String, default: '+' })
   visibility: string;
 
-  @Column({ name: 'order_index', type: 'int', default: 0 })
+  @Prop({ type: Number, default: 0 })
   orderIndex: number;
 
-  @ManyToOne('UmlNode', (node: UmlNode) => node.methods, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'node_id' })
-  node: UmlNode;
+  node?: any;
 }

@@ -18,6 +18,11 @@ import { CreateDiagramDto } from '../dtos/create-diagram.dto';
 import { UpdateDiagramDto } from '../dtos/update-diagram.dto';
 import { SaveDiagramAstDto } from '../dtos/save-diagram-ast.dto';
 import { DiagramResponseDto } from '../dtos/diagram-response.dto';
+import {
+  CreateSnapshotDto,
+  UpdateAiAnnotationStatusDto,
+} from '../dtos/diagram-snapshot.dto';
+import { DiagramSnapshot } from '../entities/diagram-snapshot.entity';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { User } from '../../auth/entities/user.entity';
@@ -63,13 +68,60 @@ export class DiagramController {
 
   @Put(':id/ast')
   @ApiOperation({ summary: 'Guardar y sincronizar el AST completo del diagrama (nodos, atributos, métodos, relaciones)' })
-  @ApiResponse({ status: 200, description: 'AST persistido exitosamente en base de datos', type: DiagramResponseDto })
+  @ApiResponse({ status: 200, description: 'AST persistido exitosamente en MongoDB', type: DiagramResponseDto })
   async saveAst(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() astDto: SaveDiagramAstDto,
     @CurrentUser() user: User,
   ): Promise<DiagramResponseDto> {
     return this.diagramService.saveAst(id, astDto, user.id);
+  }
+
+  @Get(':id/snapshots')
+  @ApiOperation({ summary: 'Listar checkpoints/snapshots históricos del diagrama para recuperación entre días' })
+  async listSnapshots(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: User,
+  ): Promise<DiagramSnapshot[]> {
+    return this.diagramService.listSnapshots(id, user.id);
+  }
+
+  @Post(':id/snapshots')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Crear un checkpoint manual del estado actual del diagrama' })
+  async createSnapshot(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: CreateSnapshotDto,
+    @CurrentUser() user: User,
+  ): Promise<DiagramSnapshot> {
+    return this.diagramService.createSnapshot(id, user.id, body?.label);
+  }
+
+  @Post(':id/snapshots/:snapshotId/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Restaurar un checkpoint guardado del diagrama' })
+  async restoreSnapshot(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('snapshotId', ParseUUIDPipe) snapshotId: string,
+    @CurrentUser() user: User,
+  ): Promise<DiagramResponseDto> {
+    return this.diagramService.restoreSnapshot(id, snapshotId, user.id);
+  }
+
+  @Patch(':id/annotations/:annotationId')
+  @ApiOperation({ summary: 'Actualizar estado (applied / dismissed) de una anotación de IA en la pizarra' })
+  async updateAnnotationStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('annotationId') annotationId: string,
+    @Body() body: UpdateAiAnnotationStatusDto,
+    @CurrentUser() user: User,
+  ): Promise<DiagramResponseDto> {
+    return this.diagramService.updateAiAnnotationStatus(
+      id,
+      annotationId,
+      body.status,
+      user.id,
+    );
   }
 
   @Patch(':id')

@@ -1,54 +1,71 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
-  OneToMany,
-  JoinColumn,
-} from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { Project } from '../../projects/entities/project.entity';
-import type { UmlNode } from './uml-node.entity';
-import type { UmlConnection } from './uml-connection.entity';
 import type { CollaborationSession } from '../../projects/entities/collaboration-session.entity';
+import { UmlNode } from './uml-node.entity';
+import { UmlConnection } from './uml-connection.entity';
+import { AiAnnotationItem } from './ai-annotation.entity';
 
-@Entity('diagrams')
+@Schema({
+  collection: 'diagrams',
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+})
 export class Diagram {
-  @PrimaryGeneratedColumn('uuid')
+  @Prop({ type: String, default: () => randomUUID() })
+  _id?: string;
+
   id: string;
 
-  @Column({ name: 'project_id', type: 'uuid', nullable: true })
+  @Prop({ type: String, default: null, index: true })
   projectId: string | null;
 
-  @Column({ type: 'varchar', length: 150, default: 'UML Class Diagram' })
+  @Prop({ type: String, default: 'UML Class Diagram', trim: true, maxlength: 150 })
   name: string;
 
-  @Column({ type: 'varchar', length: 20, default: '1.0.0' })
+  @Prop({ type: String, default: '1.0.0', maxlength: 20 })
   version: string;
 
-  @Column({ name: 'default_line_style', type: 'varchar', length: 30, default: 'segment' })
+  @Prop({ type: String, default: 'segment', maxlength: 30 })
   defaultLineStyle: string;
 
-  @Column({ name: 'yjs_binary_state', type: 'bytea', nullable: true })
-  yjsBinaryState: Buffer | null;
-
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
-  updatedAt: Date;
-
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
-  createdAt: Date;
-
-  @ManyToOne('Project', (project: Project) => project.diagrams, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'project_id' })
-  project: Project | null;
-
-  @OneToMany('UmlNode', (node: UmlNode) => node.diagram, { cascade: true })
+  @Prop({ type: [UmlNode], default: [] })
   nodes: UmlNode[];
 
-  @OneToMany('UmlConnection', (conn: UmlConnection) => conn.diagram, { cascade: true })
+  @Prop({ type: [UmlConnection], default: [] })
   connections: UmlConnection[];
 
-  @OneToMany('CollaborationSession', (sess: CollaborationSession) => sess.diagram, { cascade: true })
-  collaborationSessions: CollaborationSession[];
+  @Prop({ type: [AiAnnotationItem], default: [] })
+  aiAnnotations?: AiAnnotationItem[];
+
+  // Trazabilidad continua del último cambio en el diagrama
+  @Prop({ type: String, default: null })
+  lastModifiedByUserId?: string | null;
+
+  @Prop({ type: String, default: null })
+  lastModifiedByName?: string | null;
+
+  @Prop({ type: Date, default: null })
+  lastModifiedAt?: Date | null;
+
+  @Prop({ type: Number, default: 0 })
+  revisionCount?: number;
+
+  @Prop({ type: Date })
+  updatedAt: Date;
+
+  @Prop({ type: Date })
+  createdAt: Date;
+
+  // Propiedades virtuales / de compatibilidad en TypeScript
+  yjsBinaryState?: Buffer | null;
+  project?: Project | null;
+  collaborationSessions?: CollaborationSession[];
 }
+
+export type DiagramDocument = HydratedDocument<Diagram>;
+export const DiagramSchema = SchemaFactory.createForClass(Diagram);
+
+DiagramSchema.index({ projectId: 1, updatedAt: -1 });

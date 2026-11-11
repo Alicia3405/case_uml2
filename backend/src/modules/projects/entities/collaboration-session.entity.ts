@@ -1,36 +1,66 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  ManyToOne,
-  OneToMany,
-  JoinColumn,
-} from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { Diagram } from '../../diagrams/entities/diagram.entity';
 import type { SessionParticipant } from './session-participant.entity';
+import { getUtcDateKey } from '../../../common/utils/mongoose-entity.util';
 
-@Entity('collaboration_sessions')
+@Schema({
+  collection: 'collaboration_sessions',
+  timestamps: { createdAt: 'startedAt', updatedAt: 'lastActivityAt' },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+})
 export class CollaborationSession {
-  @PrimaryGeneratedColumn('uuid')
+  @Prop({ type: String, default: () => randomUUID() })
+  _id?: string;
+
   id: string;
 
-  @Column({ name: 'diagram_id', type: 'uuid' })
+  @Prop({ type: String, required: true, index: true })
   diagramId: string;
 
-  @Column({ name: 'room_code', type: 'varchar', length: 50, unique: true })
+  @Prop({ type: String, default: null, index: true })
+  projectId?: string | null;
+
+  @Prop({ type: String, required: true, unique: true, maxlength: 50 })
   roomCode: string;
 
-  @Column({ name: 'is_active', type: 'boolean', default: true })
+  @Prop({ type: Boolean, default: true })
   isActive: boolean;
 
-  @CreateDateColumn({ name: 'started_at', type: 'timestamp' })
+  // Continuidad multi-sesión / multi-día y traspaso de anfitrión (2do Parcial)
+  @Prop({ type: String, default: null })
+  hostUserId?: string | null;
+
+  @Prop({ type: String, default: null })
+  hostUserName?: string | null;
+
+  @Prop({ type: Number, default: 1 })
+  sessionNumber: number;
+
+  @Prop({ type: [String], default: () => [getUtcDateKey()] })
+  activeDateKeys: string[];
+
+  @Prop({ type: String, default: () => getUtcDateKey() })
+  lastActiveDay: string;
+
+  @Prop({ type: String, default: '' })
+  resumeSummary: string;
+
+  @Prop({ type: Date })
   startedAt: Date;
 
-  @ManyToOne('Diagram', (diagram: Diagram) => diagram.collaborationSessions, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'diagram_id' })
-  diagram: Diagram;
+  @Prop({ type: Date })
+  lastActivityAt: Date;
 
-  @OneToMany('SessionParticipant', (p: SessionParticipant) => p.session, { cascade: true })
-  participants: SessionParticipant[];
+  // Relaciones pobladas en memoria
+  diagram?: Diagram;
+  participants?: SessionParticipant[];
 }
+
+export type CollaborationSessionDocument = HydratedDocument<CollaborationSession>;
+export const CollaborationSessionSchema =
+  SchemaFactory.createForClass(CollaborationSession);
+
+CollaborationSessionSchema.index({ diagramId: 1, isActive: 1 });

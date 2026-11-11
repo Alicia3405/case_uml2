@@ -1,15 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Diagram } from './entities/diagram.entity';
-import { UmlNode } from './entities/uml-node.entity';
-import { UmlAttribute } from './entities/uml-attribute.entity';
-import { UmlMethod } from './entities/uml-method.entity';
-import { UmlConnection } from './entities/uml-connection.entity';
+import { MongooseModule } from '@nestjs/mongoose';
+import { Diagram, DiagramSchema } from './entities/diagram.entity';
+import { DiagramSnapshot, DiagramSnapshotSchema } from './entities/diagram-snapshot.entity';
 import { DiagramRepository } from './repositories/diagram.repository';
-import { UmlNodeRepository } from './repositories/uml-node.repository';
-import { UmlAttributeRepository } from './repositories/uml-attribute.repository';
-import { UmlMethodRepository } from './repositories/uml-method.repository';
-import { UmlConnectionRepository } from './repositories/uml-connection.repository';
+import { DiagramSnapshotRepository } from './repositories/diagram-snapshot.repository';
 import { DiagramService } from './services/diagram.service';
 import { DiagramController } from './controllers/diagram.controller';
 import { ProjectsModule } from '../projects/projects.module';
@@ -17,12 +11,9 @@ import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      Diagram,
-      UmlNode,
-      UmlAttribute,
-      UmlMethod,
-      UmlConnection,
+    MongooseModule.forFeature([
+      { name: Diagram.name, schema: DiagramSchema },
+      { name: DiagramSnapshot.name, schema: DiagramSnapshotSchema },
     ]),
     forwardRef(() => ProjectsModule),
     AuthModule,
@@ -31,18 +22,12 @@ import { AuthModule } from '../auth/auth.module';
   providers: [
     DiagramService,
     DiagramRepository,
-    UmlNodeRepository,
-    UmlAttributeRepository,
-    UmlMethodRepository,
-    UmlConnectionRepository,
+    DiagramSnapshotRepository,
   ],
   exports: [
     DiagramService,
     DiagramRepository,
-    UmlNodeRepository,
-    UmlAttributeRepository,
-    UmlMethodRepository,
-    UmlConnectionRepository,
+    DiagramSnapshotRepository,
   ],
 })
 export class DiagramsModule {}

@@ -1,60 +1,61 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
-import type { Diagram } from './diagram.entity';
-import type { UmlNode } from './uml-node.entity';
+import { Prop, Schema } from '@nestjs/mongoose';
 
-@Entity('uml_connections')
+@Schema({ _id: false })
 export class UmlConnection {
-  @PrimaryColumn({ type: 'varchar', length: 100 })
+  @Prop({ type: String, required: true })
   id: string;
 
-  @Column({ name: 'diagram_id', type: 'uuid' })
-  diagramId: string;
+  @Prop({ type: String })
+  diagramId?: string;
 
-  @Column({ name: 'source_node_id', type: 'varchar', length: 100 })
+  @Prop({ type: String, required: true })
   sourceNodeId: string;
 
-  @Column({ name: 'target_node_id', type: 'varchar', length: 100 })
+  @Prop({ type: String, required: true })
   targetNodeId: string;
 
-  @Column({ name: 'source_id', type: 'varchar', length: 120 })
+  @Prop({ type: String, required: true })
   sourceId: string;
 
-  @Column({ name: 'target_id', type: 'varchar', length: 120 })
+  @Prop({ type: String, required: true })
   targetId: string;
 
-  @Column({ type: 'varchar', length: 50 })
+  @Prop({ type: String, required: true })
   type: string;
 
-  @Column({ name: 'line_style', type: 'varchar', length: 30, default: 'segment' })
+  @Prop({ type: String, default: 'segment' })
   lineStyle: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
+  @Prop({ type: String, default: null })
   name: string | null;
 
-  @Column({ name: 'source_multiplicity', type: 'varchar', length: 20, default: '1' })
+  @Prop({ type: String, default: '1' })
   sourceMultiplicity: string;
 
-  @Column({ name: 'target_multiplicity', type: 'varchar', length: 20, default: '0..*' })
+  @Prop({ type: String, default: '0..*' })
   targetMultiplicity: string;
 
-  @Column({ name: 'assoc_anchor_node_id', type: 'varchar', length: 100, nullable: true })
+  @Prop({ type: String, default: null })
   assocAnchorNodeId: string | null;
 
-  @ManyToOne('Diagram', (diagram: Diagram) => diagram.connections, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'diagram_id' })
-  diagram: Diagram;
+  // Autoría colaborativa
+  @Prop({ type: String, default: null })
+  createdByUserId?: string | null;
 
-  @ManyToOne('UmlNode', (node: UmlNode) => node.outgoingConnections, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'source_node_id' })
-  sourceNode: UmlNode;
+  @Prop({ type: String, default: null })
+  createdByName?: string | null;
 
-  @ManyToOne('UmlNode', (node: UmlNode) => node.incomingConnections, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'target_node_id' })
-  targetNode: UmlNode;
+  @Prop({ type: String, default: null })
+  lastModifiedByUserId?: string | null;
+
+  @Prop({ type: String, default: null })
+  lastModifiedByName?: string | null;
+
+  @Prop({ type: Date, default: null })
+  lastModifiedAt?: Date | null;
+
+  // Compatibilidad TypeScript
+  diagram?: any;
+  sourceNode?: any;
+  targetNode?: any;
 }

@@ -1,49 +1,50 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  ManyToOne,
-  OneToMany,
-  JoinColumn,
-} from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { User } from '../../auth/entities/user.entity';
 import type { ProjectMember } from './project-member.entity';
 import type { Diagram } from '../../diagrams/entities/diagram.entity';
 
-@Entity('projects')
+@Schema({
+  collection: 'projects',
+  timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+})
 export class Project {
-  @PrimaryGeneratedColumn('uuid')
+  @Prop({ type: String, default: () => randomUUID() })
+  _id?: string;
+
   id: string;
 
-  @Column({ type: 'varchar', length: 120 })
+  @Prop({ type: String, required: true, trim: true, maxlength: 120 })
   name: string;
 
-  @Column({ type: 'text', nullable: true })
-  description: string;
+  @Prop({ type: String, default: null })
+  description: string | null;
 
-  @Column({ name: 'base_package', type: 'varchar', length: 150, default: 'com.example.app' })
+  @Prop({ type: String, default: 'com.example.app', maxlength: 150 })
   basePackage: string;
 
-  @Column({ name: 'java_version', type: 'int', default: 21 })
+  @Prop({ type: Number, default: 21 })
   javaVersion: number;
 
-  @Column({ name: 'spring_boot_version', type: 'varchar', length: 20, default: '3.3.0' })
+  @Prop({ type: String, default: '3.3.0', maxlength: 20 })
   springBootVersion: string;
 
-  @Column({ name: 'created_by', type: 'uuid' })
+  @Prop({ type: String, required: true, index: true })
   createdBy: string;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @Prop({ type: Date })
   createdAt: Date;
 
-  @ManyToOne('User', (user: User) => user.projectsCreated, { onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'created_by' })
-  creator: User;
-
-  @OneToMany('ProjectMember', (member: ProjectMember) => member.project, { cascade: true })
-  members: ProjectMember[];
-
-  @OneToMany('Diagram', (diagram: Diagram) => diagram.project, { cascade: true })
-  diagrams: Diagram[];
+  // Relaciones pobladas en memoria por ProjectRepository
+  creator?: User;
+  members?: ProjectMember[];
+  diagrams?: Diagram[];
 }
+
+export type ProjectDocument = HydratedDocument<Project>;
+export const ProjectSchema = SchemaFactory.createForClass(Project);
+
+ProjectSchema.index({ createdBy: 1, createdAt: -1 });

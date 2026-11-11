@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, Inject, forwardRef } from '@nestjs/common';
 import { AuthSeedService } from '../../auth/services/auth-seed.service';
 import { User } from '../../auth/entities/user.entity';
 import { ProjectRole } from '../entities/project-role.enum';
@@ -8,6 +8,7 @@ import { SessionRepository } from '../repositories/session.repository';
 import { DiagramRepository } from '../../diagrams/repositories/diagram.repository';
 import { DiagramService } from '../../diagrams/services/diagram.service';
 import { SaveDiagramAstDto } from '../../diagrams/dtos/save-diagram-ast.dto';
+import { getUtcDateKey } from '../../../common/utils/mongoose-entity.util';
 
 export interface DemoMemberSeedSpec {
   email: string;
@@ -336,7 +337,9 @@ export class DemoCollabSeedService implements OnApplicationBootstrap {
     private readonly authSeedService: AuthSeedService,
     private readonly projectRepository: ProjectRepository,
     private readonly projectMemberRepository: ProjectMemberRepository,
+    @Inject(forwardRef(() => DiagramRepository))
     private readonly diagramRepository: DiagramRepository,
+    @Inject(forwardRef(() => DiagramService))
     private readonly diagramService: DiagramService,
     private readonly sessionRepository: SessionRepository,
   ) {}
@@ -428,10 +431,18 @@ export class DemoCollabSeedService implements OnApplicationBootstrap {
         if (!existingSession) {
           const existingCode = await this.sessionRepository.findByRoomCode(spec.roomCode);
           if (!existingCode) {
+            const today = getUtcDateKey();
             const sessionEntity = this.sessionRepository.create({
               diagramId: primaryDiagramId,
+              projectId: project.id,
               roomCode: spec.roomCode,
               isActive: true,
+              hostUserId: owner.id,
+              hostUserName: owner.fullName,
+              sessionNumber: 1,
+              activeDateKeys: [today],
+              lastActiveDay: today,
+              resumeSummary: `Proyecto demo "${spec.name}" listo para co-diseño colaborativo multiusuario.`,
             });
             await this.sessionRepository.save(sessionEntity);
           }

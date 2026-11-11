@@ -2,12 +2,23 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+
+jest.setTimeout(60000);
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
+  let mongod: MongoMemoryServer;
+  const previousUri = process.env.MONGODB_URI;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    mongod = await MongoMemoryServer.create({
+      instance: { launchTimeout: 30000 },
+    });
+    process.env.MONGODB_URI = mongod.getUri();
+    process.env.MONGODB_DB_NAME = 'case_studio_ai_app_e2e';
+
+    const { AppModule } = await import('../src/app.module');
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -23,7 +34,13 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
-  afterEach(async () => {
-    await app.close();
+  afterAll(async () => {
+    await app?.close();
+    await mongod?.stop();
+    if (previousUri !== undefined) {
+      process.env.MONGODB_URI = previousUri;
+    } else {
+      delete process.env.MONGODB_URI;
+    }
   });
 });

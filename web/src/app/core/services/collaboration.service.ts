@@ -1,4 +1,4 @@
-import { Injectable, signal, inject } from '@angular/core';
+import { Injectable, signal, inject, effect, untracked } from '@angular/core';
 import { io, Socket } from 'socket.io-client';
 import { Subject } from 'rxjs';
 import { AuthService } from './auth.service';
@@ -35,6 +35,15 @@ export interface ChatMessage {
   message: string;
   color?: string;
   timestamp: string;
+  senderType?: 'human' | 'ai' | 'system';
+  aiMode?: 'MUTATE' | 'ADVISE' | 'REVIEW' | 'DISCIPLINE' | 'RECAP' | null;
+  requestedByUserName?: string | null;
+  targetNodes?: string[];
+  mutatedDiagram?: boolean;
+  providerUsed?: string | null;
+  modelUsed?: string | null;
+  sessionNumber?: number;
+  sessionDate?: string;
 }
 
 export type ActivityCategory = 'uml' | 'ai' | 'voice' | 'permission' | 'system';
@@ -48,6 +57,23 @@ export interface ActivityLog {
   category: ActivityCategory;
   color?: string;
   timestamp: string;
+  actorType?: 'human' | 'ai';
+  affectedClasses?: string[];
+  sessionNumber?: number;
+  sessionDate?: string;
+}
+
+export interface SessionContinuityMeta {
+  id: string;
+  diagramId: string;
+  roomCode: string;
+  hostUserId?: string | null;
+  hostUserName?: string | null;
+  sessionNumber?: number;
+  activeDateKeys?: string[];
+  lastActiveDay?: string;
+  resumeSummary?: string;
+  lastActivityAt?: string;
 }
 
 export interface ProjectPermissionsUpdatedEvent {
@@ -66,9 +92,13 @@ export class CollaborationService {
   private readonly authService = inject(AuthService);
   private socket: Socket | null = null;
   private readonly socketUrl = environment.socketUrl;
+  private readonly uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  private pendingJoin: { diagramId: string; customRoomCode?: string } | null = null;
 
   readonly isConnected = signal<boolean>(false);
   readonly activeRoomCode = signal<string | null>(null);
+  readonly sessionMeta = signal<SessionContinuityMeta | null>(null);
   readonly currentDiagramId = signal<string | null>(null);
   readonly myColor = signal<string>('#3B82F6');
   readonly collaborators = signal<Collaborator[]>([]);
@@ -78,17 +108,36 @@ export class CollaborationService {
   readonly activityLogs = signal<ActivityLog[]>([]);
   readonly unreadChatCount = signal<number>(0);
   readonly isChatPanelVisible = signal<boolean>(false);
+  readonly notifications = signal<any[]>([]);
 
   // Observables para cambios remotos
   readonly remoteNodeDrag$ = new Subject<{ nodeId: string; position: { x: number; y: number }; userId: string }>();
-  readonly remoteDiagramSync$ = new Subject<{ nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string }>();
+  readonly remoteDiagramSync$ = new Subject<{ nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string; aiAnnotations?: any[] }>();
   readonly nodeLockRejected$ = new Subject<{ nodeId: string; lockedBy: NodeLock }>();
   readonly projectPermissionsUpdated$ = new Subject<ProjectPermissionsUpdatedEvent>();
+  readonly hostTransferred$ = new Subject<any>();
+  readonly aiAnnotationsUpdated$ = new Subject<{ diagramId: string; aiAnnotations: any[] }>();
+  readonly notificationReceived$ = new Subject<any>();
 
   private readonly MAX_CLIENT_HISTORY = 100;
 
   // Control de frecuencia de cursores
   private lastCursorSent = 0;
+
+  constructor() {
+    effect(() => {
+      const user = this.authService.currentUser();
+      if (user?.id && this.uuidRegex.test(user.id)) {
+        untracked(() => {
+          if (this.pendingJoin && this.socket?.connected) {
+            const { diagramId, customRoomCode } = this.pendingJoin;
+            this.pendingJoin = null;
+            this.emitJoinRoom(diagramId, customRoomCode);
+          }
+        });
+      }
+    });
+  }
 
   private getCurrentUser(): User | null {
     const fromAuth = this.authService.currentUser();
@@ -211,10 +260,39 @@ export class CollaborationService {
       this.remoteNodeDrag$.next(data);
     });
 
-    this.socket.on('diagram_synced', (data: { nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string }) => {
+    this.socket.on('diagram_synced', (data: { nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string; aiAnnotations?: any[] }) => {
       const currentUserId = this.getCurrentUser()?.id;
       if (data.userId === currentUserId) return;
       this.remoteDiagramSync$.next(data);
+    });
+
+    this.socket.on('host_transferred', (transfer: any) => {
+      if (!transfer) return;
+      this.sessionMeta.update((prev) =>
+        prev
+          ? {
+              ...prev,
+              hostUserId: transfer.newHostUserId ?? null,
+              hostUserName: transfer.newHostUserName ?? null,
+            }
+          : prev,
+      );
+      this.hostTransferred$.next(transfer);
+    });
+
+    this.socket.on('ai_annotations_updated', (payload: { diagramId: string; aiAnnotations: any[] }) => {
+      if (payload?.diagramId) {
+        this.aiAnnotationsUpdated$.next(payload);
+      }
+    });
+
+    this.socket.on('notification_created', (notif: any) => {
+      if (!notif) return;
+      this.notifications.update((list) => {
+        if (notif.id && list.some((n) => n.id === notif.id)) return list;
+        return [notif, ...list].slice(0, 50);
+      });
+      this.notificationReceived$.next(notif);
     });
 
     this.socket.on('chat_message_received', (msg: ChatMessage) => {
@@ -276,8 +354,14 @@ export class CollaborationService {
 
   private emitJoinRoom(diagramId: string, customRoomCode?: string): void {
     const user = this.getCurrentUser();
-    const userId = user?.id || `anon_${Math.random().toString(36).substring(2, 7)}`;
-    const userName = user?.fullName || user?.email || 'Colaborador';
+    if (!user?.id || !this.uuidRegex.test(user.id) || !this.uuidRegex.test(diagramId)) {
+      this.pendingJoin = { diagramId, customRoomCode };
+      return;
+    }
+    this.pendingJoin = null;
+
+    const userId = user.id;
+    const userName = user.fullName || user.email || 'Colaborador';
 
     const assignedColor = this.generateUserColor(userName + userId);
     this.myColor.set(assignedColor);
@@ -301,6 +385,7 @@ export class CollaborationService {
       }) => {
         if (res && res.success && res.session) {
           this.activeRoomCode.set(res.session.roomCode);
+          this.sessionMeta.set(res.session);
           if (res.participants) {
             this.collaborators.set(res.participants);
           }
@@ -323,6 +408,7 @@ export class CollaborationService {
   }
 
   leaveRoom(): void {
+    this.pendingJoin = null;
     const user = this.getCurrentUser();
     const roomCode = this.activeRoomCode();
     const diagramId = this.currentDiagramId();
@@ -334,6 +420,7 @@ export class CollaborationService {
       });
     }
     this.activeRoomCode.set(null);
+    this.sessionMeta.set(null);
     this.remoteCursors.set([]);
     this.collaborators.set([]);
     this.activeNodeLocks.set(new Map());

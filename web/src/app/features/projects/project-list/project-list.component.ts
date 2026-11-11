@@ -93,6 +93,9 @@ export class ProjectListComponent implements OnInit {
   readonly isProfileModalOpen = signal<boolean>(false);
   readonly selectedProjectForMembers = signal<Project | null>(null);
   readonly selectedProjectForEdit = signal<Project | null>(null);
+  readonly isSubmittingMember = signal<boolean>(false);
+  readonly memberError = signal<string | null>(null);
+  readonly memberSuccess = signal<string | null>(null);
 
   // Formulario Crear Proyecto
   readonly createForm: FormGroup = this.fb.group({
@@ -211,14 +214,23 @@ export class ProjectListComponent implements OnInit {
   }
 
   // --- GESTIÓN DE MIEMBROS ---
+  private extractHttpError(err: any, fallback: string): string {
+    const raw = err?.error?.error?.message || err?.error?.message || err?.message || fallback;
+    return Array.isArray(raw) ? raw.join(', ') : String(raw);
+  }
+
   openMembersModal(project: Project, event?: MouseEvent): void {
     if (event) event.stopPropagation();
+    this.memberError.set(null);
+    this.memberSuccess.set(null);
     this.selectedProjectForMembers.set(project);
     this.addMemberForm.reset({ email: '', role: 'EDITOR', canDownloadCode: true });
     this.isMembersModalOpen.set(true);
     this.projectService.getProject(project.id).subscribe({
       next: (fresh) => this.selectedProjectForMembers.set(fresh),
-      error: () => {},
+      error: (err) => {
+        this.memberError.set(this.extractHttpError(err, 'No se pudo cargar la lista de miembros.'));
+      },
     });
   }
 
@@ -230,35 +242,67 @@ export class ProjectListComponent implements OnInit {
   closeMembersModal(): void {
     this.isMembersModalOpen.set(false);
     this.selectedProjectForMembers.set(null);
+    this.memberError.set(null);
+    this.memberSuccess.set(null);
+    this.isSubmittingMember.set(false);
   }
 
   onAddMemberSubmit(): void {
     const project = this.selectedProjectForMembers();
-    if (!project || this.addMemberForm.invalid) {
+    if (!project || this.addMemberForm.invalid || this.isSubmittingMember()) {
       this.addMemberForm.markAllAsTouched();
       return;
     }
 
+    this.isSubmittingMember.set(true);
+    this.memberError.set(null);
+    this.memberSuccess.set(null);
+
     this.projectService.addMember(project.id, this.addMemberForm.value).subscribe({
-      next: () => {
+      next: (added) => {
+        this.isSubmittingMember.set(false);
         this.addMemberForm.reset({ email: '', role: 'EDITOR', canDownloadCode: true });
-        this.projectService.getProject(project.id).subscribe((p) => {
-          this.selectedProjectForMembers.set(p);
+        this.memberSuccess.set(`${added.fullName} agregado como ${added.role}.`);
+        setTimeout(() => this.memberSuccess.set(null), 3000);
+        this.projectService.getProject(project.id).subscribe({
+          next: (p) => this.selectedProjectForMembers.set(p),
+          error: () => {},
         });
+      },
+      error: (err) => {
+        this.isSubmittingMember.set(false);
+        this.memberError.set(
+          this.extractHttpError(
+            err,
+            'No se pudo invitar al usuario. Verifica que el correo esté registrado.',
+          ),
+        );
       },
     });
   }
 
   onRemoveMember(userId: string): void {
     const project = this.selectedProjectForMembers();
-    if (!project) return;
+    if (!project || this.isSubmittingMember()) return;
 
     if (confirm('¿Estás seguro de remover a este miembro del proyecto?')) {
+      this.isSubmittingMember.set(true);
+      this.memberError.set(null);
+      this.memberSuccess.set(null);
+
       this.projectService.removeMember(project.id, userId).subscribe({
         next: () => {
-          this.projectService.getProject(project.id).subscribe((p) => {
-            this.selectedProjectForMembers.set(p);
+          this.isSubmittingMember.set(false);
+          this.memberSuccess.set('Miembro removido del proyecto.');
+          setTimeout(() => this.memberSuccess.set(null), 2500);
+          this.projectService.getProject(project.id).subscribe({
+            next: (p) => this.selectedProjectForMembers.set(p),
+            error: () => {},
           });
+        },
+        error: (err) => {
+          this.isSubmittingMember.set(false);
+          this.memberError.set(this.extractHttpError(err, 'No se pudo remover al colaborador.'));
         },
       });
     }
@@ -266,29 +310,55 @@ export class ProjectListComponent implements OnInit {
 
   onRoleChange(userId: string, newRole: ProjectRole): void {
     const project = this.selectedProjectForMembers();
-    if (!project) return;
+    if (!project || this.isSubmittingMember()) return;
 
+    this.isSubmittingMember.set(true);
+    this.memberError.set(null);
     this.projectService.updateMemberRole(project.id, userId, { role: newRole }).subscribe({
-      next: () => {
-        this.projectService.getProject(project.id).subscribe((p) => {
-          this.selectedProjectForMembers.set(p);
+      next: (updated) => {
+        this.isSubmittingMember.set(false);
+        this.memberSuccess.set(`Rol de ${updated.fullName} actualizado a ${updated.role}.`);
+        setTimeout(() => this.memberSuccess.set(null), 2500);
+        this.projectService.getProject(project.id).subscribe({
+          next: (p) => this.selectedProjectForMembers.set(p),
+          error: () => {},
         });
+      },
+      error: (err) => {
+        this.isSubmittingMember.set(false);
+        this.memberError.set(this.extractHttpError(err, 'No se pudo actualizar el rol del miembro.'));
       },
     });
   }
 
   onToggleDownloadPermission(member: ProjectMember): void {
     const project = this.selectedProjectForMembers();
-    if (!project) return;
+    if (!project || this.isSubmittingMember()) return;
 
+    this.isSubmittingMember.set(true);
+    this.memberError.set(null);
     const nextPermission = member.canDownloadCode === false;
     this.projectService
       .updateMemberRole(project.id, member.userId, { canDownloadCode: nextPermission })
       .subscribe({
-        next: () => {
-          this.projectService.getProject(project.id).subscribe((p) => {
-            this.selectedProjectForMembers.set(p);
+        next: (updated) => {
+          this.isSubmittingMember.set(false);
+          this.memberSuccess.set(
+            updated.canDownloadCode !== false
+              ? `Descarga ZIP habilitada para ${updated.fullName}.`
+              : `Descarga ZIP restringida para ${updated.fullName}.`,
+          );
+          setTimeout(() => this.memberSuccess.set(null), 2500);
+          this.projectService.getProject(project.id).subscribe({
+            next: (p) => this.selectedProjectForMembers.set(p),
+            error: () => {},
           });
+        },
+        error: (err) => {
+          this.isSubmittingMember.set(false);
+          this.memberError.set(
+            this.extractHttpError(err, 'No se pudo actualizar el permiso de descarga.'),
+          );
         },
       });
   }

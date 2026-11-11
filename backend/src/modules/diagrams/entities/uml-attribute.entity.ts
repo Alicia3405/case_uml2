@@ -1,39 +1,27 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
-import type { UmlNode } from './uml-node.entity';
+import { Prop, Schema } from '@nestjs/mongoose';
 
-@Entity('uml_attributes')
+@Schema({ _id: false })
 export class UmlAttribute {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id?: string;
+  nodeId?: string;
 
-  @Column({ name: 'node_id', type: 'varchar', length: 100 })
-  nodeId: string;
-
-  @Column({ type: 'varchar', length: 150 })
+  @Prop({ type: String, required: true, trim: true })
   name: string;
 
-  @Column({ type: 'varchar', length: 100, default: 'String' })
+  @Prop({ type: String, default: 'String', trim: true })
   type: string;
 
-  @Column({ type: 'varchar', length: 10, default: '-' })
+  @Prop({ type: String, default: '-' })
   visibility: string;
 
-  @Column({ name: 'is_primary_key', type: 'boolean', default: false })
+  @Prop({ type: Boolean, default: false })
   isPrimaryKey: boolean;
 
-  @Column({ name: 'is_nullable', type: 'boolean', default: true })
+  @Prop({ type: Boolean, default: true })
   isNullable: boolean;
 
-  @Column({ name: 'order_index', type: 'int', default: 0 })
+  @Prop({ type: Number, default: 0 })
   orderIndex: number;
 
-  @ManyToOne('UmlNode', (node: UmlNode) => node.attributes, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'node_id' })
-  node: UmlNode;
+  node?: any;
 }

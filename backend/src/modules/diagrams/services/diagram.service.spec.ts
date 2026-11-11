@@ -1,14 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import { DiagramService } from './diagram.service';
 import { DiagramRepository } from '../repositories/diagram.repository';
-import { UmlNodeRepository } from '../repositories/uml-node.repository';
-import { UmlAttributeRepository } from '../repositories/uml-attribute.repository';
-import { UmlMethodRepository } from '../repositories/uml-method.repository';
-import { UmlConnectionRepository } from '../repositories/uml-connection.repository';
+import { DiagramSnapshotRepository } from '../repositories/diagram-snapshot.repository';
 import { ProjectRepository } from '../../projects/repositories/project.repository';
 import { ProjectMemberRepository } from '../../projects/repositories/project-member.repository';
+import { UserRepository } from '../../auth/repositories/user.repository';
+import { AuthorEventRepository } from '../../projects/repositories/author-event.repository';
+import { SessionRepository } from '../../projects/repositories/session.repository';
 import { ProjectRole } from '../../projects/entities/project-role.enum';
 import { Diagram } from '../entities/diagram.entity';
 import { Project } from '../../projects/entities/project.entity';
@@ -20,13 +19,12 @@ import { SaveDiagramAstDto } from '../dtos/save-diagram-ast.dto';
 describe('DiagramService', () => {
   let service: DiagramService;
   let diagramRepo: jest.Mocked<Partial<DiagramRepository>>;
-  let nodeRepo: jest.Mocked<Partial<UmlNodeRepository>>;
-  let attributeRepo: jest.Mocked<Partial<UmlAttributeRepository>>;
-  let methodRepo: jest.Mocked<Partial<UmlMethodRepository>>;
-  let connectionRepo: jest.Mocked<Partial<UmlConnectionRepository>>;
+  let snapshotRepo: jest.Mocked<Partial<DiagramSnapshotRepository>>;
   let projectRepo: jest.Mocked<Partial<ProjectRepository>>;
   let memberRepo: jest.Mocked<Partial<ProjectMemberRepository>>;
-  let dataSource: any;
+  let userRepo: jest.Mocked<Partial<UserRepository>>;
+  let authorEventRepo: jest.Mocked<Partial<AuthorEventRepository>>;
+  let sessionRepo: jest.Mocked<Partial<SessionRepository>>;
 
   const mockUserId = '11111111-1111-1111-1111-111111111111';
   const mockProjectId = '22222222-2222-2222-2222-222222222222';
@@ -53,6 +51,10 @@ describe('DiagramService', () => {
     version: '1.0.0',
     defaultLineStyle: 'segment',
     yjsBinaryState: null,
+    revisionCount: 1,
+    lastModifiedByUserId: mockUserId,
+    lastModifiedByName: 'Cesar Quispe Delgado',
+    lastModifiedAt: new Date(),
     createdAt: new Date(),
     updatedAt: new Date(),
     project: mockProject,
@@ -70,38 +72,29 @@ describe('DiagramService', () => {
         height: 150,
         isAnchor: false,
         assocMainConnId: null,
-        diagram: {} as any,
         attributes: [
           {
-            id: 'attr_1',
-            nodeId: 'node_1',
             name: 'id',
             type: 'UUID',
             visibility: '-',
             isPrimaryKey: true,
             isNullable: false,
             orderIndex: 0,
-            node: {} as any,
           },
         ],
         methods: [
           {
-            id: 'meth_1',
-            nodeId: 'node_1',
             name: 'getId',
             parameters: '',
             returnType: 'UUID',
             visibility: '+',
             orderIndex: 0,
-            node: {} as any,
           },
         ],
-        outgoingConnections: [],
-        incomingConnections: [],
       },
     ],
     connections: [],
-    collaborationSessions: [],
+    aiAnnotations: [],
   };
 
   beforeEach(async () => {
@@ -110,37 +103,29 @@ describe('DiagramService', () => {
       save: jest.fn().mockResolvedValue(mockDiagram),
       findAllByProjectId: jest.fn(),
       findById: jest.fn(),
+      saveAstAtomic: jest.fn().mockImplementation(async (_id, payload) => ({
+        ...mockDiagram,
+        nodes: payload.nodes,
+        connections: payload.connections,
+        defaultLineStyle: payload.defaultLineStyle || mockDiagram.defaultLineStyle,
+        lastModifiedByUserId: payload.lastModifiedByUserId,
+        lastModifiedByName: payload.lastModifiedByName,
+        lastModifiedAt: payload.lastModifiedAt,
+        revisionCount: (mockDiagram.revisionCount || 0) + 1,
+      })),
+      updateAiAnnotations: jest.fn().mockImplementation(async (_id, annotations) => ({
+        ...mockDiagram,
+        aiAnnotations: annotations,
+      })),
       update: jest.fn().mockResolvedValue(undefined),
       delete: jest.fn().mockResolvedValue(undefined),
     };
 
-    nodeRepo = {
-      create: jest.fn(),
-      save: jest.fn(),
+    snapshotRepo = {
+      createAndSave: jest.fn().mockImplementation(async (data) => ({ ...data, id: 'snap-1' } as any)),
+      findByDiagramId: jest.fn().mockResolvedValue([]),
       findById: jest.fn(),
-      findByDiagramId: jest.fn(),
-      deleteByDiagramId: jest.fn(),
-    };
-
-    attributeRepo = {
-      create: jest.fn(),
-      save: jest.fn(),
-      findByNodeId: jest.fn(),
-      deleteByNodeIds: jest.fn(),
-    };
-
-    methodRepo = {
-      create: jest.fn(),
-      save: jest.fn(),
-      findByNodeId: jest.fn(),
-      deleteByNodeIds: jest.fn(),
-    };
-
-    connectionRepo = {
-      create: jest.fn(),
-      save: jest.fn(),
-      findByDiagramId: jest.fn(),
-      deleteByDiagramId: jest.fn(),
+      deleteByDiagramIds: jest.fn().mockResolvedValue(undefined),
     };
 
     projectRepo = {
@@ -151,37 +136,38 @@ describe('DiagramService', () => {
       findRole: jest.fn(),
     };
 
-    const mockQueryBuilder = {
-      delete: jest.fn().mockReturnThis(),
-      from: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
+    userRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: mockUserId,
+        fullName: 'Cesar Quispe Delgado',
+        email: 'cesar@uagrm.edu.bo',
+      } as any),
     };
 
-    const mockManager = {
-      delete: jest.fn().mockResolvedValue(undefined),
-      find: jest.fn().mockResolvedValue([]),
-      create: jest.fn().mockImplementation((entity, data) => data),
-      save: jest.fn().mockImplementation((data) => Promise.resolve(data)),
+    authorEventRepo = {
+      createAndSave: jest.fn().mockResolvedValue({ id: 'ev-1' } as any),
+    };
+
+    sessionRepo = {
+      findActiveByDiagramId: jest.fn().mockResolvedValue({
+        id: 'sess-1',
+        diagramId: mockDiagramId,
+        roomCode: 'ECOM-2026',
+        sessionNumber: 1,
+      } as any),
       update: jest.fn().mockResolvedValue(undefined),
-      createQueryBuilder: jest.fn().mockReturnValue(mockQueryBuilder),
-    };
-
-    dataSource = {
-      transaction: jest.fn().mockImplementation((cb: any) => cb(mockManager)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DiagramService,
         { provide: DiagramRepository, useValue: diagramRepo },
-        { provide: UmlNodeRepository, useValue: nodeRepo },
-        { provide: UmlAttributeRepository, useValue: attributeRepo },
-        { provide: UmlMethodRepository, useValue: methodRepo },
-        { provide: UmlConnectionRepository, useValue: connectionRepo },
+        { provide: DiagramSnapshotRepository, useValue: snapshotRepo },
         { provide: ProjectRepository, useValue: projectRepo },
         { provide: ProjectMemberRepository, useValue: memberRepo },
-        { provide: DataSource, useValue: dataSource },
+        { provide: UserRepository, useValue: userRepo },
+        { provide: AuthorEventRepository, useValue: authorEventRepo },
+        { provide: SessionRepository, useValue: sessionRepo },
       ],
     }).compile();
 
@@ -252,7 +238,7 @@ describe('DiagramService', () => {
   });
 
   describe('saveAst', () => {
-    it('debe persistir el AST del diagrama con nodos y conexiones', async () => {
+    it('debe persistir el AST del diagrama en MongoDB y registrar evento de autoría cuando hay diff', async () => {
       diagramRepo.findById!.mockResolvedValue(mockDiagram);
       projectRepo.findById!.mockResolvedValue(mockProject);
       memberRepo.findRole!.mockResolvedValue(ProjectRole.EDITOR);
@@ -267,7 +253,15 @@ describe('DiagramService', () => {
               name: 'Usuario',
               positionX: 100,
               positionY: 200,
-              attributes: [{ name: 'id', type: 'UUID' }],
+              attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+              methods: [],
+            },
+            {
+              id: 'node_2',
+              name: 'Factura',
+              positionX: 400,
+              positionY: 200,
+              attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
               methods: [],
             },
           ],
@@ -276,8 +270,17 @@ describe('DiagramService', () => {
         mockUserId,
       );
 
-      expect(dataSource.transaction).toHaveBeenCalled();
+      expect(diagramRepo.saveAstAtomic).toHaveBeenCalled();
+      expect(authorEventRepo.createAndSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          diagramId: mockDiagramId,
+          userId: mockUserId,
+          userName: 'Cesar Quispe Delgado',
+          affectedClasses: expect.arrayContaining(['Factura']),
+        }),
+      );
       expect(result.id).toBe(mockDiagramId);
+      expect(result.nodes).toHaveLength(2);
     });
 
     it('debe persistir el AST que contiene nodos ancla con nombre vacío (isAnchor: true)', async () => {
@@ -317,8 +320,34 @@ describe('DiagramService', () => {
         mockUserId,
       );
 
-      expect(dataSource.transaction).toHaveBeenCalled();
+      expect(diagramRepo.saveAstAtomic).toHaveBeenCalled();
       expect(result.id).toBe(mockDiagramId);
+    });
+
+    it('debe crear anotaciones IA y checkpoints snapshot correctamente', async () => {
+      diagramRepo.findById!.mockResolvedValue(mockDiagram);
+      projectRepo.findById!.mockResolvedValue(mockProject);
+      memberRepo.findRole!.mockResolvedValue(ProjectRole.EDITOR);
+
+      const annotated = await service.addAiAnnotation(mockDiagramId, {
+        title: 'Índice sugerido',
+        message: 'Agrega atributo email único a Usuario.',
+        severity: 'idea',
+        authorName: 'Copilot IA',
+        targetNodeId: 'node_1',
+        targetClassName: 'Usuario',
+      });
+      expect(annotated.aiAnnotations).toHaveLength(1);
+
+      const snap = await service.createSnapshot(mockDiagramId, mockUserId, 'Cierre Día 1');
+      expect(snapshotRepo.createAndSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          diagramId: mockDiagramId,
+          label: 'Cierre Día 1',
+          sessionNumber: 1,
+        }),
+      );
+      expect(snap.id).toBe('snap-1');
     });
 
     it('debe validar exitosamente SaveDiagramAstDto cuando un nodo ancla tiene nombre vacío', async () => {

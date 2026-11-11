@@ -1,40 +1,51 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  OneToMany,
-} from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { Project } from '../../projects/entities/project.entity';
 import type { ProjectMember } from '../../projects/entities/project-member.entity';
 import type { SessionParticipant } from '../../projects/entities/session-participant.entity';
 
-@Entity('users')
+@Schema({
+  collection: 'users',
+  timestamps: { createdAt: 'createdAt', updatedAt: false },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+})
 export class User {
-  @PrimaryGeneratedColumn('uuid')
+  @Prop({ type: String, default: () => randomUUID() })
+  _id?: string;
+
   id: string;
 
-  @Column({ name: 'full_name', type: 'varchar', length: 100 })
+  @Prop({ type: String, required: true, trim: true, maxlength: 100 })
   fullName: string;
 
-  @Column({ type: 'varchar', length: 150, unique: true })
+  @Prop({
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true,
+    maxlength: 150,
+  })
   email: string;
 
-  @Column({ name: 'password_hash', type: 'varchar', length: 255, select: false })
+  @Prop({ type: String, required: true, select: false })
   passwordHash: string;
 
-  @Column({ name: 'is_active', type: 'boolean', default: true })
+  @Prop({ type: Boolean, default: true })
   isActive: boolean;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @Prop({ type: Date })
   createdAt: Date;
 
-  @OneToMany('Project', (project: Project) => project.creator)
-  projectsCreated: Project[];
-
-  @OneToMany('ProjectMember', (member: ProjectMember) => member.user)
-  projectMemberships: ProjectMember[];
-
-  @OneToMany('SessionParticipant', (participant: SessionParticipant) => participant.user)
-  sessionParticipations: SessionParticipant[];
+  // Propiedades virtuales / de compatibilidad en TypeScript
+  projectsCreated?: Project[];
+  projectMemberships?: ProjectMember[];
+  sessionParticipations?: SessionParticipant[];
+  diagramVersions?: any[];
+  aiLogs?: any[];
 }
+
+export type UserDocument = HydratedDocument<User>;
+export const UserSchema = SchemaFactory.createForClass(User);
