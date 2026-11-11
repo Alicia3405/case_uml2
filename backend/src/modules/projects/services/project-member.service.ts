@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   ConflictException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { ProjectRepository } from '../repositories/project.repository';
 import { ProjectMemberRepository } from '../repositories/project-member.repository';
@@ -12,6 +13,7 @@ import { AddMemberDto } from '../dtos/add-member.dto';
 import { UpdateMemberRoleDto } from '../dtos/update-member-role.dto';
 import { ProjectMemberResponseDto } from '../dtos/project-member-response.dto';
 import { ProjectRole } from '../entities/project-role.enum';
+import { CollaborationGateway } from '../gateways/collaboration.gateway';
 
 @Injectable()
 export class ProjectMemberService {
@@ -19,6 +21,7 @@ export class ProjectMemberService {
     private readonly projectRepository: ProjectRepository,
     private readonly projectMemberRepository: ProjectMemberRepository,
     private readonly userRepository: UserRepository,
+    @Optional() private readonly collaborationGateway?: CollaborationGateway,
   ) {}
 
   async getProjectMembers(projectId: string, userId: string): Promise<ProjectMemberResponseDto[]> {
@@ -57,10 +60,15 @@ export class ProjectMemberService {
       throw new ConflictException('El usuario ya es miembro de este proyecto');
     }
 
+    const role = dto.role || ProjectRole.EDITOR;
+    const canDownloadCode =
+      dto.canDownloadCode !== undefined ? dto.canDownloadCode : role !== ProjectRole.VIEWER;
+
     const newMemberEntity = this.projectMemberRepository.create({
       projectId,
       userId: targetUser.id,
-      role: dto.role || ProjectRole.EDITOR,
+      role,
+      canDownloadCode,
     });
     const savedMember = await this.projectMemberRepository.save(newMemberEntity);
     savedMember.user = targetUser;
@@ -74,6 +82,10 @@ export class ProjectMemberService {
     dto: UpdateMemberRoleDto,
     currentUserId: string,
   ): Promise<ProjectMemberResponseDto> {
+    if (dto.role === undefined && dto.canDownloadCode === undefined) {
+      throw new BadRequestException('Debe especificar el nuevo rol o el permiso de descarga');
+    }
+
     const project = await this.projectRepository.findById(projectId);
     if (!project) {
       throw new NotFoundException('Proyecto no encontrado');
@@ -81,11 +93,11 @@ export class ProjectMemberService {
 
     const currentRole = await this.projectMemberRepository.findRole(projectId, currentUserId);
     if (currentRole !== ProjectRole.OWNER && project.createdBy !== currentUserId) {
-      throw new ForbiddenException('Solo el propietario puede cambiar los roles de los miembros');
+      throw new ForbiddenException('Solo el propietario puede cambiar los roles y permisos de los miembros');
     }
 
     if (project.createdBy === targetUserId) {
-      throw new BadRequestException('No puedes cambiar el rol del creador principal del proyecto');
+      throw new BadRequestException('No puedes cambiar los permisos del creador principal del proyecto');
     }
 
     const member = await this.projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId);
@@ -93,9 +105,34 @@ export class ProjectMemberService {
       throw new NotFoundException('El usuario no es miembro de este proyecto');
     }
 
-    await this.projectMemberRepository.updateRole(projectId, targetUserId, dto.role);
+    const updatePayload: { role?: ProjectRole; canDownloadCode?: boolean } = {};
+    if (dto.role !== undefined) {
+      updatePayload.role = dto.role;
+    }
+    if (dto.canDownloadCode !== undefined) {
+      updatePayload.canDownloadCode = dto.canDownloadCode;
+    }
+
+    if (typeof this.projectMemberRepository.updateMember === 'function') {
+      await this.projectMemberRepository.updateMember(projectId, targetUserId, updatePayload);
+    } else if (dto.role !== undefined) {
+      await this.projectMemberRepository.updateRole(projectId, targetUserId, dto.role);
+    }
+
     const updated = await this.projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId);
-    return ProjectMemberResponseDto.fromEntity(updated!);
+    const response = ProjectMemberResponseDto.fromEntity(updated!);
+
+    const diagramIds = (project.diagrams || []).map((d) => d.id);
+    if (diagramIds.length > 0) {
+      this.collaborationGateway?.emitProjectPermissionsUpdated(diagramIds, {
+        projectId,
+        userId: targetUserId,
+        role: response.role,
+        canDownloadCode: response.canDownloadCode,
+      });
+    }
+
+    return response;
   }
 
   async removeMember(
@@ -126,6 +163,16 @@ export class ProjectMemberService {
     }
 
     await this.projectMemberRepository.delete(projectId, targetUserId);
+
+    const diagramIds = (project.diagrams || []).map((d) => d.id);
+    if (diagramIds.length > 0) {
+      this.collaborationGateway?.emitProjectPermissionsUpdated(diagramIds, {
+        projectId,
+        userId: targetUserId,
+        removed: true,
+      });
+    }
+
     return { success: true, message: 'Miembro removido exitosamente' };
   }
 }

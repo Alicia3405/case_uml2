@@ -24,6 +24,9 @@ export class UmlMethod {
   @Column({ name: 'return_type', type: 'varchar', length: 100, default: 'void' })
   returnType: string;
 
+  @Column({ type: 'varchar', length: 10, default: '+' })
+  visibility: string;
+
   @Column({ name: 'order_index', type: 'int', default: 0 })
   orderIndex: number;
 

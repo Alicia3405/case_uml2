@@ -25,7 +25,7 @@ import { User } from '../../auth/entities/user.entity';
 @UseGuards(JwtAuthGuard)
 @Controller('projects/:id/members')
 export class ProjectMemberController {
-  constructor(private readonly projectMemberService: ProjectMemberService) {}
+  constructor(private readonly projectMemberService: ProjectMemberService) { }
 
   @Get()
   @ApiOperation({ summary: 'Listar los miembros colaboradores de un proyecto' })
@@ -55,10 +55,10 @@ export class ProjectMemberController {
   }
 
   @Patch(':userId')
-  @ApiOperation({ summary: 'Actualizar el rol de un miembro colaborador' })
-  @ApiResponse({ status: 200, description: 'Rol actualizado exitosamente', type: ProjectMemberResponseDto })
-  @ApiResponse({ status: 400, description: 'No se puede cambiar el rol del OWNER' })
-  @ApiResponse({ status: 403, description: 'Solo el OWNER puede modificar roles' })
+  @ApiOperation({ summary: 'Actualizar el rol o permiso de descarga de código de un miembro colaborador' })
+  @ApiResponse({ status: 200, description: 'Permisos del miembro actualizados exitosamente', type: ProjectMemberResponseDto })
+  @ApiResponse({ status: 400, description: 'No se pueden cambiar los permisos del creador o petición vacía' })
+  @ApiResponse({ status: 403, description: 'Solo el OWNER puede modificar roles y permisos' })
   @ApiResponse({ status: 404, description: 'Miembro no encontrado' })
   async updateMemberRole(
     @Param('id', ParseUUIDPipe) id: string,

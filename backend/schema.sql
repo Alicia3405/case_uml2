@@ -49,9 +49,13 @@ CREATE TABLE IF NOT EXISTS public.project_members (
     project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     role public.project_members_role_enum DEFAULT 'EDITOR' NOT NULL,
+    can_download_code BOOLEAN DEFAULT TRUE NOT NULL,
     joined_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL,
     CONSTRAINT uq_project_members_project_user UNIQUE (project_id, user_id)
 );
+
+ALTER TABLE public.project_members
+    ADD COLUMN IF NOT EXISTS can_download_code BOOLEAN DEFAULT TRUE NOT NULL;
 
 -- ==============================================================================
 -- TABLA: diagrams (CU-04 / CU-07 / CU-08: Diagramas UML y Generación de Código)
@@ -98,6 +102,9 @@ CREATE TABLE IF NOT EXISTS public.uml_nodes (
     id VARCHAR(100) PRIMARY KEY,
     diagram_id UUID NOT NULL REFERENCES public.diagrams(id) ON DELETE CASCADE,
     name VARCHAR(150) DEFAULT 'ClassName' NOT NULL,
+    element_type VARCHAR(30) DEFAULT 'CLASS' NOT NULL,
+    stereotype VARCHAR(100),
+    note_content TEXT,
     position_x DOUBLE PRECISION DEFAULT 0 NOT NULL,
     position_y DOUBLE PRECISION DEFAULT 0 NOT NULL,
     width INTEGER DEFAULT 220 NOT NULL,
@@ -114,6 +121,9 @@ CREATE TABLE IF NOT EXISTS public.uml_attributes (
     node_id VARCHAR(100) NOT NULL REFERENCES public.uml_nodes(id) ON DELETE CASCADE,
     name VARCHAR(150) NOT NULL,
     type VARCHAR(100) DEFAULT 'String' NOT NULL,
+    visibility VARCHAR(10) DEFAULT '-' NOT NULL,
+    is_primary_key BOOLEAN DEFAULT FALSE NOT NULL,
+    is_nullable BOOLEAN DEFAULT TRUE NOT NULL,
     order_index INTEGER DEFAULT 0 NOT NULL
 );
 
@@ -126,6 +136,7 @@ CREATE TABLE IF NOT EXISTS public.uml_methods (
     name VARCHAR(150) NOT NULL,
     parameters VARCHAR(255) DEFAULT '' NOT NULL,
     return_type VARCHAR(100) DEFAULT 'void' NOT NULL,
+    visibility VARCHAR(10) DEFAULT '+' NOT NULL,
     order_index INTEGER DEFAULT 0 NOT NULL
 );
 

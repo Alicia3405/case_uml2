@@ -61,6 +61,9 @@ describe('DiagramService', () => {
         id: 'node_1',
         diagramId: mockDiagramId,
         name: 'Usuario',
+        elementType: 'CLASS',
+        stereotype: null,
+        noteContent: null,
         positionX: 100,
         positionY: 200,
         width: 220,
@@ -74,6 +77,9 @@ describe('DiagramService', () => {
             nodeId: 'node_1',
             name: 'id',
             type: 'UUID',
+            visibility: '-',
+            isPrimaryKey: true,
+            isNullable: false,
             orderIndex: 0,
             node: {} as any,
           },
@@ -85,6 +91,7 @@ describe('DiagramService', () => {
             name: 'getId',
             parameters: '',
             returnType: 'UUID',
+            visibility: '+',
             orderIndex: 0,
             node: {} as any,
           },
@@ -370,6 +377,52 @@ describe('DiagramService', () => {
       const errors = await validate(dto);
       expect(errors.length).toBeGreaterThan(0);
       expect(JSON.stringify(errors)).toContain('name should not be empty');
+    });
+
+    it('debe validar y mapear elementType, visibility, isPrimaryKey e isNullable en atributos y métodos', async () => {
+      const payload = {
+        defaultLineStyle: 'segment',
+        nodes: [
+          {
+            id: 'node_iface',
+            name: 'Pagable',
+            elementType: 'INTERFACE',
+            stereotype: 'interface',
+            positionX: 50,
+            positionY: 50,
+            attributes: [],
+            methods: [
+              { name: 'pagar', parameters: 'monto: BigDecimal', returnType: 'Boolean', visibility: '+', orderIndex: 0 },
+            ],
+          },
+          {
+            id: 'node_note',
+            name: '',
+            elementType: 'NOTE',
+            noteContent: 'Regla fiscal vigente 2026',
+            positionX: 300,
+            positionY: 50,
+            attributes: [],
+            methods: [],
+          },
+          {
+            id: 'node_cls',
+            name: 'Factura',
+            elementType: 'CLASS',
+            positionX: 50,
+            positionY: 250,
+            attributes: [
+              { name: 'codigo', type: 'String', visibility: '-', isPrimaryKey: true, isNullable: false, orderIndex: 0 },
+            ],
+            methods: [],
+          },
+        ],
+        connections: [],
+      };
+
+      const dto = plainToInstance(SaveDiagramAstDto, payload);
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
     });
   });
 });

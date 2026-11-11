@@ -18,6 +18,9 @@ export class ProjectMemberResponseDto {
   @ApiProperty({ enum: ProjectRole, example: ProjectRole.EDITOR })
   role: ProjectRole;
 
+  @ApiProperty({ example: true })
+  canDownloadCode: boolean;
+
   @ApiProperty({ example: '2026-08-28T14:00:00.000Z' })
   joinedAt: Date;
 
@@ -28,6 +31,7 @@ export class ProjectMemberResponseDto {
     dto.fullName = member.user?.fullName || '';
     dto.email = member.user?.email || '';
     dto.role = member.role;
+    dto.canDownloadCode = member.canDownloadCode ?? true;
     dto.joinedAt = member.joinedAt;
     return dto;
   }

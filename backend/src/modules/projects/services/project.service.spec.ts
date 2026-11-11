@@ -49,6 +49,7 @@ describe('ProjectService', () => {
         projectId: mockProjectId,
         userId: mockUserId,
         role: ProjectRole.OWNER,
+        canDownloadCode: true,
         joinedAt: new Date(),
         project: {} as any,
         user: mockUser,

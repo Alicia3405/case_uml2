@@ -22,6 +22,21 @@ export class UmlAttributeDto {
   @IsNotEmpty()
   type: string;
 
+  @ApiPropertyOptional({ example: '-', default: '-' })
+  @IsOptional()
+  @IsString()
+  visibility?: string = '-';
+
+  @ApiPropertyOptional({ example: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  isPrimaryKey?: boolean = false;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsOptional()
+  @IsBoolean()
+  isNullable?: boolean = true;
+
   @ApiPropertyOptional({ example: 0 })
   @IsOptional()
   @IsNumber()
@@ -44,6 +59,11 @@ export class UmlMethodDto {
   @IsNotEmpty()
   returnType: string;
 
+  @ApiPropertyOptional({ example: '+', default: '+' })
+  @IsOptional()
+  @IsString()
+  visibility?: string = '+';
+
   @ApiPropertyOptional({ example: 0 })
   @IsOptional()
   @IsNumber()
@@ -57,10 +77,25 @@ export class UmlNodeDto {
   id: string;
 
   @ApiProperty({ example: 'Factura' })
-  @ValidateIf((o: UmlNodeDto) => !o.isAnchor)
+  @ValidateIf((o: UmlNodeDto) => !o.isAnchor && o.elementType !== 'NOTE')
   @IsString()
   @IsNotEmpty()
   name: string;
+
+  @ApiPropertyOptional({ example: 'CLASS', default: 'CLASS' })
+  @IsOptional()
+  @IsString()
+  elementType?: string = 'CLASS';
+
+  @ApiPropertyOptional({ example: '«interface»' })
+  @IsOptional()
+  @IsString()
+  stereotype?: string | null;
+
+  @ApiPropertyOptional({ example: 'Regla de negocio para facturación' })
+  @IsOptional()
+  @IsString()
+  noteContent?: string | null;
 
   @ApiProperty({ example: 100 })
   @IsNumber()

@@ -30,6 +30,28 @@ export interface NodeLockInfo {
   lockedAt: number;
 }
 
+export interface ChatMessageRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  message: string;
+  color?: string;
+  timestamp: string;
+}
+
+export interface ActivityLogRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  action: string;
+  detail?: string;
+  category: 'uml' | 'ai' | 'voice' | 'permission' | 'system';
+  color?: string;
+  timestamp: string;
+}
+
+const MAX_ROOM_HISTORY = 50;
+
 @WebSocketGateway({
   namespace: '/collaboration',
   cors: {
@@ -55,8 +77,31 @@ export class CollaborationGateway
   private readonly clientMap = new Map<string, ClientMetadata>();
   // Mapa de bloqueo de nodos por exclusión mutua: `${diagramId}_${nodeId}` => NodeLockInfo
   private readonly nodeLocks = new Map<string, NodeLockInfo>();
+  // Historial acotado en memoria por sala/diagrama para chat y bitácora de auditoría en vivo
+  private readonly roomChatHistory = new Map<string, ChatMessageRecord[]>();
+  private readonly roomActivityHistory = new Map<string, ActivityLogRecord[]>();
 
   constructor(private readonly yjsSyncService: YjsSyncService) { }
+
+  private getRoomTargets(diagramId?: string, roomCode?: string): string[] {
+    return Array.from(
+      new Set([diagramId ? `diagram_${diagramId}` : '', roomCode || ''].filter(Boolean)),
+    );
+  }
+
+  private getHistoryKey(diagramId?: string, roomCode?: string): string | null {
+    return diagramId || roomCode || null;
+  }
+
+  private appendBoundedHistory<T>(map: Map<string, T[]>, key: string | null, item: T): void {
+    if (!key) return;
+    const list = map.get(key) ?? [];
+    list.push(item);
+    if (list.length > MAX_ROOM_HISTORY) {
+      list.splice(0, list.length - MAX_ROOM_HISTORY);
+    }
+    map.set(key, list);
+  }
 
   handleConnection(client: Socket): void {
     this.logger.log(`[WebSocket] Cliente conectado: ${client.id}`);
@@ -73,18 +118,19 @@ export class CollaborationGateway
         await this.yjsSyncService.leaveSession(meta.sessionId, meta.userId);
       }
 
+      const targets = this.getRoomTargets(meta.diagramId, meta.roomCode);
+
       // Liberar cualquier bloqueo de tabla que tuviera este usuario
       const locksToRelease: string[] = [];
       for (const [lockKey, lockInfo] of this.nodeLocks.entries()) {
         if (lockInfo.userId === meta.userId && lockInfo.diagramId === meta.diagramId) {
           locksToRelease.push(lockKey);
-          this.server
-            .to(meta.roomCode)
-            .to(`diagram_${meta.diagramId}`)
-            .emit('node_unlocked', {
+          if (targets.length > 0) {
+            this.server.to(targets).emit('node_unlocked', {
               nodeId: lockInfo.nodeId,
               userId: meta.userId,
             });
+          }
         }
       }
       for (const key of locksToRelease) {
@@ -107,17 +153,19 @@ export class CollaborationGateway
         }])).values()
       );
 
-      this.server.to(meta.roomCode).to(`diagram_${meta.diagramId}`).emit('user_left', {
-        userId: meta.userId,
-        userName: meta.userName,
-        socketId: client.id,
-      });
+      if (targets.length > 0) {
+        this.server.to(targets).emit('user_left', {
+          userId: meta.userId,
+          userName: meta.userName,
+          socketId: client.id,
+        });
 
-      this.server.to(meta.roomCode).to(`diagram_${meta.diagramId}`).emit('room_participants_updated', {
-        diagramId: meta.diagramId,
-        roomCode: meta.roomCode,
-        participants: uniqueParticipants,
-      });
+        this.server.to(targets).emit('room_participants_updated', {
+          diagramId: meta.diagramId,
+          roomCode: meta.roomCode,
+          participants: uniqueParticipants,
+        });
+      }
     } else {
       this.clientMap.delete(client.id);
     }
@@ -134,13 +182,27 @@ export class CollaborationGateway
       color?: string;
     },
     @ConnectedSocket() client: Socket,
-  ): Promise<{ success: boolean; session: any; participants: any[]; activeLocks: any[] }> {
+  ): Promise<{
+    success: boolean;
+    session: any;
+    participants: any[];
+    activeLocks: any[];
+    recentChatMessages: ChatMessageRecord[];
+    recentActivityLogs: ActivityLogRecord[];
+  }> {
     try {
       // Validar que el diagramId sea un UUID válido antes de consultar la BD
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!data.diagramId || !uuidRegex.test(data.diagramId)) {
         this.logger.warn(`[WebSocket] join_room ignorado: diagramId inválido "${data.diagramId}" (no es UUID)`);
-        return { success: false, session: null, participants: [], activeLocks: [] };
+        return {
+          success: false,
+          session: null,
+          participants: [],
+          activeLocks: [],
+          recentChatMessages: [],
+          recentActivityLogs: [],
+        };
       }
 
       this.logger.log(
@@ -158,6 +220,7 @@ export class CollaborationGateway
 
       const targetRoom = session.roomCode;
       const diagramRoom = `diagram_${data.diagramId}`;
+      const targets = this.getRoomTargets(data.diagramId, targetRoom);
 
       // Unir socket a ambas salas (código de sala y diagrama)
       await client.join(targetRoom);
@@ -198,25 +261,31 @@ export class CollaborationGateway
           color: l.color,
         }));
 
-      // Notificar a todos los miembros de la sala
-      this.server.to(targetRoom).to(diagramRoom).emit('room_participants_updated', {
+      // Notificar a todos los miembros de la sala sin duplicar entregas
+      this.server.to(targets).emit('room_participants_updated', {
         diagramId: data.diagramId,
         roomCode: targetRoom,
         participants: uniqueParticipants,
       });
 
-      client.to(targetRoom).to(diagramRoom).emit('user_joined', {
+      client.to(targets).emit('user_joined', {
         userId: data.userId,
         userName: data.userName,
         color,
         socketId: client.id,
       });
 
+      const historyKey = this.getHistoryKey(data.diagramId, targetRoom);
+      const recentChatMessages = historyKey ? [...(this.roomChatHistory.get(historyKey) ?? [])] : [];
+      const recentActivityLogs = historyKey ? [...(this.roomActivityHistory.get(historyKey) ?? [])] : [];
+
       return {
         success: true,
         session,
         participants: uniqueParticipants,
         activeLocks: currentLocks,
+        recentChatMessages,
+        recentActivityLogs,
       };
     } catch (err) {
       this.logger.error(`Error en handleJoinRoom: ${err}`);
@@ -225,6 +294,8 @@ export class CollaborationGateway
         session: null,
         participants: [],
         activeLocks: [],
+        recentChatMessages: [],
+        recentActivityLogs: [],
       };
     }
   }
@@ -281,11 +352,9 @@ export class CollaborationGateway
       color: lockInfo.color,
     };
 
-    if (data.diagramId) {
-      client.to(`diagram_${data.diagramId}`).emit('node_locked', broadcastPayload);
-    }
-    if (data.roomCode) {
-      client.to(data.roomCode).emit('node_locked', broadcastPayload);
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      client.to(targets).emit('node_locked', broadcastPayload);
     }
   }
 
@@ -298,7 +367,7 @@ export class CollaborationGateway
       nodeId: string;
       userId: string;
     },
-    @ConnectedSocket() client: Socket,
+    @ConnectedSocket() _client: Socket,
   ): void {
     const lockKey = `${data.diagramId}_${data.nodeId}`;
     this.nodeLocks.delete(lockKey);
@@ -310,11 +379,9 @@ export class CollaborationGateway
       userId: data.userId,
     };
 
-    if (data.diagramId) {
-      this.server.to(`diagram_${data.diagramId}`).emit('node_unlocked', broadcastPayload);
-    }
-    if (data.roomCode) {
-      this.server.to(data.roomCode).emit('node_unlocked', broadcastPayload);
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      this.server.to(targets).emit('node_unlocked', broadcastPayload);
     }
   }
 
@@ -346,11 +413,9 @@ export class CollaborationGateway
         color,
       };
 
-      if (diagramId) {
-        this.server.to(`diagram_${diagramId}`).emit('node_locked', broadcastPayload);
-      }
-      if (roomCode) {
-        this.server.to(roomCode).emit('node_locked', broadcastPayload);
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0) {
+        this.server.to(targets).emit('node_locked', broadcastPayload);
       }
     } catch (e) {
       this.logger.warn(`No se pudo bloquear nodo para IA: ${e}`);
@@ -372,14 +437,38 @@ export class CollaborationGateway
         userId: 'ai_copilot_vertex',
       };
 
-      if (diagramId) {
-        this.server.to(`diagram_${diagramId}`).emit('node_unlocked', broadcastPayload);
-      }
-      if (roomCode) {
-        this.server.to(roomCode).emit('node_unlocked', broadcastPayload);
+      const targets = this.getRoomTargets(diagramId, roomCode);
+      if (targets.length > 0) {
+        this.server.to(targets).emit('node_unlocked', broadcastPayload);
       }
     } catch (e) {
       this.logger.warn(`No se pudo desbloquear nodo para IA: ${e}`);
+    }
+  }
+
+  emitProjectPermissionsUpdated(
+    diagramIds: string[],
+    payload: {
+      projectId: string;
+      userId: string;
+      role?: string;
+      canDownloadCode?: boolean;
+      removed?: boolean;
+    },
+  ): void {
+    try {
+      if (!this.server || !diagramIds.length) return;
+      const targets = Array.from(
+        new Set(diagramIds.filter(Boolean).map((id) => `diagram_${id}`)),
+      );
+      if (targets.length > 0) {
+        this.server.to(targets).emit('project_permissions_updated', {
+          ...payload,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo emitir actualización de permisos: ${e}`);
     }
   }
 
@@ -421,11 +510,9 @@ export class CollaborationGateway
       color: data.color || '#007ACC',
     };
 
-    if (data.diagramId) {
-      client.to(`diagram_${data.diagramId}`).emit('cursor_moved', payload);
-    }
-    if (data.roomCode) {
-      client.to(data.roomCode).emit('cursor_moved', payload);
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      client.to(targets).emit('cursor_moved', payload);
     }
   }
 
@@ -447,11 +534,9 @@ export class CollaborationGateway
       userId: data.userId,
     };
 
-    if (data.diagramId) {
-      client.to(`diagram_${data.diagramId}`).emit('node_dragged', payload);
-    }
-    if (data.roomCode) {
-      client.to(data.roomCode).emit('node_dragged', payload);
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      client.to(targets).emit('node_dragged', payload);
     }
   }
 
@@ -475,11 +560,9 @@ export class CollaborationGateway
       action: data.action || 'update',
     };
 
-    if (data.diagramId) {
-      client.to(`diagram_${data.diagramId}`).emit('diagram_synced', payload);
-    }
-    if (data.roomCode) {
-      client.to(data.roomCode).emit('diagram_synced', payload);
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      client.to(targets).emit('diagram_synced', payload);
     }
   }
 
@@ -492,20 +575,70 @@ export class CollaborationGateway
       userId: string;
       userName: string;
       message: string;
+      color?: string;
     },
   ): void {
-    const payload = {
+    const cleanMessage = data.message?.trim();
+    if (!cleanMessage) return;
+
+    const payload: ChatMessageRecord = {
+      id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       userId: data.userId,
       userName: data.userName,
-      message: data.message,
+      message: cleanMessage,
+      color: data.color,
       timestamp: new Date().toISOString(),
     };
 
-    if (data.diagramId) {
-      this.server.to(`diagram_${data.diagramId}`).emit('chat_message_received', payload);
+    this.appendBoundedHistory(
+      this.roomChatHistory,
+      this.getHistoryKey(data.diagramId, data.roomCode),
+      payload,
+    );
+
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      this.server.to(targets).emit('chat_message_received', payload);
     }
-    if (data.roomCode) {
-      this.server.to(data.roomCode).emit('chat_message_received', payload);
+  }
+
+  @SubscribeMessage('activity_log')
+  handleActivityLog(
+    @MessageBody()
+    data: {
+      diagramId?: string;
+      roomCode?: string;
+      userId: string;
+      userName: string;
+      action: string;
+      detail?: string;
+      category?: ActivityLogRecord['category'];
+      color?: string;
+    },
+  ): void {
+    const cleanAction = data.action?.trim();
+    if (!cleanAction) return;
+
+    const payload: ActivityLogRecord = {
+      id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId: data.userId,
+      userName: data.userName,
+      action: cleanAction,
+      detail: data.detail,
+      category: data.category || 'uml',
+      color: data.color,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.appendBoundedHistory(
+      this.roomActivityHistory,
+      this.getHistoryKey(data.diagramId, data.roomCode),
+      payload,
+    );
+
+    const targets = this.getRoomTargets(data.diagramId, data.roomCode);
+    if (targets.length > 0) {
+      this.server.to(targets).emit('activity_logged', payload);
     }
   }
 }

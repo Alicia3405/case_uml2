@@ -7,17 +7,35 @@ import { AiPromptDto } from '../dtos/ai-prompt.dto';
 import { AiVisionPromptDto } from '../dtos/ai-vision-prompt.dto';
 import { AiResponseDto } from '../dtos/ai-response.dto';
 
+export interface UmlAttributeNode {
+  name: string;
+  type: string;
+  visibility?: string;
+  isPrimaryKey?: boolean;
+  isNullable?: boolean;
+}
+
+export interface UmlMethodNode {
+  name: string;
+  parameters: string;
+  returnType: string;
+  visibility?: string;
+}
+
 export interface UmlClassNode {
   id: string;
   name: string;
+  elementType?: string;
+  stereotype?: string | null;
+  noteContent?: string | null;
   position: { x: number; y: number };
   width?: number;
   height?: number;
   isAnchor?: boolean;
   assocAnchorNodeId?: string;
   assocMainConnId?: string;
-  attributes: { name: string; type: string }[];
-  methods: { name: string; parameters: string; returnType: string }[];
+  attributes: UmlAttributeNode[];
+  methods: UmlMethodNode[];
 }
 
 export interface UmlConnection {
@@ -393,7 +411,7 @@ export class AiAssistantService {
     const userContent = `
 ESTADO ACTUAL DEL DIAGRAMA:
 NODOS ACTUALES (${currentNodes.length}):
-${JSON.stringify(currentNodes.map(n => ({ id: n.id, name: n.name, attributes: n.attributes, methods: n.methods })), null, 2)}
+${JSON.stringify(currentNodes.map(n => ({ id: n.id, name: n.name, ...(n.elementType && n.elementType !== 'CLASS' ? { elementType: n.elementType } : {}), ...(n.stereotype ? { stereotype: n.stereotype } : {}), ...(n.noteContent ? { noteContent: n.noteContent } : {}), attributes: n.attributes, methods: n.methods })), null, 2)}
 
 CONEXIONES ACTUALES (${currentConnections.length}):
 ${JSON.stringify(currentConnections.map(c => ({ id: c.id, sourceNodeId: c.sourceNodeId, targetNodeId: c.targetNodeId, type: c.type, sourceMultiplicity: c.sourceMultiplicity, targetMultiplicity: c.targetMultiplicity })), null, 2)}
@@ -661,8 +679,21 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           mergedNodesMap.set(existingNode.id, {
             ...existingNode,
             name: aiNode.name || existingNode.name,
-            attributes: Array.isArray(aiNode.attributes) ? aiNode.attributes : existingNode.attributes,
-            methods: Array.isArray(aiNode.methods) ? aiNode.methods : existingNode.methods,
+            ...(aiNode.elementType || existingNode.elementType
+              ? { elementType: aiNode.elementType || existingNode.elementType }
+              : {}),
+            ...(aiNode.stereotype !== undefined || existingNode.stereotype !== undefined
+              ? { stereotype: aiNode.stereotype ?? existingNode.stereotype }
+              : {}),
+            ...(aiNode.noteContent !== undefined || existingNode.noteContent !== undefined
+              ? { noteContent: aiNode.noteContent ?? existingNode.noteContent }
+              : {}),
+            attributes: Array.isArray(aiNode.attributes)
+              ? this.mergePreservedAttributes(existingNode.attributes || [], aiNode.attributes)
+              : existingNode.attributes,
+            methods: Array.isArray(aiNode.methods)
+              ? this.mergePreservedMethods(existingNode.methods || [], aiNode.methods)
+              : existingNode.methods,
           });
         } else {
           const newId = aiNode.id || `node_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -693,8 +724,21 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           mergedNodesMap.set(existingNode.id, {
             ...existingNode,
             name: aiNode.name || existingNode.name,
-            attributes: Array.isArray(aiNode.attributes) ? aiNode.attributes : existingNode.attributes,
-            methods: Array.isArray(aiNode.methods) ? aiNode.methods : existingNode.methods,
+            ...(aiNode.elementType || existingNode.elementType
+              ? { elementType: aiNode.elementType || existingNode.elementType }
+              : {}),
+            ...(aiNode.stereotype !== undefined || existingNode.stereotype !== undefined
+              ? { stereotype: aiNode.stereotype ?? existingNode.stereotype }
+              : {}),
+            ...(aiNode.noteContent !== undefined || existingNode.noteContent !== undefined
+              ? { noteContent: aiNode.noteContent ?? existingNode.noteContent }
+              : {}),
+            attributes: Array.isArray(aiNode.attributes)
+              ? this.mergePreservedAttributes(existingNode.attributes || [], aiNode.attributes)
+              : existingNode.attributes,
+            methods: Array.isArray(aiNode.methods)
+              ? this.mergePreservedMethods(existingNode.methods || [], aiNode.methods)
+              : existingNode.methods,
           });
         } else {
           // Si el usuario solo pidió agregar UNA tabla específica y NO pidió relaciones:
@@ -731,6 +775,9 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           const newNode: UmlClassNode = {
             id: newId,
             name: aiNode.name,
+            ...(aiNode.elementType ? { elementType: aiNode.elementType } : {}),
+            ...(aiNode.stereotype ? { stereotype: aiNode.stereotype } : {}),
+            ...(aiNode.noteContent !== undefined ? { noteContent: aiNode.noteContent } : {}),
             position: { x: posX, y: posY },
             width: aiNode.width || 220,
             attributes: aiNode.attributes || [],
@@ -968,6 +1015,11 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
       if (!sourceNode || !targetNode) continue;
       if (sourceNode.isAnchor || targetNode.isAnchor) continue;
+      const sElType = (sourceNode.elementType || 'CLASS').toUpperCase();
+      const tElType = (targetNode.elementType || 'CLASS').toUpperCase();
+      if (['NOTE', 'INTERFACE', 'ENUM'].includes(sElType) || ['NOTE', 'INTERFACE', 'ENUM'].includes(tElType)) {
+        continue;
+      }
 
       const isMn = isMany(conn.sourceMultiplicity) && isMany(conn.targetMultiplicity);
       if (!isMn) continue;
@@ -980,6 +1032,8 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
       for (const n of nodeMap.values()) {
         if (n.id === sourceNode.id || n.id === targetNode.id || n.isAnchor) continue;
+        const nElType = (n.elementType || 'CLASS').toUpperCase();
+        if (['NOTE', 'INTERFACE', 'ENUM'].includes(nElType)) continue;
 
         let score = 0;
 
@@ -1324,42 +1378,52 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
     const normalizeType = (raw: string): string => {
       if (!raw) return 'String';
-      const clean = raw.trim().toLowerCase();
+      const trimmed = raw.trim();
+      const clean = trimmed.toLowerCase();
       if (clean === 'int') return 'Integer';
       if (clean === 'datetime') return 'LocalDateTime';
       if (clean === 'bool') return 'Boolean';
       if (clean === 'number') return 'Double';
-      return validTypes.find(t => t.toLowerCase() === clean) || 'String';
+      const standard = validTypes.find(t => t.toLowerCase() === clean);
+      if (standard) return standard;
+      // Preservar nombres de Enum u otros tipos UML válidos (identificadores seguros)
+      return /^[A-Za-z_][A-Za-z0-9_<>\[\]]*$/.test(trimmed) ? trimmed : 'String';
     };
 
     return nodes.map((node, index) => {
-      // Deduplicar atributos por nombre
+      // Deduplicar atributos por nombre preservando visibilidad, PK y nulabilidad si vienen definidos
       const seenAttrs = new Set<string>();
-      const dedupedAttributes: { name: string; type: string }[] = [];
+      const dedupedAttributes: UmlAttributeNode[] = [];
       for (const attr of node.attributes || []) {
         const name = (attr.name || 'attr').trim();
         const lower = name.toLowerCase();
         if (!seenAttrs.has(lower)) {
           seenAttrs.add(lower);
-          dedupedAttributes.push({
+          const cleanAttr: UmlAttributeNode = {
             name,
             type: normalizeType(attr.type),
-          });
+          };
+          if (attr.visibility !== undefined) cleanAttr.visibility = attr.visibility;
+          if (attr.isPrimaryKey !== undefined) cleanAttr.isPrimaryKey = Boolean(attr.isPrimaryKey);
+          if (attr.isNullable !== undefined) cleanAttr.isNullable = Boolean(attr.isNullable);
+          dedupedAttributes.push(cleanAttr);
         }
       }
 
-      // Deduplicar métodos por nombre + parámetros
+      // Deduplicar métodos por nombre + parámetros preservando visibilidad si viene definida
       const seenMethods = new Set<string>();
-      const dedupedMethods: { name: string; parameters: string; returnType: string }[] = [];
+      const dedupedMethods: UmlMethodNode[] = [];
       for (const m of node.methods || []) {
         const key = `${(m.name || 'operation').trim()}(${(m.parameters || '').trim()})`.toLowerCase();
         if (!seenMethods.has(key)) {
           seenMethods.add(key);
-          dedupedMethods.push({
+          const cleanMethod: UmlMethodNode = {
             name: m.name || 'operation',
             parameters: m.parameters || '',
             returnType: m.returnType || 'void',
-          });
+          };
+          if (m.visibility !== undefined) cleanMethod.visibility = m.visibility;
+          dedupedMethods.push(cleanMethod);
         }
       }
 
@@ -1370,7 +1434,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       const posX = typeof node.position?.x === 'number' ? node.position.x : 120 + (index * 260) % 780;
       const posY = typeof node.position?.y === 'number' ? node.position.y : 80 + Math.floor((index * 260) / 780) * 220;
 
-      return {
+      const sanitized: UmlClassNode = {
         id: safeId,
         name: node.isAnchor ? (node.name || '') : (node.name || `Class${index + 1}`),
         position: { x: posX, y: posY },
@@ -1382,6 +1446,43 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         attributes: dedupedAttributes,
         methods: dedupedMethods,
       };
+      if (node.elementType !== undefined) sanitized.elementType = node.elementType;
+      if (node.stereotype !== undefined) sanitized.stereotype = node.stereotype;
+      if (node.noteContent !== undefined) sanitized.noteContent = node.noteContent;
+      return sanitized;
+    });
+  }
+
+  private mergePreservedAttributes(
+    existingAttrs: UmlAttributeNode[],
+    incomingAttrs: UmlAttributeNode[],
+  ): UmlAttributeNode[] {
+    const existingByName = new Map(existingAttrs.map((a) => [a.name.trim().toLowerCase(), a]));
+    return incomingAttrs.map((attr) => {
+      const prev = existingByName.get((attr.name || '').trim().toLowerCase());
+      if (!prev) return attr;
+      const merged: UmlAttributeNode = { ...attr };
+      if (merged.visibility === undefined && prev.visibility !== undefined) merged.visibility = prev.visibility;
+      if (merged.isPrimaryKey === undefined && prev.isPrimaryKey !== undefined) merged.isPrimaryKey = prev.isPrimaryKey;
+      if (merged.isNullable === undefined && prev.isNullable !== undefined) merged.isNullable = prev.isNullable;
+      return merged;
+    });
+  }
+
+  private mergePreservedMethods(
+    existingMethods: UmlMethodNode[],
+    incomingMethods: UmlMethodNode[],
+  ): UmlMethodNode[] {
+    const existingByName = new Map(
+      existingMethods.map((m) => [`${(m.name || '').trim()}(${(m.parameters || '').trim()})`.toLowerCase(), m]),
+    );
+    return incomingMethods.map((m) => {
+      const key = `${(m.name || '').trim()}(${(m.parameters || '').trim()})`.toLowerCase();
+      const prev = existingByName.get(key);
+      if (!prev) return m;
+      const merged: UmlMethodNode = { ...m };
+      if (merged.visibility === undefined && prev.visibility !== undefined) merged.visibility = prev.visibility;
+      return merged;
     });
   }
 

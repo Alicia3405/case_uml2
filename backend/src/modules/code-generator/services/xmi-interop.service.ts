@@ -19,7 +19,7 @@ export class XmiInteropService {
     private readonly diagramService: DiagramService,
     private readonly projectRepo: ProjectRepository,
     private readonly projectMemberRepo: ProjectMemberRepository,
-  ) {}
+  ) { }
 
   /**
    * Exporta un diagrama existente en la base de datos a formato XMI 2.1 estándar de Enterprise Architect.
@@ -37,28 +37,40 @@ export class XmiInteropService {
     const astData: DiagramAstData = {
       name: diagram.name,
       defaultLineStyle: diagram.defaultLineStyle || 'segment',
-      nodes: (diagram.nodes || []).map(n => ({
-        id: n.id,
-        name: n.name,
-        position: { x: Number(n.positionX), y: Number(n.positionY) },
-        width: n.width || 220,
-        height: n.height || 120,
-        attributes: (n.attributes || []).map((a, idx) => ({
-          name: a.name,
-          type: a.type,
-          visibility: 'private',
-          isPk: (a.name.toLowerCase().endsWith('id') || a.name.toLowerCase() === 'id'),
-          isNullable: false,
-        })),
-        methods: (n.methods || []).map((m, idx) => ({
-          name: m.name,
-          returnType: m.returnType || 'void',
-          parameters: m.parameters || '',
-          visibility: 'public',
-        })),
-        isAnchor: n.isAnchor,
-        assocMainConnId: n.assocMainConnId || undefined,
-      })),
+      nodes: (diagram.nodes || []).map(n => {
+        const rawAttrs = n.attributes || [];
+        const hasExplicitPk = rawAttrs.some(a => Boolean(a.isPrimaryKey));
+        return {
+          id: n.id,
+          name: n.name,
+          elementType: n.elementType || 'CLASS',
+          stereotype: n.stereotype || undefined,
+          noteContent: n.noteContent || undefined,
+          position: { x: Number(n.positionX), y: Number(n.positionY) },
+          width: n.width || 220,
+          height: n.height || 120,
+          attributes: rawAttrs.map((a) => {
+            const isPk = Boolean(a.isPrimaryKey) || (
+              !hasExplicitPk && (a.name.toLowerCase().endsWith('id') || a.name.toLowerCase() === 'id')
+            );
+            return {
+              name: a.name,
+              type: a.type,
+              visibility: this.visibilitySymbolToWord(a.visibility, 'private'),
+              isPk,
+              isNullable: isPk ? false : (a.isNullable ?? true),
+            };
+          }),
+          methods: (n.methods || []).map((m) => ({
+            name: m.name,
+            returnType: m.returnType || 'void',
+            parameters: m.parameters || '',
+            visibility: this.visibilitySymbolToWord(m.visibility, 'public'),
+          })),
+          isAnchor: n.isAnchor,
+          assocMainConnId: n.assocMainConnId || undefined,
+        };
+      }),
       connections: (diagram.connections || []).map(c => ({
         id: c.id,
         sourceNodeId: c.sourceNodeId,
@@ -105,6 +117,9 @@ export class XmiInteropService {
         nodes: ast.nodes.map(n => ({
           id: n.id,
           name: n.name,
+          elementType: n.elementType || 'CLASS',
+          stereotype: n.stereotype || null,
+          noteContent: n.noteContent || null,
           positionX: Number(n.position?.x ?? 50),
           positionY: Number(n.position?.y ?? 50),
           width: n.width || 220,
@@ -112,12 +127,16 @@ export class XmiInteropService {
           attributes: (n.attributes || []).map((a, i) => ({
             name: a.name,
             type: a.type,
+            visibility: this.visibilityWordToSymbol(a.visibility, '-'),
+            isPrimaryKey: Boolean(a.isPk),
+            isNullable: a.isPk ? false : (a.isNullable ?? true),
             orderIndex: i,
           })),
           methods: (n.methods || []).map((m, i) => ({
             name: m.name,
             parameters: m.parameters || '',
             returnType: m.returnType || 'void',
+            visibility: this.visibilityWordToSymbol(m.visibility, '+'),
             orderIndex: i,
           })),
           isAnchor: n.isAnchor || false,
@@ -158,6 +177,9 @@ export class XmiInteropService {
         nodes: ast.nodes.map(n => ({
           id: n.id,
           name: n.name,
+          elementType: n.elementType || 'CLASS',
+          stereotype: n.stereotype || null,
+          noteContent: n.noteContent || null,
           positionX: Number(n.position?.x ?? 50),
           positionY: Number(n.position?.y ?? 50),
           width: n.width || 220,
@@ -165,12 +187,16 @@ export class XmiInteropService {
           attributes: (n.attributes || []).map((a, i) => ({
             name: a.name,
             type: a.type,
+            visibility: this.visibilityWordToSymbol(a.visibility, '-'),
+            isPrimaryKey: Boolean(a.isPk),
+            isNullable: a.isPk ? false : (a.isNullable ?? true),
             orderIndex: i,
           })),
           methods: (n.methods || []).map((m, i) => ({
             name: m.name,
             parameters: m.parameters || '',
             returnType: m.returnType || 'void',
+            visibility: this.visibilityWordToSymbol(m.visibility, '+'),
             orderIndex: i,
           })),
           isAnchor: n.isAnchor || false,
@@ -211,5 +237,23 @@ export class XmiInteropService {
     if (!allowedRoles.includes(member.role)) {
       throw new ForbiddenException('No tienes los permisos requeridos para esta acción.');
     }
+  }
+
+  private visibilitySymbolToWord(raw: string | undefined, fallback: 'public' | 'private'): string {
+    const val = (raw || '').trim().toLowerCase();
+    if (val === '+' || val === 'public') return 'public';
+    if (val === '-' || val === 'private') return 'private';
+    if (val === '#' || val === 'protected') return 'protected';
+    if (val === '~' || val === 'package') return 'package';
+    return fallback;
+  }
+
+  private visibilityWordToSymbol(raw: string | undefined, fallback: '+' | '-'): '+' | '-' | '#' | '~' {
+    const val = (raw || '').trim().toLowerCase();
+    if (val === '+' || val === 'public') return '+';
+    if (val === '-' || val === 'private') return '-';
+    if (val === '#' || val === 'protected') return '#';
+    if (val === '~' || val === 'package') return '~';
+    return fallback;
   }
 }

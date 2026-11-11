@@ -21,6 +21,15 @@ export class UmlAttribute {
   @Column({ type: 'varchar', length: 100, default: 'String' })
   type: string;
 
+  @Column({ type: 'varchar', length: 10, default: '-' })
+  visibility: string;
+
+  @Column({ name: 'is_primary_key', type: 'boolean', default: false })
+  isPrimaryKey: boolean;
+
+  @Column({ name: 'is_nullable', type: 'boolean', default: true })
+  isNullable: boolean;
+
   @Column({ name: 'order_index', type: 'int', default: 0 })
   orderIndex: number;
 

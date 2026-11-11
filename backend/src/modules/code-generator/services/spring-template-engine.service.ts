@@ -77,8 +77,13 @@ export class SpringTemplateEngineService {
     const databasePort = dto.databasePort || 5432;
     const serverPort = dto.serverPort || 8080;
 
-    // 1. Filtrar nodos válidos (excluyendo anclas invisibles)
-    const validNodes = (nodes || []).filter((n) => !n.isAnchor && n.name && n.name.trim().length > 0);
+    // 1. Filtrar nodos válidos (excluyendo anclas invisibles, notas, interfaces y enumeraciones)
+    const nonEntityElementTypes = new Set(['NOTE', 'INTERFACE', 'ENUM']);
+    const validNodes = (nodes || []).filter((n) => {
+      if (n.isAnchor || !n.name || n.name.trim().length === 0) return false;
+      const elType = (n.elementType || 'CLASS').toString().trim().toUpperCase();
+      return !nonEntityElementTypes.has(elType);
+    });
 
     // Mapeo id de nodo -> nombre de clase
     const nodeIdToNameMap = new Map<string, string>();
@@ -93,6 +98,8 @@ export class SpringTemplateEngineService {
 
       // Campos / Atributos
       const rawAttrs = node.attributes || [];
+      const hasExplicitPk = rawAttrs.some((a: any) => Boolean(a.isPrimaryKey));
+      let primaryIdAssigned = false;
       const fields: JavaField[] = [];
       let hasId = false;
 
@@ -114,7 +121,7 @@ export class SpringTemplateEngineService {
         const tableClean = tableLower.replace(/[^a-z0-9]/g, '');
         const singularClean = singularTable.replace(/[^a-z0-9]/g, '');
 
-        const isId =
+        const heuristicIsId =
           rawLower === 'id' ||
           rawLower === `${tableLower}_id` ||
           rawLower === `id_${tableLower}` ||
@@ -128,6 +135,18 @@ export class SpringTemplateEngineService {
           toSnakeCase(rawName) === 'id' ||
           toSnakeCase(rawName) === `${tableLower}_id` ||
           toSnakeCase(rawName) === `${singularTable}_id`;
+
+        // Garantizar un único @Id en JPA: si hay PK explícito gana el primero marcado como isPrimaryKey;
+        // los demás atributos marcados como PK quedan como NOT NULL sin duplicar anotación @Id.
+        const isExplicitPk = Boolean(attr.isPrimaryKey);
+        const isId = hasExplicitPk
+          ? !primaryIdAssigned && isExplicitPk
+          : !primaryIdAssigned && heuristicIsId;
+
+        if (isId) {
+          primaryIdAssigned = true;
+        }
+
         const javaType = normalizeJavaType(attr.type || (isId ? 'UUID' : 'String'));
         const fieldName = toCamelCase(rawName);
         if (fields.some((f) => f.name.toLowerCase() === fieldName.toLowerCase())) {
@@ -142,8 +161,8 @@ export class SpringTemplateEngineService {
           sqlColumnName: toSnakeCase(rawName),
           sqlType: mapTypeToSql(javaType),
           isId,
-          isNullable: isId ? false : attr.isNullable ?? true,
-          isUnique: isId ? true : attr.isUnique ?? false,
+          isNullable: isId || isExplicitPk ? false : (attr.isNullable ?? true),
+          isUnique: isId ? true : (attr.isUnique ?? false),
           isAutoIncrement: attr.isAutoIncrement ?? false,
           getterName: 'get' + fieldName.charAt(0).toUpperCase() + fieldName.slice(1),
           setterName: 'set' + fieldName.charAt(0).toUpperCase() + fieldName.slice(1),

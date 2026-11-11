@@ -31,6 +31,9 @@ export class ProjectResponseDto {
   @ApiPropertyOptional({ enum: ProjectRole, example: ProjectRole.OWNER })
   userRole?: ProjectRole;
 
+  @ApiPropertyOptional({ example: true })
+  userCanDownloadCode?: boolean;
+
   @ApiProperty({ example: 3 })
   memberCount: number;
 
@@ -59,7 +62,14 @@ export class ProjectResponseDto {
 
     if (currentUserId && project.members) {
       const membership = project.members.find((m) => m.userId === currentUserId);
-      dto.userRole = membership ? membership.role : (project.createdBy === currentUserId ? ProjectRole.OWNER : undefined);
+      const isCreator = project.createdBy === currentUserId;
+      dto.userRole = membership ? membership.role : (isCreator ? ProjectRole.OWNER : undefined);
+      dto.userCanDownloadCode =
+        isCreator || dto.userRole === ProjectRole.OWNER
+          ? true
+          : membership
+            ? membership.canDownloadCode !== false
+            : undefined;
     }
 
     if (project.members) {

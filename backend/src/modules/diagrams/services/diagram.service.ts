@@ -137,10 +137,17 @@ export class DiagramService {
 
       // 2. Insertar nodos nuevos con atributos y métodos
       for (const nodeDto of astDto.nodes) {
+        const elementType = this.normalizeElementType(nodeDto.elementType, nodeDto.assocMainConnId);
+        const defaultName =
+          nodeDto.isAnchor ? '' : elementType === 'NOTE' ? 'Nota' : 'ClassName';
+
         const node = manager.create(UmlNode, {
           id: nodeDto.id,
           diagramId: id,
-          name: nodeDto.name !== undefined ? nodeDto.name : (nodeDto.isAnchor ? '' : 'ClassName'),
+          name: nodeDto.name !== undefined ? nodeDto.name : defaultName,
+          elementType,
+          stereotype: nodeDto.stereotype ?? null,
+          noteContent: nodeDto.noteContent ?? null,
           positionX: nodeDto.positionX,
           positionY: nodeDto.positionY,
           width: nodeDto.width !== undefined ? nodeDto.width : (nodeDto.isAnchor ? 0 : 220),
@@ -151,14 +158,18 @@ export class DiagramService {
         await manager.save(node);
 
         if (nodeDto.attributes && nodeDto.attributes.length > 0) {
-          const attributes = nodeDto.attributes.map((attr, index) =>
-            manager.create(UmlAttribute, {
+          const attributes = nodeDto.attributes.map((attr, index) => {
+            const isPrimaryKey = Boolean(attr.isPrimaryKey);
+            return manager.create(UmlAttribute, {
               nodeId: node.id,
               name: attr.name,
               type: attr.type,
+              visibility: this.normalizeVisibility(attr.visibility, '-'),
+              isPrimaryKey,
+              isNullable: isPrimaryKey ? false : (attr.isNullable ?? true),
               orderIndex: attr.orderIndex !== undefined ? attr.orderIndex : index,
-            }),
-          );
+            });
+          });
           await manager.save(attributes);
         }
 
@@ -169,6 +180,7 @@ export class DiagramService {
               name: method.name,
               parameters: method.parameters || '',
               returnType: method.returnType,
+              visibility: this.normalizeVisibility(method.visibility, '+'),
               orderIndex: method.orderIndex !== undefined ? method.orderIndex : index,
             }),
           );
@@ -220,5 +232,22 @@ export class DiagramService {
 
     await this.diagramRepository.delete(id);
     return { success: true, message: 'Diagrama eliminado exitosamente' };
+  }
+
+  private normalizeVisibility(raw: string | undefined, fallback: '+' | '-'): '+' | '-' | '#' | '~' {
+    const val = (raw || '').trim().toLowerCase();
+    if (val === '+' || val === 'public') return '+';
+    if (val === '-' || val === 'private') return '-';
+    if (val === '#' || val === 'protected') return '#';
+    if (val === '~' || val === 'package') return '~';
+    return fallback;
+  }
+
+  private normalizeElementType(raw: string | undefined, assocMainConnId?: string | null): string {
+    const upper = (raw || '').trim().toUpperCase();
+    if (upper === 'INTERFACE' || upper === 'ENUM' || upper === 'NOTE' || upper === 'ASSOCIATION_CLASS' || upper === 'CLASS') {
+      return upper;
+    }
+    return assocMainConnId ? 'ASSOCIATION_CLASS' : 'CLASS';
   }
 }

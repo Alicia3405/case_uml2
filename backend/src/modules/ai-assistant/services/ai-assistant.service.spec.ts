@@ -836,7 +836,7 @@ describe('AiAssistantService', () => {
       expect(res.models.length).toBe(3);
       expect(res.models.some(m => m.id === 'qwen2.5:3b' && m.isLocal)).toBe(true);
       expect(res.models.some(m => m.id === 'qwen2.5-coder:7b' && m.isLocal)).toBe(true);
-      expect(res.models.some(m => m.id === 'gemini-2.5-flash' && !m.isLocal)).toBe(true);
+      expect(res.models.some(m => m.id === 'gemini-3.5-flash-lite' && !m.isLocal)).toBe(true);
     });
 
     it('debe devolver solo Vertex AI si Ollama no está disponible', async () => {
@@ -846,7 +846,7 @@ describe('AiAssistantService', () => {
       const res = await service.getAvailableModels();
       expect(res.isOllamaAvailable).toBe(false);
       expect(res.models.length).toBe(1);
-      expect(res.models[0].id).toBe('gemini-2.5-flash');
+      expect(res.models[0].id).toBe('gemini-3.5-flash-lite');
       expect(res.defaultProvider).toBe('vertex');
     });
   });

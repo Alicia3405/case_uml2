@@ -36,6 +36,19 @@ export class ProjectMemberRepository {
     return member ? member.role : null;
   }
 
+  async findMembership(
+    projectId: string,
+    userId: string,
+  ): Promise<{ role: ProjectRole; canDownloadCode: boolean } | null> {
+    const member = await this.repo.findOne({
+      where: { projectId, userId },
+      select: { role: true, canDownloadCode: true },
+    });
+    return member
+      ? { role: member.role, canDownloadCode: member.canDownloadCode ?? true }
+      : null;
+  }
+
   async findByProjectId(projectId: string): Promise<ProjectMember[]> {
     return this.repo.find({
       where: { projectId },
@@ -48,6 +61,14 @@ export class ProjectMemberRepository {
 
   async updateRole(projectId: string, userId: string, role: ProjectRole): Promise<void> {
     await this.repo.update({ projectId, userId }, { role });
+  }
+
+  async updateMember(
+    projectId: string,
+    userId: string,
+    data: Partial<Pick<ProjectMember, 'role' | 'canDownloadCode'>>,
+  ): Promise<void> {
+    await this.repo.update({ projectId, userId }, data);
   }
 
   async delete(projectId: string, userId: string): Promise<void> {

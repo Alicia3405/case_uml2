@@ -300,4 +300,60 @@ describe('SpringTemplateEngineService', () => {
     expect(orderService.content).toContain('delivery.setDeliveryID(dto.getDeliveryId())');
     expect(orderService.content).toContain('entity.setDelivery(delivery)');
   });
+
+  it('debe excluir nodos NOTE, INTERFACE y ENUM de la generación de entidades JPA y tablas SQL, y respetar isPrimaryKey explícito', () => {
+    const dto: GenerateCodeRequestDto = {
+      packageName: 'com.uagrm.studio',
+      artifactId: 'ext-api',
+      projectName: 'Ext Test',
+    };
+
+    const mockNodes = [
+      {
+        id: 'n_cls',
+        name: 'Producto',
+        elementType: 'CLASS',
+        attributes: [
+          { name: 'sku', type: 'String', visibility: '-', isPrimaryKey: true, isNullable: false },
+          { name: 'nombre', type: 'String', visibility: '+', isPrimaryKey: false, isNullable: false },
+        ],
+        methods: [],
+      },
+      {
+        id: 'n_iface',
+        name: 'Facturable',
+        elementType: 'INTERFACE',
+        attributes: [],
+        methods: [{ name: 'calcularImpuesto', parameters: '', returnType: 'BigDecimal', visibility: '+' }],
+      },
+      {
+        id: 'n_enum',
+        name: 'EstadoProducto',
+        elementType: 'ENUM',
+        attributes: [{ name: 'ACTIVO', type: 'EnumLiteral' }],
+        methods: [],
+      },
+      {
+        id: 'n_note',
+        name: 'Nota',
+        elementType: 'NOTE',
+        noteContent: 'Solo documentación',
+        attributes: [],
+        methods: [],
+      },
+    ];
+
+    const result = service.generateProjectFiles(dto, mockNodes, []);
+    const entityFiles = result.files.filter((f) => f.layer === 'entity');
+    expect(entityFiles).toHaveLength(1);
+    expect(entityFiles[0].filename).toBe('Producto.java');
+    expect(entityFiles[0].content).toContain('@Id');
+    expect(entityFiles[0].content).toContain('private String sku;');
+
+    const flywayFile = result.files.find((f) => f.layer === 'migration')!;
+    expect(flywayFile.content).toContain('CREATE TABLE IF NOT EXISTS "producto"');
+    expect(flywayFile.content).not.toContain('"facturable"');
+    expect(flywayFile.content).not.toContain('"estado_producto"');
+    expect(flywayFile.content).not.toContain('"nota"');
+  });
 });

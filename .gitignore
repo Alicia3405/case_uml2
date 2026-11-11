@@ -17,6 +17,11 @@ mobile/.packages
 mobile/build/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
+mobile_uml_voice/.dart_tool/
+mobile_uml_voice/.packages
+mobile_uml_voice/build/
+mobile_uml_voice/.flutter-plugins
+mobile_uml_voice/.flutter-plugins-dependencies
 
 # Entorno y Secretos
 .env

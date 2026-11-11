@@ -30,6 +30,9 @@ export class ProjectMember {
   })
   role: ProjectRole;
 
+  @Column({ name: 'can_download_code', type: 'boolean', default: true })
+  canDownloadCode: boolean;
+
   @CreateDateColumn({ name: 'joined_at', type: 'timestamp' })
   joinedAt: Date;
 

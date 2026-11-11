@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { CodeGeneratorService } from './code-generator.service';
 import { DiagramRepository } from '../../diagrams/repositories/diagram.repository';
 import { ProjectRepository } from '../../projects/repositories/project.repository';
@@ -41,6 +42,10 @@ describe('CodeGeneratorService', () => {
     };
     memberRepo = {
       findRole: jest.fn().mockResolvedValue(ProjectRole.OWNER),
+      findMembership: jest.fn().mockResolvedValue({
+        role: ProjectRole.OWNER,
+        canDownloadCode: true,
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -78,4 +83,18 @@ describe('CodeGeneratorService', () => {
     expect(zipResult.filename).toContain('.zip');
     expect(zipResult.buffer).toBeInstanceOf(Buffer);
   }, 20000);
+
+  it('debe permitir vista previa pero bloquear descarga ZIP si canDownloadCode=false', async () => {
+    memberRepo.findMembership = jest.fn().mockResolvedValue({
+      role: ProjectRole.EDITOR,
+      canDownloadCode: false,
+    });
+
+    const preview = await service.previewFromDiagramId('diag-111', {}, 'user-2');
+    expect(preview.files.length).toBeGreaterThan(5);
+
+    await expect(
+      service.downloadZipFromDiagramId('diag-111', {}, 'user-2'),
+    ).rejects.toThrow(ForbiddenException);
+  });
 });

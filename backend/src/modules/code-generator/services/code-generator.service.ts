@@ -26,24 +26,43 @@ export class CodeGeneratorService {
     private readonly springTemplateEngine: SpringTemplateEngineService,
     private readonly flutterTemplateEngine: FlutterTemplateEngineService,
     private readonly zipArchiver: ZipArchiverService,
-  ) {}
+  ) { }
 
   private async checkProjectAccess(
     projectId: string,
     userId: string,
+    requireDownloadPermission = false,
   ): Promise<void> {
     const project = await this.projectRepository.findById(projectId);
     if (!project) {
       throw new NotFoundException('El proyecto asociado no existe');
     }
 
-    const role = await this.projectMemberRepository.findRole(projectId, userId);
+    const membership =
+      typeof this.projectMemberRepository.findMembership === 'function'
+        ? await this.projectMemberRepository.findMembership(projectId, userId)
+        : null;
+    const role = membership
+      ? membership.role
+      : await this.projectMemberRepository.findRole(projectId, userId);
+
     const isOwnerOrCreator =
       role === ProjectRole.OWNER || project.createdBy === userId;
 
     if (!role && !isOwnerOrCreator) {
       throw new ForbiddenException(
         'No tienes permisos para generar código en este proyecto',
+      );
+    }
+
+    if (
+      requireDownloadPermission &&
+      !isOwnerOrCreator &&
+      membership &&
+      membership.canDownloadCode === false
+    ) {
+      throw new ForbiddenException(
+        'El propietario ha restringido tu permiso para descargar o exportar el código fuente de este proyecto',
       );
     }
   }
@@ -265,23 +284,10 @@ pause
     };
   }
 
-  /**
-   * Genera la vista previa de archivos a partir de un diagrama persistido.
-   */
-  async previewFromDiagramId(
-    diagramId: string,
+  private buildPreviewForDiagram(
+    diagram: any,
     dto: GenerateCodeRequestDto,
-    userId: string,
-  ): Promise<CodeGenerationPreviewResponseDto> {
-    const diagram = await this.diagramRepository.findById(diagramId);
-    if (!diagram) {
-      throw new NotFoundException('Diagrama no encontrado');
-    }
-
-    if (diagram.projectId) {
-      await this.checkProjectAccess(diagram.projectId, userId);
-    }
-
+  ): CodeGenerationPreviewResponseDto {
     const nodes =
       dto.nodes && dto.nodes.length > 0 ? dto.nodes : diagram.nodes || [];
     const connections =
@@ -311,6 +317,26 @@ pause
   }
 
   /**
+   * Genera la vista previa de archivos a partir de un diagrama persistido.
+   */
+  async previewFromDiagramId(
+    diagramId: string,
+    dto: GenerateCodeRequestDto,
+    userId: string,
+  ): Promise<CodeGenerationPreviewResponseDto> {
+    const diagram = await this.diagramRepository.findById(diagramId);
+    if (!diagram) {
+      throw new NotFoundException('Diagrama no encontrado');
+    }
+
+    if (diagram.projectId) {
+      await this.checkProjectAccess(diagram.projectId, userId, false);
+    }
+
+    return this.buildPreviewForDiagram(diagram, dto);
+  }
+
+  /**
    * Genera y empaqueta en un archivo ZIP descargable el proyecto completo a partir del ID del diagrama.
    */
   async downloadZipFromDiagramId(
@@ -318,7 +344,16 @@ pause
     dto: GenerateCodeRequestDto,
     userId: string,
   ): Promise<{ filename: string; buffer: Buffer }> {
-    const preview = await this.previewFromDiagramId(diagramId, dto, userId);
+    const diagram = await this.diagramRepository.findById(diagramId);
+    if (!diagram) {
+      throw new NotFoundException('Diagrama no encontrado');
+    }
+
+    if (diagram.projectId) {
+      await this.checkProjectAccess(diagram.projectId, userId, true);
+    }
+
+    const preview = this.buildPreviewForDiagram(diagram, dto);
     const rootDirName = dto.artifactId || 'fullstack-uml-project';
     const zipBuffer = await this.zipArchiver.createZipBuffer(
       preview.files,

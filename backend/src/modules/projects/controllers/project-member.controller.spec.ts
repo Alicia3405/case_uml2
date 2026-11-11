@@ -29,6 +29,7 @@ describe('ProjectMemberController', () => {
     fullName: 'Colaborador Test',
     email: 'colaborador@test.com',
     role: ProjectRole.EDITOR,
+    canDownloadCode: true,
     joinedAt: new Date(),
   };
 

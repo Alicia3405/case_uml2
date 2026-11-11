@@ -22,6 +22,15 @@ export class UmlNode {
   @Column({ type: 'varchar', length: 150, default: 'ClassName' })
   name: string;
 
+  @Column({ name: 'element_type', type: 'varchar', length: 30, default: 'CLASS' })
+  elementType: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  stereotype: string | null;
+
+  @Column({ name: 'note_content', type: 'text', nullable: true })
+  noteContent: string | null;
+
   @Column({ name: 'position_x', type: 'float', default: 0 })
   positionX: number;
 

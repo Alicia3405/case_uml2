@@ -50,17 +50,27 @@ export class XmiParserService {
       diagramName = umlModel['@_name'];
     }
 
-    // 2. Extraer mapas de geometría desde <xmi:Extension><diagrams><diagram><elements>
+    // 2. Extraer mapas de geometría y metadatos de Enterprise Architect
     const geometryMap = new Map<string, { left: number; top: number; width: number; height: number }>();
     const connectorLabelsMap = new Map<string, { name?: string; sMult?: string; tMult?: string }>();
+    const eaElementMetaMap = new Map<string, {
+      sType?: string;
+      xmiType?: string;
+      name?: string;
+      stereotype?: string;
+      documentation?: string;
+      pkAttributes: Set<string>;
+      attrBoundsNullMap: Map<string, boolean>;
+    }>();
 
     try {
       this.extractDiagramGeometry(xmiRoot, geometryMap, connectorLabelsMap);
+      this.extractEaElementMetadata(xmiRoot, eaElementMetaMap);
     } catch (e) {
-      // Si falla la extracción de diagramas, continúa con layout automático
+      // Si falla la extracción de diagramas/metadatos EA, continúa con el modelo base
     }
 
-    // 3. Extraer Clases y Elementos
+    // 3. Extraer Clases, Interfaces, Enumeraciones y Notas
     const nodeMap = new Map<string, UmlNodeData>();
     const rawPackagedElements = this.collectPackagedElements(umlModel);
 
@@ -72,9 +82,33 @@ export class XmiParserService {
 
       if (!id) continue;
 
-      if (type === 'uml:Class' || type === 'uml:AssociationClass' || type === 'Class') {
-        const attributes = this.extractAttributes(elem);
-        const methods = this.extractMethods(elem);
+      const eaMeta = eaElementMetaMap.get(id);
+
+      const isClass = type === 'uml:Class' || type === 'uml:AssociationClass' || type === 'Class';
+      const isInterface = type === 'uml:Interface' || type === 'Interface';
+      const isEnum = type === 'uml:Enumeration' || type === 'Enumeration';
+      const isNote = type === 'uml:Comment' || type === 'uml:Note' || type === 'Note';
+
+      if (isClass || isInterface || isEnum || isNote) {
+        let attributes: UmlAttributeData[] = [];
+        let methods: UmlMethodData[] = [];
+        let elementType: string = isInterface
+          ? 'INTERFACE'
+          : isEnum
+            ? 'ENUM'
+            : isNote
+              ? 'NOTE'
+              : type === 'uml:AssociationClass'
+                ? 'ASSOCIATION_CLASS'
+                : 'CLASS';
+
+        if (isEnum) {
+          attributes = this.extractEnumLiterals(elem);
+          methods = this.extractMethods(elem);
+        } else if (!isNote) {
+          attributes = this.extractAttributes(elem, eaMeta);
+          methods = this.extractMethods(elem);
+        }
 
         // Coordenadas
         let pos = { x: 80 + (gridIndex % 3) * 280, y: 80 + Math.floor(gridIndex / 3) * 220 };
@@ -88,9 +122,20 @@ export class XmiParserService {
           if (g.height > 40) height = g.height;
         }
 
+        const rawBody = typeof elem['@_body'] === 'string'
+          ? elem['@_body']
+          : typeof elem['body'] === 'string'
+            ? elem['body']
+            : '';
+
         const nodeData: UmlNodeData = {
           id,
-          name: name || `Class_${gridIndex + 1}`,
+          name: isNote
+            ? (eaMeta?.name || name || 'Nota')
+            : (name || `Class_${gridIndex + 1}`),
+          elementType,
+          stereotype: eaMeta?.stereotype || (isInterface ? 'interface' : isEnum ? 'enumeration' : undefined),
+          noteContent: isNote ? (rawBody || eaMeta?.documentation || name || '') : undefined,
           position: pos,
           width,
           height,
@@ -100,6 +145,35 @@ export class XmiParserService {
         };
 
         nodeMap.set(id, nodeData);
+        gridIndex++;
+      }
+    }
+
+    // 3.1. Incorporar Notas EA declaradas solo dentro de <xmi:Extension><elements>
+    for (const [elId, meta] of eaElementMetaMap.entries()) {
+      if (nodeMap.has(elId)) continue;
+      if (meta.xmiType === 'uml:Note' || meta.sType === 'Note') {
+        let pos = { x: 80 + (gridIndex % 3) * 280, y: 80 + Math.floor(gridIndex / 3) * 220 };
+        let width = 220;
+        let height = 120;
+        if (geometryMap.has(elId)) {
+          const g = geometryMap.get(elId)!;
+          pos = { x: g.left, y: g.top };
+          if (g.width > 50) width = g.width;
+          if (g.height > 40) height = g.height;
+        }
+        nodeMap.set(elId, {
+          id: elId,
+          name: meta.name || 'Nota',
+          elementType: 'NOTE',
+          noteContent: meta.documentation || meta.name || '',
+          position: pos,
+          width,
+          height,
+          attributes: [],
+          methods: [],
+          isAnchor: false,
+        });
         gridIndex++;
       }
     }
@@ -122,8 +196,8 @@ export class XmiParserService {
         }
       }
 
-      // B) Generalizaciones internas en clases
-      if (type === 'uml:Class' || type === 'Class') {
+      // B) Generalizaciones internas en clases o interfaces
+      if (type === 'uml:Class' || type === 'Class' || type === 'uml:Interface' || type === 'Interface') {
         const genConns = this.parseClassGeneralizations(elem, nodeMap);
         for (const gc of genConns) {
           if (!connectionSet.has(gc.id)) {
@@ -158,6 +232,16 @@ export class XmiParserService {
     const traverse = (node: any) => {
       if (!node) return;
 
+      const comments = node['ownedComment'];
+      if (comments) {
+        const commentList = Array.isArray(comments) ? comments : [comments];
+        for (const c of commentList) {
+          if (c && typeof c === 'object') {
+            list.push({ '@_xmi:type': c['@_xmi:type'] || 'uml:Comment', ...c });
+          }
+        }
+      }
+
       const pkged = node['packagedElement'] || node['ownedMember'];
       if (pkged) {
         if (Array.isArray(pkged)) {
@@ -176,7 +260,33 @@ export class XmiParserService {
     return list;
   }
 
-  private extractAttributes(classElem: any): UmlAttributeData[] {
+  private extractEnumLiterals(enumElem: any): UmlAttributeData[] {
+    const attrs: UmlAttributeData[] = [];
+    const literals = enumElem['ownedLiteral'];
+    if (literals) {
+      const list = Array.isArray(literals) ? literals : [literals];
+      for (const lit of list) {
+        const name = lit?.['@_name'];
+        if (!name) continue;
+        attrs.push({
+          name,
+          type: 'EnumLiteral',
+          visibility: 'public',
+          isPk: false,
+          isNullable: false,
+        });
+      }
+    }
+    if (attrs.length === 0) {
+      return this.extractAttributes(enumElem);
+    }
+    return attrs;
+  }
+
+  private extractAttributes(
+    classElem: any,
+    eaMeta?: { pkAttributes: Set<string>; attrBoundsNullMap: Map<string, boolean> },
+  ): UmlAttributeData[] {
     const attrs: UmlAttributeData[] = [];
     const ownedAttributes = classElem['ownedAttribute'] || classElem['attribute'];
     if (!ownedAttributes) return attrs;
@@ -202,13 +312,22 @@ export class XmiParserService {
 
       const visibility = raw['@_visibility'] || 'private';
       const isUnique = raw['@_isUnique'] === 'true' || raw['@_isUnique'] === true;
+      const lowerVal = raw['lowerValue']?.['@_value'];
+      const hasEaPk = eaMeta?.pkAttributes?.has(name) ?? false;
+      const isPk =
+        hasEaPk || (isUnique && (name.toLowerCase().endsWith('id') || name.toLowerCase() === 'id'));
+      const isNullable = isPk
+        ? false
+        : lowerVal !== undefined
+          ? String(lowerVal) === '0'
+          : (eaMeta?.attrBoundsNullMap?.get(name) ?? true);
 
       attrs.push({
         name,
         type: this.mapJavaTypeToUml(type),
         visibility,
-        isPk: isUnique && (name.toLowerCase().endsWith('id') || name.toLowerCase() === 'id'),
-        isNullable: false,
+        isPk,
+        isNullable,
       });
     }
 
@@ -414,8 +533,8 @@ export class XmiParserService {
 
       let type = 'association';
       if (eaType === 'Generalization') type = 'generalization';
-      else if (eaType === 'Realisation') type = 'realization';
-      else if (eaType === 'Dependency') type = 'dependency';
+      else if (eaType === 'Realisation' || eaType === 'Realization') type = 'realization';
+      else if (eaType === 'Dependency' || eaType === 'NoteLink') type = 'dependency';
 
       const srcType = source['type'] || {};
       const tgtType = target['type'] || {};
@@ -496,6 +615,59 @@ export class XmiParserService {
           });
         }
       }
+    }
+  }
+
+  private extractEaElementMetadata(
+    xmiRoot: any,
+    metaMap: Map<string, {
+      sType?: string;
+      xmiType?: string;
+      name?: string;
+      stereotype?: string;
+      documentation?: string;
+      pkAttributes: Set<string>;
+      attrBoundsNullMap: Map<string, boolean>;
+    }>,
+  ): void {
+    const ext = xmiRoot['xmi:Extension'] || xmiRoot['Extension'];
+    const elements = ext?.['elements']?.['element'];
+    if (!elements) return;
+
+    const list = Array.isArray(elements) ? elements : [elements];
+    for (const el of list) {
+      const idref = el?.['@_xmi:idref'] || el?.['@_xmi:id'] || el?.['@_id'];
+      if (!idref) continue;
+      const props = el?.['properties'] || {};
+      const pkAttributes = new Set<string>();
+      const attrBoundsNullMap = new Map<string, boolean>();
+
+      const rawAttrs = el?.['attributes']?.['attribute'];
+      if (rawAttrs) {
+        const attrList = Array.isArray(rawAttrs) ? rawAttrs : [rawAttrs];
+        for (const a of attrList) {
+          const aName = a?.['@_name'];
+          if (!aName) continue;
+          const st = a?.['stereotype']?.['@_stereotype'];
+          if (st && String(st).toUpperCase() === 'PK') {
+            pkAttributes.add(aName);
+          }
+          const lower = a?.['bounds']?.['@_lower'];
+          if (lower !== undefined) {
+            attrBoundsNullMap.set(aName, String(lower) === '0');
+          }
+        }
+      }
+
+      metaMap.set(idref, {
+        sType: props['@_sType'],
+        xmiType: el?.['@_xmi:type'],
+        name: el?.['@_name'],
+        stereotype: props['@_stereotype'],
+        documentation: props['@_documentation'],
+        pkAttributes,
+        attrBoundsNullMap,
+      });
     }
   }
 

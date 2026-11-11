@@ -11,6 +11,7 @@ import { SessionParticipantRepository } from './repositories/session-participant
 import { ProjectService } from './services/project.service';
 import { ProjectMemberService } from './services/project-member.service';
 import { YjsSyncService } from './services/yjs-sync.service';
+import { DemoCollabSeedService } from './services/demo-collab-seed.service';
 import { CollaborationGateway } from './gateways/collaboration.gateway';
 import { ProjectController } from './controllers/project.controller';
 import { ProjectMemberController } from './controllers/project-member.controller';
@@ -42,6 +43,7 @@ import { DiagramsModule } from '../diagrams/diagrams.module';
     SessionRepository,
     SessionParticipantRepository,
     YjsSyncService,
+    DemoCollabSeedService,
     CollaborationGateway,
   ],
   exports: [
@@ -52,6 +54,7 @@ import { DiagramsModule } from '../diagrams/diagrams.module';
     SessionRepository,
     SessionParticipantRepository,
     YjsSyncService,
+    DemoCollabSeedService,
     CollaborationGateway,
   ],
 })

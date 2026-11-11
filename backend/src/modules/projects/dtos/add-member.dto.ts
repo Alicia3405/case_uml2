@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsEnum, IsOptional } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsEnum, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectRole } from '../entities/project-role.enum';
 
@@ -12,4 +12,12 @@ export class AddMemberDto {
   @IsOptional()
   @IsEnum(ProjectRole, { message: 'El rol debe ser OWNER, EDITOR o VIEWER' })
   role?: ProjectRole = ProjectRole.EDITOR;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Permiso explícito para descargar o exportar el código fuente generado',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'El permiso canDownloadCode debe ser booleano' })
+  canDownloadCode?: boolean;
 }

@@ -8,12 +8,14 @@ import { ProjectRole } from '../entities/project-role.enum';
 import { Project } from '../entities/project.entity';
 import { ProjectMember } from '../entities/project-member.entity';
 import { User } from '../../auth/entities/user.entity';
+import { CollaborationGateway } from '../gateways/collaboration.gateway';
 
 describe('ProjectMemberService', () => {
   let service: ProjectMemberService;
   let projectRepo: jest.Mocked<Partial<ProjectRepository>>;
   let memberRepo: jest.Mocked<Partial<ProjectMemberRepository>>;
   let userRepo: jest.Mocked<Partial<UserRepository>>;
+  let gateway: jest.Mocked<Partial<CollaborationGateway>>;
 
   const mockUserId = '11111111-1111-1111-1111-111111111111';
   const mockOtherUserId = '22222222-2222-2222-2222-222222222222';
@@ -44,7 +46,7 @@ describe('ProjectMemberService', () => {
     createdAt: new Date(),
     creator: mockUser,
     members: [],
-    diagrams: [],
+    diagrams: [{ id: 'diag-1' } as any],
   };
 
   const mockMember: ProjectMember = {
@@ -52,6 +54,7 @@ describe('ProjectMemberService', () => {
     projectId: mockProjectId,
     userId: mockOtherUserId,
     role: ProjectRole.EDITOR,
+    canDownloadCode: true,
     joinedAt: new Date(),
     project: mockProject,
     user: {
@@ -73,6 +76,7 @@ describe('ProjectMemberService', () => {
       findRole: jest.fn(),
       findByProjectId: jest.fn(),
       updateRole: jest.fn().mockResolvedValue(undefined),
+      updateMember: jest.fn().mockResolvedValue(undefined),
       delete: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -81,12 +85,17 @@ describe('ProjectMemberService', () => {
       findById: jest.fn(),
     };
 
+    gateway = {
+      emitProjectPermissionsUpdated: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectMemberService,
         { provide: ProjectRepository, useValue: projectRepo },
         { provide: ProjectMemberRepository, useValue: memberRepo },
         { provide: UserRepository, useValue: userRepo },
+        { provide: CollaborationGateway, useValue: gateway },
       ],
     }).compile();
 
@@ -143,6 +152,7 @@ describe('ProjectMemberService', () => {
         projectId: mockProjectId,
         userId: mockOtherUserId,
         role: ProjectRole.EDITOR,
+        canDownloadCode: true,
         joinedAt: new Date(),
         project: {} as any,
         user: {} as any,
@@ -152,6 +162,7 @@ describe('ProjectMemberService', () => {
         projectId: mockProjectId,
         userId: mockOtherUserId,
         role: ProjectRole.EDITOR,
+        canDownloadCode: true,
         joinedAt: new Date(),
         project: {} as any,
         user: {} as any,
@@ -167,9 +178,36 @@ describe('ProjectMemberService', () => {
         projectId: mockProjectId,
         userId: mockOtherUserId,
         role: ProjectRole.EDITOR,
+        canDownloadCode: true,
       });
       expect(memberRepo.save).toHaveBeenCalled();
       expect(result.userId).toBe(mockOtherUserId);
+      expect(result.canDownloadCode).toBe(true);
+    });
+
+    it('debe asignar canDownloadCode=false por defecto al invitar un VIEWER', async () => {
+      projectRepo.findById!.mockResolvedValue(mockProject);
+      memberRepo.findRole!.mockResolvedValue(ProjectRole.OWNER);
+      userRepo.findByEmail!.mockResolvedValue({
+        id: mockOtherUserId,
+        fullName: 'Visor Test',
+        email: 'visor@uagrm.edu.bo',
+      } as User);
+      memberRepo.findByProjectIdAndUserId!.mockResolvedValue(null);
+
+      const result = await service.addMember(
+        mockProjectId,
+        { email: 'visor@uagrm.edu.bo', role: ProjectRole.VIEWER },
+        mockUserId,
+      );
+
+      expect(memberRepo.create).toHaveBeenCalledWith({
+        projectId: mockProjectId,
+        userId: mockOtherUserId,
+        role: ProjectRole.VIEWER,
+        canDownloadCode: false,
+      });
+      expect(result.canDownloadCode).toBe(false);
     });
 
     it('debe lanzar ConflictException si el usuario ya es miembro', async () => {
@@ -205,7 +243,7 @@ describe('ProjectMemberService', () => {
   });
 
   describe('updateMemberRole', () => {
-    it('debe actualizar el rol del miembro', async () => {
+    it('debe actualizar el rol del miembro y notificar por WebSocket', async () => {
       projectRepo.findById!.mockResolvedValue(mockProject);
       memberRepo.findRole!.mockResolvedValue(ProjectRole.OWNER);
       memberRepo.findByProjectIdAndUserId!
@@ -219,8 +257,42 @@ describe('ProjectMemberService', () => {
         mockUserId,
       );
 
-      expect(memberRepo.updateRole).toHaveBeenCalledWith(mockProjectId, mockOtherUserId, ProjectRole.VIEWER);
+      expect(memberRepo.updateMember).toHaveBeenCalledWith(mockProjectId, mockOtherUserId, {
+        role: ProjectRole.VIEWER,
+      });
+      expect(gateway.emitProjectPermissionsUpdated).toHaveBeenCalledWith(['diag-1'], {
+        projectId: mockProjectId,
+        userId: mockOtherUserId,
+        role: ProjectRole.VIEWER,
+        canDownloadCode: true,
+      });
       expect(result.role).toBe(ProjectRole.VIEWER);
+    });
+
+    it('debe actualizar el permiso granular canDownloadCode sin cambiar el rol', async () => {
+      projectRepo.findById!.mockResolvedValue(mockProject);
+      memberRepo.findRole!.mockResolvedValue(ProjectRole.OWNER);
+      memberRepo.findByProjectIdAndUserId!
+        .mockResolvedValueOnce(mockMember)
+        .mockResolvedValueOnce({ ...mockMember, canDownloadCode: false });
+
+      const result = await service.updateMemberRole(
+        mockProjectId,
+        mockOtherUserId,
+        { canDownloadCode: false },
+        mockUserId,
+      );
+
+      expect(memberRepo.updateMember).toHaveBeenCalledWith(mockProjectId, mockOtherUserId, {
+        canDownloadCode: false,
+      });
+      expect(result.canDownloadCode).toBe(false);
+    });
+
+    it('debe lanzar BadRequestException si no se envía ni rol ni canDownloadCode', async () => {
+      await expect(
+        service.updateMemberRole(mockProjectId, mockOtherUserId, {}, mockUserId),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('debe lanzar BadRequestException si se intenta cambiar el rol del creador', async () => {

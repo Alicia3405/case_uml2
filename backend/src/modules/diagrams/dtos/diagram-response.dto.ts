@@ -43,6 +43,9 @@ export class DiagramResponseDto {
     dto.nodes = (diagram.nodes || []).map((node) => ({
       id: node.id,
       name: node.name,
+      elementType: node.elementType || 'CLASS',
+      stereotype: node.stereotype ?? null,
+      noteContent: node.noteContent ?? null,
       positionX: Number(node.positionX),
       positionY: Number(node.positionY),
       width: node.width,
@@ -54,6 +57,9 @@ export class DiagramResponseDto {
         .map((a) => ({
           name: a.name,
           type: a.type,
+          visibility: a.visibility || '-',
+          isPrimaryKey: Boolean(a.isPrimaryKey),
+          isNullable: a.isNullable ?? true,
           orderIndex: a.orderIndex,
         })),
       methods: (node.methods || [])
@@ -62,6 +68,7 @@ export class DiagramResponseDto {
           name: m.name,
           parameters: m.parameters,
           returnType: m.returnType,
+          visibility: m.visibility || '+',
           orderIndex: m.orderIndex,
         })),
     }));

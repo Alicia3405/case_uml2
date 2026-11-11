@@ -19,6 +19,9 @@ export interface UmlMethodData {
 export interface UmlNodeData {
   id: string;
   name: string;
+  elementType?: string;
+  stereotype?: string;
+  noteContent?: string;
   position: { x: number; y: number };
   width?: number;
   height?: number;
@@ -111,124 +114,172 @@ export class XmiExporterService {
     eaElementsXml += `\t\t\t\t<flags iscontrolled="0" isprotected="0" batchsave="0" batchload="0" usedtd="0" logxml="0" packageFlags="VICON=3;"/>\n`;
     eaElementsXml += `\t\t\t</element>\n`;
 
-    // Procesar cada clase
+    // Procesar cada elemento visible del modelo
     let seqno = 1;
     for (const node of visibleNodes) {
       const eaId = nodeEaIdMap.get(node.id)!;
       const duid = nodeDuidMap.get(node.id)!;
+      const elementType = (node.elementType || 'CLASS').toString().trim().toUpperCase();
+      const customStereotype = (node.stereotype || '').trim();
 
-      // PackagedElement en <uml:Model>
-      umlPackagedElements += `\t\t\t<packagedElement xmi:type="uml:Class" xmi:id="${eaId}" name="${this.escapeXml(node.name)}" visibility="public">\n`;
+      if (elementType === 'NOTE') {
+        const noteText = (node.noteContent || node.name || '').trim();
+        umlPackagedElements += `\t\t\t<ownedComment xmi:type="uml:Comment" xmi:id="${eaId}" body="${this.escapeXml(noteText)}"/>\n`;
 
-      let eaAttributesXml = '';
-      let eaOperationsXml = '';
+        eaElementsXml += `\t\t\t<element xmi:idref="${eaId}" xmi:type="uml:Note" name="${this.escapeXml(node.name || 'Nota')}" scope="public">\n`;
+        eaElementsXml += `\t\t\t\t<model package="EAPK_${pkgGuid}" tpos="0" ea_eleType="element"/>\n`;
+        eaElementsXml += `\t\t\t\t<properties documentation="${this.escapeXml(noteText)}" isSpecification="false" sType="Note" nType="0" scope="public"/>\n`;
+        eaElementsXml += `\t\t\t\t<project author="UML Studio" version="1.0" phase="1.0" created="${now}" modified="${now}" complexity="1" status="Proposed"/>\n`;
+        eaElementsXml += `\t\t\t\t<style appearance="BackColor=-1;BorderColor=-1;BorderWidth=-1;FontColor=-1;VSwimLanes=1;HSwimLanes=1;BorderStyle=0;"/>\n`;
+        eaElementsXml += `\t\t\t\t<extendedProperties tagged="0" package_name="${this.escapeXml(packageName)}"/>\n`;
+        eaElementsXml += `\t\t\t</element>\n`;
+      } else {
+        const umlXmiType =
+          elementType === 'INTERFACE'
+            ? 'uml:Interface'
+            : elementType === 'ENUM'
+              ? 'uml:Enumeration'
+              : 'uml:Class';
+        const eaSType =
+          elementType === 'INTERFACE'
+            ? 'Interface'
+            : elementType === 'ENUM'
+              ? 'Enumeration'
+              : 'Class';
+        const effectiveStereotype =
+          customStereotype ||
+          (elementType === 'INTERFACE' ? 'interface' : elementType === 'ENUM' ? 'enumeration' : '');
 
-      // Atributos
-      if (node.attributes && node.attributes.length > 0) {
-        for (let i = 0; i < node.attributes.length; i++) {
-          const attr = node.attributes[i];
-          const attrId = `EAID_${this.generateGuid()}`;
-          const attrType = attr.type || 'String';
-          const eaTypeRef = this.getEaTypeReference(attrType);
+        // PackagedElement en <uml:Model>
+        umlPackagedElements += `\t\t\t<packagedElement xmi:type="${umlXmiType}" xmi:id="${eaId}" name="${this.escapeXml(node.name)}" visibility="public"${elementType === 'INTERFACE' ? ' isAbstract="true"' : ''}>\n`;
 
-          umlPackagedElements += `\t\t\t\t<ownedAttribute xmi:type="uml:Property" xmi:id="${attrId}" name="${this.escapeXml(attr.name)}" visibility="${(attr.visibility || 'private').toLowerCase()}" isStatic="false" isReadOnly="false" isDerived="false" isOrdered="false" isUnique="${attr.isPk ? 'true' : 'false'}" isDerivedUnion="false">\n`;
-          umlPackagedElements += `\t\t\t\t\t<lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_LI_${this.generateGuid().substring(0, 8)}" value="1"/>\n`;
-          umlPackagedElements += `\t\t\t\t\t<upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_UI_${this.generateGuid().substring(0, 8)}" value="1"/>\n`;
-          umlPackagedElements += `\t\t\t\t\t<type xmi:idref="${eaTypeRef}"/>\n`;
-          umlPackagedElements += `\t\t\t\t</ownedAttribute>\n`;
+        let eaAttributesXml = '';
+        let eaOperationsXml = '';
 
-          eaAttributesXml += `\t\t\t\t\t<attribute xmi:idref="${attrId}" name="${this.escapeXml(attr.name)}" scope="${this.capitalize(attr.visibility || 'Private')}">\n`;
-          eaAttributesXml += `\t\t\t\t\t\t<properties type="${this.escapeXml(attrType)}" derived="0" precision="0" collection="false" length="0" static="0" duplicates="0" changeability="changeable"/>\n`;
-          eaAttributesXml += `\t\t\t\t\t\t<containment containment="Not Specified" position="${i}"/>\n`;
-          eaAttributesXml += `\t\t\t\t\t\t<bounds lower="1" upper="1"/>\n`;
-          eaAttributesXml += `\t\t\t\t\t</attribute>\n`;
-        }
-      }
+        // Literales o Atributos
+        if (elementType === 'ENUM' && node.attributes && node.attributes.length > 0) {
+          for (let i = 0; i < node.attributes.length; i++) {
+            const attr = node.attributes[i];
+            const litId = `EAID_${this.generateGuid()}`;
+            umlPackagedElements += `\t\t\t\t<ownedLiteral xmi:type="uml:EnumerationLiteral" xmi:id="${litId}" name="${this.escapeXml(attr.name)}"/>\n`;
 
-      // Métodos / Operaciones
-      if (node.methods && node.methods.length > 0) {
-        for (let i = 0; i < node.methods.length; i++) {
-          const method = node.methods[i];
-          const opId = `EAID_${this.generateGuid()}`;
-          const retType = method.returnType || 'void';
-          const eaRetTypeRef = this.getEaTypeReference(retType);
-
-          umlPackagedElements += `\t\t\t\t<ownedOperation xmi:id="${opId}" name="${this.escapeXml(method.name)}" visibility="${(method.visibility || 'public').toLowerCase()}" concurrency="sequential">\n`;
-          umlPackagedElements += `\t\t\t\t\t<ownedParameter xmi:id="EAID_RET_${this.generateGuid().substring(0, 8)}" name="return" direction="return" type="${eaRetTypeRef}"/>\n`;
-
-          // Parámetros
-          if (method.parameters && method.parameters.trim().length > 0) {
-            const rawParams = method.parameters.split(',');
-            for (const paramStr of rawParams) {
-              const parts = paramStr.split(':');
-              const pName = parts[0]?.trim() || 'param';
-              const pType = parts[1]?.trim() || 'String';
-              umlPackagedElements += `\t\t\t\t\t<ownedParameter xmi:id="EAID_P_${this.generateGuid().substring(0, 8)}" name="${this.escapeXml(pName)}" type="${this.getEaTypeReference(pType)}"/>\n`;
-            }
+            eaAttributesXml += `\t\t\t\t\t<attribute xmi:idref="${litId}" name="${this.escapeXml(attr.name)}" scope="Public">\n`;
+            eaAttributesXml += `\t\t\t\t\t\t<properties type="${this.escapeXml(attr.type || 'String')}" derived="0" precision="0" collection="false" length="0" static="0" duplicates="0" changeability="changeable"/>\n`;
+            eaAttributesXml += `\t\t\t\t\t\t<stereotype stereotype="enum"/>\n`;
+            eaAttributesXml += `\t\t\t\t\t\t<containment containment="Not Specified" position="${i}"/>\n`;
+            eaAttributesXml += `\t\t\t\t\t</attribute>\n`;
           }
-          umlPackagedElements += `\t\t\t\t</ownedOperation>\n`;
+        } else if (node.attributes && node.attributes.length > 0) {
+          for (let i = 0; i < node.attributes.length; i++) {
+            const attr = node.attributes[i];
+            const attrId = `EAID_${this.generateGuid()}`;
+            const attrType = attr.type || 'String';
+            const eaTypeRef = this.getEaTypeReference(attrType);
+            const visWord = this.normalizeVisibilityWord(attr.visibility, 'private');
+            const lowerVal = attr.isPk || attr.isNullable === false ? '1' : '0';
 
-          eaOperationsXml += `\t\t\t\t\t<operation xmi:idref="${opId}" name="${this.escapeXml(method.name)}" scope="${this.capitalize(method.visibility || 'Public')}">\n`;
-          eaOperationsXml += `\t\t\t\t\t\t<properties position="${i}"/>\n`;
-          eaOperationsXml += `\t\t\t\t\t\t<type type="${this.escapeXml(retType)}" const="false" static="false" isAbstract="false" concurrency="Sequential" pure="0"/>\n`;
-          eaOperationsXml += `\t\t\t\t\t</operation>\n`;
+            umlPackagedElements += `\t\t\t\t<ownedAttribute xmi:type="uml:Property" xmi:id="${attrId}" name="${this.escapeXml(attr.name)}" visibility="${visWord}" isStatic="false" isReadOnly="false" isDerived="false" isOrdered="false" isUnique="${attr.isPk ? 'true' : 'false'}" isDerivedUnion="false">\n`;
+            umlPackagedElements += `\t\t\t\t\t<lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_LI_${this.generateGuid().substring(0, 8)}" value="${lowerVal}"/>\n`;
+            umlPackagedElements += `\t\t\t\t\t<upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_UI_${this.generateGuid().substring(0, 8)}" value="1"/>\n`;
+            umlPackagedElements += `\t\t\t\t\t<type xmi:idref="${eaTypeRef}"/>\n`;
+            umlPackagedElements += `\t\t\t\t</ownedAttribute>\n`;
+
+            eaAttributesXml += `\t\t\t\t\t<attribute xmi:idref="${attrId}" name="${this.escapeXml(attr.name)}" scope="${this.capitalize(visWord)}">\n`;
+            eaAttributesXml += `\t\t\t\t\t\t<properties type="${this.escapeXml(attrType)}" derived="0" precision="0" collection="false" length="0" static="0" duplicates="0" changeability="changeable"/>\n`;
+            if (attr.isPk) {
+              eaAttributesXml += `\t\t\t\t\t\t<stereotype stereotype="PK"/>\n`;
+            }
+            eaAttributesXml += `\t\t\t\t\t\t<containment containment="Not Specified" position="${i}"/>\n`;
+            eaAttributesXml += `\t\t\t\t\t\t<bounds lower="${lowerVal}" upper="1"/>\n`;
+            eaAttributesXml += `\t\t\t\t\t</attribute>\n`;
+          }
         }
-      }
 
-      // Generalizaciones salientes (Herencia)
-      const outGeneralizations = validConnections.filter(c => {
-        const s = c.sourceNodeId || c.sourceId?.replace(/_(top|bottom|left|right)$/, '');
-        return s === node.id && c.type === 'generalization';
-      });
+        // Métodos / Operaciones
+        if (node.methods && node.methods.length > 0) {
+          for (let i = 0; i < node.methods.length; i++) {
+            const method = node.methods[i];
+            const opId = `EAID_${this.generateGuid()}`;
+            const retType = method.returnType || 'void';
+            const eaRetTypeRef = this.getEaTypeReference(retType);
+            const visWord = this.normalizeVisibilityWord(method.visibility, 'public');
 
-      for (const gen of outGeneralizations) {
-        const targetId = gen.targetNodeId || gen.targetId?.replace(/_(top|bottom|left|right)$/, '');
-        const targetEaId = nodeEaIdMap.get(targetId);
-        if (targetEaId) {
-          umlPackagedElements += `\t\t\t\t<generalization xmi:type="uml:Generalization" xmi:id="EAID_GEN_${this.generateGuid().substring(0, 8)}" general="${targetEaId}"/>\n`;
+            umlPackagedElements += `\t\t\t\t<ownedOperation xmi:id="${opId}" name="${this.escapeXml(method.name)}" visibility="${visWord}" concurrency="sequential">\n`;
+            umlPackagedElements += `\t\t\t\t\t<ownedParameter xmi:id="EAID_RET_${this.generateGuid().substring(0, 8)}" name="return" direction="return" type="${eaRetTypeRef}"/>\n`;
+
+            if (method.parameters && method.parameters.trim().length > 0) {
+              const rawParams = method.parameters.split(',');
+              for (const paramStr of rawParams) {
+                const parts = paramStr.split(':');
+                const pName = parts[0]?.trim() || 'param';
+                const pType = parts[1]?.trim() || 'String';
+                umlPackagedElements += `\t\t\t\t\t<ownedParameter xmi:id="EAID_P_${this.generateGuid().substring(0, 8)}" name="${this.escapeXml(pName)}" type="${this.getEaTypeReference(pType)}"/>\n`;
+              }
+            }
+            umlPackagedElements += `\t\t\t\t</ownedOperation>\n`;
+
+            eaOperationsXml += `\t\t\t\t\t<operation xmi:idref="${opId}" name="${this.escapeXml(method.name)}" scope="${this.capitalize(visWord)}">\n`;
+            eaOperationsXml += `\t\t\t\t\t\t<properties position="${i}"/>\n`;
+            eaOperationsXml += `\t\t\t\t\t\t<type type="${this.escapeXml(retType)}" const="false" static="false" isAbstract="${elementType === 'INTERFACE' ? 'true' : 'false'}" concurrency="Sequential" pure="0"/>\n`;
+            eaOperationsXml += `\t\t\t\t\t</operation>\n`;
+          }
         }
-      }
 
-      umlPackagedElements += `\t\t\t</packagedElement>\n`;
+        // Generalizaciones salientes (Herencia)
+        const outGeneralizations = validConnections.filter(c => {
+          const s = c.sourceNodeId || c.sourceId?.replace(/_(top|bottom|left|right)$/, '');
+          return s === node.id && c.type === 'generalization';
+        });
 
-      // Elemento en EA Extension
-      eaElementsXml += `\t\t\t<element xmi:idref="${eaId}" xmi:type="uml:Class" name="${this.escapeXml(node.name)}" scope="public">\n`;
-      eaElementsXml += `\t\t\t\t<model package="EAPK_${pkgGuid}" tpos="0" ea_eleType="element"/>\n`;
-      eaElementsXml += `\t\t\t\t<properties isSpecification="false" sType="Class" nType="0" scope="public" isRoot="false" isLeaf="false" isAbstract="false" isActive="false"/>\n`;
-      eaElementsXml += `\t\t\t\t<project author="UML Studio" version="1.0" phase="1.0" created="${now}" modified="${now}" complexity="1" status="Proposed"/>\n`;
-      eaElementsXml += `\t\t\t\t<code product_name="Java" gentype="Java"/>\n`;
-      eaElementsXml += `\t\t\t\t<style appearance="BackColor=-1;BorderColor=-1;BorderWidth=-1;FontColor=-1;VSwimLanes=1;HSwimLanes=1;BorderStyle=0;"/>\n`;
-      eaElementsXml += `\t\t\t\t<extendedProperties tagged="0" package_name="${this.escapeXml(packageName)}"/>\n`;
-
-      if (eaAttributesXml) {
-        eaElementsXml += `\t\t\t\t<attributes>\n${eaAttributesXml}\t\t\t\t</attributes>\n`;
-      }
-      if (eaOperationsXml) {
-        eaElementsXml += `\t\t\t\t<operations>\n${eaOperationsXml}\t\t\t\t</operations>\n`;
-      }
-
-      // Links (relaciones entrantes o salientes de esta clase)
-      const classConns = validConnections.filter(c => {
-        const s = c.sourceNodeId || c.sourceId?.replace(/_(top|bottom|left|right)$/, '');
-        const t = c.targetNodeId || c.targetId?.replace(/_(top|bottom|left|right)$/, '');
-        return s === node.id || t === node.id;
-      });
-
-      if (classConns.length > 0) {
-        eaElementsXml += `\t\t\t\t<links>\n`;
-        for (const cc of classConns) {
-          const cId = connEaIdMap.get(cc.id)!;
-          const s = cc.sourceNodeId || cc.sourceId?.replace(/_(top|bottom|left|right)$/, '');
-          const t = cc.targetNodeId || cc.targetId?.replace(/_(top|bottom|left|right)$/, '');
-          const sEaId = nodeEaIdMap.get(s)!;
-          const tEaId = nodeEaIdMap.get(t)!;
-          const relName = cc.type === 'generalization' ? 'Generalization' : 'Association';
-          eaElementsXml += `\t\t\t\t\t<${relName} xmi:id="${cId}" start="${sEaId}" end="${tEaId}"/>\n`;
+        for (const gen of outGeneralizations) {
+          const targetId = gen.targetNodeId || gen.targetId?.replace(/_(top|bottom|left|right)$/, '');
+          const targetEaId = nodeEaIdMap.get(targetId);
+          if (targetEaId) {
+            umlPackagedElements += `\t\t\t\t<generalization xmi:type="uml:Generalization" xmi:id="EAID_GEN_${this.generateGuid().substring(0, 8)}" general="${targetEaId}"/>\n`;
+          }
         }
-        eaElementsXml += `\t\t\t\t</links>\n`;
-      }
 
-      eaElementsXml += `\t\t\t</element>\n`;
+        umlPackagedElements += `\t\t\t</packagedElement>\n`;
+
+        // Elemento en EA Extension
+        eaElementsXml += `\t\t\t<element xmi:idref="${eaId}" xmi:type="${umlXmiType}" name="${this.escapeXml(node.name)}" scope="public">\n`;
+        eaElementsXml += `\t\t\t\t<model package="EAPK_${pkgGuid}" tpos="0" ea_eleType="element"/>\n`;
+        eaElementsXml += `\t\t\t\t<properties isSpecification="false" sType="${eaSType}" nType="0" scope="public"${effectiveStereotype ? ` stereotype="${this.escapeXml(effectiveStereotype)}"` : ''} isRoot="false" isLeaf="false" isAbstract="${elementType === 'INTERFACE' ? 'true' : 'false'}" isActive="false"/>\n`;
+        eaElementsXml += `\t\t\t\t<project author="UML Studio" version="1.0" phase="1.0" created="${now}" modified="${now}" complexity="1" status="Proposed"/>\n`;
+        eaElementsXml += `\t\t\t\t<code product_name="Java" gentype="Java"/>\n`;
+        eaElementsXml += `\t\t\t\t<style appearance="BackColor=-1;BorderColor=-1;BorderWidth=-1;FontColor=-1;VSwimLanes=1;HSwimLanes=1;BorderStyle=0;"/>\n`;
+        eaElementsXml += `\t\t\t\t<extendedProperties tagged="0" package_name="${this.escapeXml(packageName)}"/>\n`;
+
+        if (eaAttributesXml) {
+          eaElementsXml += `\t\t\t\t<attributes>\n${eaAttributesXml}\t\t\t\t</attributes>\n`;
+        }
+        if (eaOperationsXml) {
+          eaElementsXml += `\t\t\t\t<operations>\n${eaOperationsXml}\t\t\t\t</operations>\n`;
+        }
+
+        // Links (relaciones entrantes o salientes de esta clase/elemento)
+        const classConns = validConnections.filter(c => {
+          const s = c.sourceNodeId || c.sourceId?.replace(/_(top|bottom|left|right)$/, '');
+          const t = c.targetNodeId || c.targetId?.replace(/_(top|bottom|left|right)$/, '');
+          return s === node.id || t === node.id;
+        });
+
+        if (classConns.length > 0) {
+          eaElementsXml += `\t\t\t\t<links>\n`;
+          for (const cc of classConns) {
+            const cId = connEaIdMap.get(cc.id)!;
+            const s = cc.sourceNodeId || cc.sourceId?.replace(/_(top|bottom|left|right)$/, '');
+            const t = cc.targetNodeId || cc.targetId?.replace(/_(top|bottom|left|right)$/, '');
+            const sEaId = nodeEaIdMap.get(s)!;
+            const tEaId = nodeEaIdMap.get(t)!;
+            const relName = cc.type === 'generalization' ? 'Generalization' : cc.type === 'realization' ? 'Realisation' : cc.type === 'dependency' ? 'Dependency' : 'Association';
+            eaElementsXml += `\t\t\t\t\t<${relName} xmi:id="${cId}" start="${sEaId}" end="${tEaId}"/>\n`;
+          }
+          eaElementsXml += `\t\t\t\t</links>\n`;
+        }
+
+        eaElementsXml += `\t\t\t</element>\n`;
+      }
 
       // Elemento en <diagram><elements> (Coordenadas y dimensiones de la caja)
       const left = Math.max(20, Math.round(node.position?.x || 50));
@@ -482,5 +533,14 @@ export class XmiExporterService {
   private capitalize(str: string): string {
     if (!str) return '';
     return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  private normalizeVisibilityWord(vis: string | undefined, fallback: 'public' | 'private'): string {
+    const val = (vis || '').trim().toLowerCase();
+    if (val === '+' || val === 'public') return 'public';
+    if (val === '-' || val === 'private') return 'private';
+    if (val === '#' || val === 'protected') return 'protected';
+    if (val === '~' || val === 'package') return 'package';
+    return fallback;
   }
 }
