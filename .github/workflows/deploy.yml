@@ -40,7 +40,7 @@ jobs:
           npx ng test --watch=false
           npm run build -- --configuration=production
 
-  # --- Job 2: Despliegue Directo a AWS EC2 vía SSH ---
+  # --- Job 2: Compilación de imágenes Docker en CI y Despliegue vía SSH ---
   deploy:
     name: Deploy to AWS EC2
     needs: test
@@ -48,75 +48,157 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -e
-            echo "🚀 [AWS EC2] Iniciando despliegue de case_uml2..."
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            export PATH=$PATH:/usr/bin:/usr/local/bin:/usr/local/bin/docker-compose
+      - name: Build production Docker images on CI runner
+        run: |
+          set -euo pipefail
+          export DOCKER_REGISTRY=casestudio
+          export IMAGE_TAG=latest
+          docker compose -f infra/docker-compose.yml build web backend
+          docker images casestudio/case_uml2-web:latest casestudio/case_uml2-backend:latest
 
-            # Asegurar permisos sobre el socket de Docker
-            sudo chmod 666 /var/run/docker.sock || true
+      - name: Configure SSH key
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          python3 - <<'PY'
+          import os, pathlib
+          key = os.environ["EC2_SSH_KEY"].replace("\r\n", "\n").strip() + "\n"
+          p = pathlib.Path.home() / ".ssh" / "deploy_key.pem"
+          p.write_text(key, encoding="utf-8")
+          p.chmod(0o600)
+          PY
 
-            # Navegar a la carpeta del proyecto case_uml2 o clonar
-            if [ -d "$HOME/case_uml2" ]; then
-              cd "$HOME/case_uml2"
-            else
-              git clone "https://github.com/${{ github.repository }}.git" "$HOME/case_uml2"
-              cd "$HOME/case_uml2"
-            fi
+      - name: Prepare EC2 repo & free disk space
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -eo pipefail
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -i ~/.ssh/deploy_key.pem "${EC2_USER}@${EC2_HOST}" \
+            "REPO_SLUG='${REPO_SLUG}' bash -s" <<'EOF'
+          set -e
+          echo "🚀 [AWS EC2] Preparando servidor y liberando espacio para case_uml2..."
+          sudo chmod 666 /var/run/docker.sock || true
 
-            # Sincronizar exactamente con origin/main conservando archivos .env no rastreados
-            git fetch origin main
-            git reset --hard origin/main
+          if [ -d "$HOME/case_uml2" ]; then
+            cd "$HOME/case_uml2"
+          else
+            git clone "https://github.com/${REPO_SLUG}.git" "$HOME/case_uml2"
+            cd "$HOME/case_uml2"
+          fi
 
-            # Liberar caché Docker, imágenes huérfanas y logs antiguos para evitar ENOSPC (sin tocar volúmenes)
-            echo "🧹 [AWS EC2] Espacio en disco antes de limpiar:"
-            df -h /
-            sudo docker container prune -f || true
-            sudo docker builder prune -af || true
-            sudo docker image prune -af || true
-            sudo apt-get clean || true
-            sudo journalctl --vacuum-time=2d || true
-            sudo rm -rf /tmp/npm-* /home/ubuntu/.npm /root/.npm || true
-            AVAIL_KB=$( (df -Pk /var/lib/docker 2>/dev/null || df -Pk /) | awk 'END {print $4}' )
-            if [ "${AVAIL_KB:-0}" -lt 2097152 ]; then
-              echo "⚠️ Espacio libre menor a 2 GB (${AVAIL_KB} KB); liberando imágenes anteriores de web/backend..."
-              sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 stop web backend || true
-              sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 rm -f web backend || true
-              sudo docker image prune -af || true
-            fi
-            echo "🧹 [AWS EC2] Espacio en disco tras limpiar:"
-            df -h /
+          git fetch origin main
+          git reset --hard origin/main
 
-            # Desplegar servicios con Docker Compose en el servidor (proyecto case_uml2)
-            if [ -d "infra" ]; then
-              cd infra
-              export DOMAIN_NAME="${{ secrets.DOMAIN_NAME }}"
-              [ -z "$DOMAIN_NAME" ] && export DOMAIN_NAME="kellyuml.duckdns.org"
-              if [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
-                export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+          echo "🧹 [AWS EC2] Estado inicial en EC2:"
+          df -h /
+          free -h
+
+          if [ -f "$HOME/case_uml2/infra/docker-compose.yml" ]; then
+            sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 stop web backend || true
+            sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 rm -f web backend || true
+          fi
+
+          sudo docker rmi -f casestudio/case_uml2-web:latest casestudio/case_uml2-backend:latest || true
+          sudo docker builder prune -af || true
+          sudo docker image prune -af || true
+          sudo apt-get clean || true
+          sudo journalctl --vacuum-time=1d || true
+          sudo rm -rf /tmp/npm-* /home/ubuntu/.npm /root/.npm || true
+
+          AVAIL_KB=$( (df -Pk /var/lib/docker 2>/dev/null || df -Pk /) | awk 'END {print $4}' )
+          if [ "${AVAIL_KB:-0}" -lt 2621440 ] && [ -f /swapfile ]; then
+            SWAP_BYTES=$(stat -c%s /swapfile 2>/dev/null || echo 0)
+            if [ "${SWAP_BYTES:-0}" -gt 1610612736 ]; then
+              echo "⚙️ [AWS EC2] Reduciendo /swapfile de 4 GB a 1 GB para liberar ~3 GB de disco..."
+              if sudo swapoff /swapfile; then
+                sudo rm -f /swapfile
+                (sudo fallocate -l 1G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=1024)
+                sudo chmod 600 /swapfile
+                sudo mkswap /swapfile
+                sudo swapon /swapfile
+              else
+                echo "⚠️ No se pudo desactivar /swapfile en caliente; restaurando y continuando..."
+                sudo swapon /swapfile 2>/dev/null || true
               fi
-
-              echo "🔨 [1/2] Construyendo frontend web..."
-              sudo -E docker compose -p case_uml2 build web
-              sudo docker builder prune -af || true
-
-              echo "🔨 [2/2] Construyendo backend API..."
-              sudo -E docker compose -p case_uml2 build backend
-              sudo docker builder prune -af || true
-
-              echo "🚀 Levantando servicios actualizados..."
-              sudo -E docker compose -p case_uml2 up -d --remove-orphans
-              sudo -E docker compose -p case_uml2 restart nginx || true
-              sudo docker image prune -f || true
-              sudo -E docker compose -p case_uml2 ps
-              df -h /
             fi
+          fi
 
-            echo "✅ [AWS EC2] Despliegue en producción completado con éxito!"
+          echo "🧹 [AWS EC2] Espacio tras limpieza:"
+          df -h /
+          free -h
+          EOF
+
+      - name: Transfer Docker images & start containers on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -eo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -i $HOME/.ssh/deploy_key.pem"
+          TARGET="${EC2_USER}@${EC2_HOST}"
+
+          echo "📦 [1/2] Transfiriendo imagen web (casestudio/case_uml2-web:latest) a EC2..."
+          docker save casestudio/case_uml2-web:latest | gzip | ssh $SSH_OPTS "$TARGET" "gunzip | sudo docker load"
+
+          echo "📦 [2/2] Transfiriendo imagen backend (casestudio/case_uml2-backend:latest) a EC2..."
+          docker save casestudio/case_uml2-backend:latest | gzip | ssh $SSH_OPTS "$TARGET" "gunzip | sudo docker load"
+
+          DOMAIN_NAME_B64=$(printf '%s' "${DOMAIN_NAME:-}" | tr -d '\r\n' | base64 -w0)
+          GEMINI_API_KEY_B64=$(printf '%s' "${GEMINI_API_KEY:-}" | tr -d '\r\n' | base64 -w0)
+
+          ssh $SSH_OPTS "$TARGET" \
+            "DOMAIN_NAME_B64='${DOMAIN_NAME_B64}' GEMINI_API_KEY_B64='${GEMINI_API_KEY_B64}' bash -s" <<'EOF'
+          set -e
+          sudo chmod 666 /var/run/docker.sock || true
+          cd "$HOME/case_uml2/infra"
+          export DOCKER_REGISTRY=casestudio
+          export IMAGE_TAG=latest
+          if [ -n "${DOMAIN_NAME_B64:-}" ]; then
+            export DOMAIN_NAME=$(printf '%s' "$DOMAIN_NAME_B64" | base64 -d)
+          fi
+          [ -z "${DOMAIN_NAME:-}" ] && export DOMAIN_NAME="kellyuml.duckdns.org"
+          if [ -n "${GEMINI_API_KEY_B64:-}" ]; then
+            export GEMINI_API_KEY=$(printf '%s' "$GEMINI_API_KEY_B64" | base64 -d)
+          fi
+
+          echo "🚀 Levantando servicios actualizados en EC2 (sin compilar en el servidor)..."
+          docker compose -p case_uml2 up -d --no-build --remove-orphans
+          docker compose -p case_uml2 restart nginx || true
+          docker image prune -f || true
+
+          echo "🩺 Verificando respuesta local de web y backend..."
+          READY=0
+          for i in $(seq 1 25); do
+            WEB_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3003 || echo 000)
+            API_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3002/api || echo 000)
+            if [ "$WEB_CODE" = "200" ] && [ "$API_CODE" != "000" ]; then
+              READY=1
+              echo "✅ Servicios respondiendo (web=${WEB_CODE}, api=${API_CODE})."
+              break
+            fi
+            sleep 2
+          done
+
+          docker compose -p case_uml2 ps
+          df -h /
+
+          if [ "$READY" -ne 1 ]; then
+            echo "❌ Los servicios no respondieron a tiempo; últimos logs:"
+            docker compose -p case_uml2 logs --tail=60 backend web nginx || true
+            exit 1
+          fi
+
+          echo "✅ [AWS EC2] Despliegue en producción completado con éxito!"
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key.pem

@@ -8,6 +8,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 ENV MONGOMS_DISABLE_POSTINSTALL=1
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 COPY package*.json ./
 RUN npm install --legacy-peer-deps --no-audit --no-fund && \
@@ -16,7 +17,7 @@ RUN npm install --legacy-peer-deps --no-audit --no-fund && \
 
 COPY . .
 RUN npm run build && \
-    npm prune --omit=dev && \
+    npm prune --omit=dev --legacy-peer-deps && \
     rm -rf /root/.npm /tmp/*
 
 FROM node:22-alpine AS runner
