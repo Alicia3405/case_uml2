@@ -1,11 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional, forwardRef, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { VertexAiService } from './vertex-ai.service';
-import { OllamaAiService } from './ollama-ai.service';
+import { OllamaAiService, OllamaConnectionTestResult, OllamaRuntimeConfig } from './ollama-ai.service';
 import { CollaborationGateway } from '../../projects/gateways/collaboration.gateway';
-import { AiPromptDto } from '../dtos/ai-prompt.dto';
+import { YjsSyncService } from '../../projects/services/yjs-sync.service';
+import { DiagramService } from '../../diagrams/services/diagram.service';
+import { AiPromptDto, AiPromptMode } from '../dtos/ai-prompt.dto';
 import { AiVisionPromptDto } from '../dtos/ai-vision-prompt.dto';
-import { AiResponseDto } from '../dtos/ai-response.dto';
+import {
+  AiResponseDto,
+  AiResolvedIntentMode,
+  AiSuggestionItem,
+  DisciplineAlertItem,
+} from '../dtos/ai-response.dto';
+import { TestOllamaConnectionDto, UpdateOllamaConfigDto } from '../dtos/ollama-config.dto';
+import { isValidUuid } from '../../../common/utils/mongoose-entity.util';
 
 export interface UmlAttributeNode {
   name: string;
@@ -34,6 +43,8 @@ export interface UmlClassNode {
   isAnchor?: boolean;
   assocAnchorNodeId?: string;
   assocMainConnId?: string;
+  createdByName?: string | null;
+  lastModifiedByName?: string | null;
   attributes: UmlAttributeNode[];
   methods: UmlMethodNode[];
 }
@@ -146,6 +157,36 @@ Debes responder ÚNICAMENTE con un bloque JSON sin texto markdown adicional:
 }
 `;
 
+const COLLAB_PARTNER_SYSTEM_INSTRUCTION = `
+Eres Copilot IA, UN DESARROLLADOR MÁS Y ARQUITECTO SENIOR integrado en una sala colaborativa UML/OMT donde varios desarrolladores trabajan juntos sobre el mismo diagrama de clases y chat grupal.
+
+REGLAS DE ORO COMO COMPAÑERO DE EQUIPO:
+1. NO MODIFIQUES EL DIAGRAMA POR TU CUENTA EN ESTE MODO: Tu rol ahora es asesorar, opinar, revisar, explicar teoría UML/OMT, resumir avances o auditar disciplina de diseño para que TODO el equipo vea y decida.
+2. CONSCIENCIA DE EQUIPO Y CONVERSACIÓN COMPARTIDA:
+   - Dirígete al equipo y reconoce quién preguntó y quién diseñó o modificó cada clase cuando conste en el contexto.
+   - Tus mensajes los leen todos en la sala al mismo tiempo ("todos escuchan, todos ven").
+3. IDEAS VISIBLES EN LA PIZARRA ("suggestions"):
+   - Siempre que detectes una mejora concreta, riesgo OMT/UML o faltante de atributo/relación/clave primaria, exprésalo como sugerencia estructurada en "suggestions" (máximo 3 por respuesta).
+   - Incluye en "suggestedPrompt" una instrucción imperativa clara y corta para que cualquier desarrollador pueda aplicarla con 1 clic en la pizarra (ej: "Agrega atributo estado String a Pedido"). Si solo es una nota informativa/teórica, deja "suggestedPrompt" en null.
+4. CRITERIO RIGUROSO OMT / UML / SPRING BOOT:
+   - Verifica claves primarias, tipos válidos (UUID, String, Integer, Long, BigDecimal, LocalDateTime, Boolean, etc.), relaciones M:N resueltas con tabla asociativa, cardinalidades coherentes, cohesión y nombres en PascalCase.
+
+FORMATO DE SALIDA ESTRICTO (JSON sin markdown):
+{
+  "message": "Tu intervención natural, clara y técnica para el chat grupal del equipo (en español, 2 a 6 líneas).",
+  "summary": "Resumen en una frase para el registro de actividad.",
+  "suggestions": [
+    {
+      "severity": "idea | warning | discipline",
+      "targetClassName": "NombreDeClaseExacto o null si aplica a todo el diagrama",
+      "title": "Título breve para pin en pizarra (máx 48 caracteres)",
+      "message": "Explicación concreta de la recomendación o regla detectada",
+      "suggestedPrompt": "Instrucción imperativa opcional para aplicar este cambio o null"
+    }
+  ]
+}
+`;
+
 export interface AiModelOption {
   id: string;
   name: string;
@@ -160,6 +201,8 @@ export interface AvailableAiModelsResponse {
   defaultModel: string;
   defaultProvider: 'ollama' | 'vertex';
   isOllamaAvailable: boolean;
+  ollamaBaseUrl?: string;
+  ollamaVisionModel?: string;
   models: AiModelOption[];
 }
 
@@ -172,10 +215,32 @@ export class AiAssistantService {
     private readonly ollamaAiService: OllamaAiService,
     private readonly collaborationGateway: CollaborationGateway,
     private readonly configService: ConfigService,
+    @Optional()
+    @Inject(forwardRef(() => DiagramService))
+    private readonly diagramService?: DiagramService,
+    @Optional()
+    private readonly yjsSyncService?: YjsSyncService,
   ) {}
 
+  getOllamaRuntimeConfig(): OllamaRuntimeConfig {
+    return this.ollamaAiService.getRuntimeConfig();
+  }
+
+  updateOllamaRuntimeConfig(dto: UpdateOllamaConfigDto): OllamaRuntimeConfig {
+    return this.ollamaAiService.setRuntimeConfig({
+      baseUrl: dto.baseUrl,
+      model: dto.model,
+      visionModel: dto.visionModel,
+      resetToEnv: dto.resetToEnv,
+    });
+  }
+
+  async testOllamaConnection(dto: TestOllamaConnectionDto): Promise<OllamaConnectionTestResult> {
+    return this.ollamaAiService.testConnection(dto.baseUrl);
+  }
+
   /**
-   * Obtiene la lista de modelos de IA disponibles (Ollama local y Vertex AI en la nube).
+   * Obtiene la lista de modelos de IA disponibles (Ollama local/Colab y Vertex AI en la nube).
    */
   async getAvailableModels(): Promise<AvailableAiModelsResponse> {
     const isOllamaAvail = await this.ollamaAiService.isAvailable();
@@ -185,7 +250,6 @@ export class AiAssistantService {
 
     const models: AiModelOption[] = [];
 
-    // Siempre disponible como opción recomendada y por defecto: Google Cloud Gemini (Vision, Cámara, Pizarra, Texto)
     models.push({
       id: configuredGeminiModel,
       name: `Google Gemini (${configuredGeminiModel})`,
@@ -201,12 +265,14 @@ export class AiAssistantService {
         const paramSize = m.details?.parameter_size || '';
         const sizeMb = m.size ? Math.round(m.size / (1024 * 1024)) : undefined;
         let displayName = m.name;
-        if (m.name.includes('qwen2.5-coder')) {
+        if (m.name.includes('qwen2.5vl') || m.name.includes('qwen3-vl')) {
+          displayName = `Qwen Vision (${paramSize || '7B'})`;
+        } else if (m.name.includes('qwen2.5-coder')) {
           displayName = `Qwen 2.5 Coder (${paramSize || '7B'})`;
         } else if (m.name.includes('qwen2.5')) {
           displayName = `Qwen 2.5 (${paramSize || '3B'})`;
         } else if (m.name.includes('gemma')) {
-          displayName = `Gemma 2 (${paramSize || '2B'})`;
+          displayName = `Gemma (${paramSize || '2B'})`;
         } else if (m.name.includes('deepseek')) {
           displayName = `DeepSeek (${paramSize || '7B'})`;
         } else if (m.name.includes('llama')) {
@@ -222,9 +288,9 @@ export class AiAssistantService {
           name: displayName,
           provider: 'ollama',
           isLocal: true,
-          parameterSize: paramSize || 'Local',
+          parameterSize: paramSize || 'Local / Colab',
           sizeMb,
-          description: `Modelo local en Ollama (${m.details?.quantization_level || 'GGUF'})`,
+          description: `Modelo en Ollama (${m.details?.quantization_level || 'GGUF'})`,
         });
       }
     }
@@ -242,12 +308,245 @@ export class AiAssistantService {
       defaultModel,
       defaultProvider,
       isOllamaAvailable: isOllamaAvail,
+      ollamaBaseUrl: this.ollamaAiService.getBaseUrl(),
+      ollamaVisionModel: this.ollamaAiService.getVisionModelName(),
       models,
     };
   }
 
   /**
-   * Ejecuta el prompt con el proveedor configurado (Ollama local o Google Vertex AI).
+   * Clasifica la intención de la intervención humana.
+   * Principio rector: la IA NO muta el diagrama mientras un colaborador no le pida explícitamente editarlo.
+   */
+  public classifyIntent(prompt: string, explicitMode?: AiPromptMode): AiResolvedIntentMode {
+    if (explicitMode && explicitMode !== 'auto') {
+      const mapping: Record<Exclude<AiPromptMode, 'auto'>, AiResolvedIntentMode> = {
+        mutate: 'MUTATE',
+        advise: 'ADVISE',
+        review: 'REVIEW',
+        discipline: 'DISCIPLINE',
+        recap: 'RECAP',
+      };
+      return mapping[explicitMode];
+    }
+
+    const p = (prompt || '').trim();
+    if (!p) return 'ADVISE';
+
+    if (/1\.\s*tablas\s+y\s+atributos/i.test(p)) {
+      return 'MUTATE';
+    }
+
+    const isRecap =
+      /\b(?:resumen|res[uú]meme|recap|retomar|ponme\s+al\s+d[ií]a|qu[eé]\s+(?:avanzamos|hicimos|cambi[oó]|se\s+hizo)|avance\s+de\s+ayer|desde\s+mi\s+[uú]ltima\s+visita|estado\s+actual\s+del\s+proyecto)\b/i.test(
+        p,
+      );
+
+    const isDiscipline =
+      /\b(?:omt|reglas?\s+uml|disciplina|normalizaci[oó]n|audita(?:r)?|auditor[ií]a|validaci[oó]n\s+uml|buenas\s+pr[aá]cticas|errores?\s+de\s+dise[nñ]o)\b/i.test(
+        p,
+      );
+
+    const isReview =
+      /\b(?:revisa(?:r)?|eval[uú]a(?:r)?|analiza(?:r)?|critica(?:r)?|diagnostica(?:r)?|inspecciona(?:r)?|qu[eé]\s+(?:le\s+)?falta|detecta(?:r)?\s+errores?|encuentras?\s+(?:alg[uú]n\s+)?error)\b/i.test(
+        p,
+      );
+
+    const startsLikeConsultativeQuestion =
+      /^(?:[¿?]\s*)?(?:qu[eé]\s+(?:opinas|piensas|te\s+parece|recomiendas|sugieres|atributo|relaci[oó]n|multiplicidad|tipo|falta|hizo|cambi[oó])|crees\s+que|conviene|deber[ií]a(?:mos)?|podr[ií]amos\s+(?:evaluar|pensar|revisar|debatir)|ser[ií]a\s+mejor|c[oó]mo\s+(?:puedo|podemos|modelar|dise[nñ]ar|funciona|se\s+usa)|para\s+qu[eé]\s+sirve|por\s+qu[eé]|cu[aá]l\s+es\s+la\s+diferencia|explica(?:me|nos)?|sugiere(?:me|nos)?|recomienda(?:me|nos)?|opina|ayuda(?:me|nos)?\s+a\s+(?:pensar|decidir|dise[nñ]ar)|no\s+recuerdo)\b/i.test(
+        p,
+      );
+
+    const isPoliteImperativeCommand =
+      /^(?:[¿?]\s*)?(?:puedes|podr[ií]as|me\s+puedes|por\s+favor|te\s+pedimos|haz(?:me|nos)?\s+el\s+favor\s+de)\s+(?:crea(?:r)?|agrega(?:r)?|a[ñn]ad(?:e|ir)|inserta(?:r)?|elimina(?:r)?|borra(?:r)?|quita(?:r)?|modifica(?:r)?|actualiza(?:r)?|cambia(?:r)?|renombra(?:r)?|conecta(?:r)?|relaciona(?:r)?|genera(?:r)?|resuelve|vac[ií]a(?:r)?|limpia(?:r)?)\b/i.test(
+        p,
+      );
+
+    const containsConsultativePhrase =
+      /\b(?:qu[eé]\s+(?:opinas|piensas|recomiendas|sugieres|te\s+parece)|conviene|deber[ií]a(?:mos)?|ser[ií]a\s+(?:bueno|mejor)|diferencia\s+entre|para\s+qu[eé]\s+sirve|no\s+recuerdo|me\s+recomiendas|nos\s+recomiendas|sugiere(?:me|s|nos)?|opina(?:r|s)?)\b/i.test(
+        p,
+      );
+
+    const hasImperativeMutation =
+      /(?:^|[\s,;:«])(?:crea(?:r)?|agrega(?:r)?|a[ñn]ad(?:e|ir)|inserta(?:r)?|elimina(?:r)?|borra(?:r)?|quita(?:r)?|remueve|suprime|destruye|modifica(?:r)?|actualiza(?:r)?|cambia(?:r)?|renombra(?:r)?|conecta(?:r)?|relaciona(?:r)?|vincula(?:r)?|genera(?:r)?|resuelve|vac[ií]a(?:r)?|limpia(?:r)?|convierte|create|add|delete|remove|update|rename)\b/i.test(
+        p,
+      );
+
+    const endsWithQuestionMark = p.endsWith('?') || p.startsWith('¿');
+
+    if (isRecap && !hasImperativeMutation) {
+      return 'RECAP';
+    }
+
+    if (containsConsultativePhrase || startsLikeConsultativeQuestion) {
+      if (isDiscipline) return 'DISCIPLINE';
+      if (isReview) return 'REVIEW';
+      return 'ADVISE';
+    }
+
+    if (endsWithQuestionMark && !isPoliteImperativeCommand) {
+      if (isDiscipline) return 'DISCIPLINE';
+      if (isReview) return 'REVIEW';
+      return 'ADVISE';
+    }
+
+    if (isDiscipline && !hasImperativeMutation) {
+      return 'DISCIPLINE';
+    }
+
+    if (isReview && !hasImperativeMutation) {
+      return 'REVIEW';
+    }
+
+    if (isPoliteImperativeCommand || hasImperativeMutation) {
+      return 'MUTATE';
+    }
+
+    return 'ADVISE';
+  }
+
+  /**
+   * Analizador determinista de disciplina OMT / UML 2.5 y preparación para Spring Boot.
+   */
+  public analyzeOmtDiscipline(
+    nodes: UmlClassNode[],
+    connections: UmlConnection[],
+  ): DisciplineAlertItem[] {
+    const alerts: DisciplineAlertItem[] = [];
+    const realNodes = (nodes || []).filter(
+      (n) => n && !n.isAnchor && (n.elementType || 'CLASS').toUpperCase() !== 'NOTE',
+    );
+    const nodeById = new Map(realNodes.map((n) => [n.id, n]));
+
+    if (realNodes.length === 0) {
+      return [];
+    }
+
+    const connectedNodeIds = new Set<string>();
+    const isManyMult = (mult?: string) => {
+      const c = (mult || '').trim().toLowerCase();
+      return c.includes('*') || c === 'n' || c === 'm' || c === 'many';
+    };
+
+    for (const conn of connections || []) {
+      const sId = conn.sourceNodeId || conn.sourceId?.replace(/_(top|bottom|left|right)$/, '');
+      const tId = conn.targetNodeId || conn.targetId?.replace(/_(top|bottom|left|right)$/, '');
+      if (sId) connectedNodeIds.add(sId);
+      if (tId) connectedNodeIds.add(tId);
+
+      if (
+        conn.type !== 'association_class' &&
+        isManyMult(conn.sourceMultiplicity) &&
+        isManyMult(conn.targetMultiplicity) &&
+        !conn.assocAnchorNodeId
+      ) {
+        const sName = nodeById.get(sId || '')?.name || 'Origen';
+        const tName = nodeById.get(tId || '')?.name || 'Destino';
+        alerts.push({
+          code: 'OMT_UNRESOLVED_MN',
+          severity: 'discipline',
+          targetNodeId: sId,
+          className: `${sName} <-> ${tName}`,
+          message: `La relación muchos a muchos (*..*) entre ${sName} y ${tName} debe materializarse con una clase asociativa intermedia según OMT/UML.`,
+          suggestedPrompt: 'Genera la tabla asociativa intermedia para las relaciones muchos a muchos',
+        });
+      }
+    }
+
+    for (const node of realNodes) {
+      const elType = (node.elementType || 'CLASS').toUpperCase();
+      const attrs = node.attributes || [];
+
+      if (/\s/.test(node.name) || (/^[a-z]/.test(node.name) && elType === 'CLASS')) {
+        const suggestedPascal = node.name
+          .trim()
+          .split(/[\s_]+/)
+          .filter(Boolean)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join('');
+        alerts.push({
+          code: 'OMT_NAMING',
+          severity: 'discipline',
+          targetNodeId: node.id,
+          className: node.name,
+          message: `El nombre "${node.name}" incumple la convención PascalCase sin espacios requerida para clases UML y entidades Spring Boot.`,
+          suggestedPrompt: `Renombra la clase "${node.name}" a "${suggestedPascal}"`,
+        });
+      }
+
+      if (elType === 'CLASS') {
+        if (attrs.length === 0) {
+          alerts.push({
+            code: 'OMT_EMPTY_CLASS',
+            severity: 'warning',
+            targetNodeId: node.id,
+            className: node.name,
+            message: `La clase "${node.name}" no tiene atributos definidos todavía.`,
+            suggestedPrompt: `Agrega atributo id UUID y campos básicos a la tabla ${node.name}`,
+          });
+        } else {
+          const hasPk = attrs.some(
+            (a) =>
+              a.isPrimaryKey ||
+              /^(id|.*_id|codigo|uuid)$/i.test((a.name || '').trim()),
+          );
+          if (!hasPk) {
+            alerts.push({
+              code: 'OMT_MISSING_PK',
+              severity: 'discipline',
+              targetNodeId: node.id,
+              className: node.name,
+              message: `La clase "${node.name}" carece de identificador/clave primaria explícita (ej: id: UUID).`,
+              suggestedPrompt: `Agrega el atributo id de tipo UUID a la tabla ${node.name}`,
+            });
+          }
+
+          const attrNameCounts = new Map<string, number>();
+          for (const a of attrs) {
+            const k = (a.name || '').trim().toLowerCase();
+            if (k) attrNameCounts.set(k, (attrNameCounts.get(k) || 0) + 1);
+          }
+          const duplicates = Array.from(attrNameCounts.entries())
+            .filter(([, count]) => count > 1)
+            .map(([name]) => name);
+          if (duplicates.length > 0) {
+            alerts.push({
+              code: 'OMT_DUPLICATE_ATTR',
+              severity: 'discipline',
+              targetNodeId: node.id,
+              className: node.name,
+              message: `La clase "${node.name}" tiene atributos repetidos (${duplicates.join(', ')}).`,
+            });
+          }
+
+          if (attrs.length > 12) {
+            alerts.push({
+              code: 'OMT_LARGE_CLASS',
+              severity: 'warning',
+              targetNodeId: node.id,
+              className: node.name,
+              message: `La clase "${node.name}" acumula ${attrs.length} atributos; considera dividirla por cohesión OMT/3FN.`,
+            });
+          }
+        }
+
+        if (realNodes.length >= 3 && !connectedNodeIds.has(node.id) && !node.assocMainConnId) {
+          alerts.push({
+            code: 'OMT_ISOLATED_CLASS',
+            severity: 'warning',
+            targetNodeId: node.id,
+            className: node.name,
+            message: `La clase "${node.name}" permanece aislada sin relaciones hacia el resto del modelo.`,
+          });
+        }
+      }
+    }
+
+    return alerts.slice(0, 12);
+  }
+
+  /**
+   * Ejecuta el prompt con el proveedor configurado (Ollama local/Colab o Google Vertex AI).
    * Si Ollama está seleccionado pero no responde, realiza fallback automático a Vertex AI.
    */
   private async generateWithPreferredProvider(options: {
@@ -257,6 +556,7 @@ export class AiAssistantService {
     formatJson?: boolean;
     provider?: 'ollama' | 'vertex';
     model?: string;
+    temperature?: number;
   }): Promise<{ responseText: string; providerUsed: 'ollama' | 'vertex'; modelUsed: string }> {
     const defaultProvider = (this.configService.get<string>('AI_PROVIDER') || 'vertex').toLowerCase() as 'ollama' | 'vertex';
     const requestedProvider = options.provider || defaultProvider;
@@ -266,13 +566,15 @@ export class AiAssistantService {
         const isAvail = await this.ollamaAiService.isAvailable();
         if (isAvail) {
           const targetModel = options.model || this.ollamaAiService.getModelName();
-          this.logger.log(`[AiAssistant] Ejecutando prompt con IA Local Ollama (${targetModel})`);
+          this.logger.log(`[AiAssistant] Ejecutando prompt con Ollama (${targetModel})`);
           const text = await this.ollamaAiService.generateContent({
             model: targetModel,
             systemInstruction: options.systemInstruction,
             contents: options.contents,
             responseMimeType: options.responseMimeType,
             formatJson: options.formatJson ?? true,
+            temperature: options.temperature,
+            numCtx: 6144,
           });
           return {
             responseText: text,
@@ -281,14 +583,14 @@ export class AiAssistantService {
           };
         }
         this.logger.warn(
-          `[AiAssistant] Ollama no está disponible en ${this.configService.get('OLLAMA_BASE_URL') || 'http://localhost:11434'}. Fallback a Google Vertex AI...`,
+          `[AiAssistant] Ollama no está disponible en ${this.ollamaAiService.getBaseUrl()}. Fallback a Google Gemini/Vertex AI...`,
         );
       } catch (err: any) {
-        this.logger.warn(`[AiAssistant] Error en inferencia local Ollama (${err.message || err}). Fallback a Google Vertex AI...`);
+        this.logger.warn(`[AiAssistant] Error en inferencia Ollama (${err.message || err}). Fallback a Google Gemini/Vertex AI...`);
       }
     }
 
-    this.logger.log('[AiAssistant] Ejecutando prompt con Google Cloud Vertex AI (Gemini)');
+    this.logger.log('[AiAssistant] Ejecutando prompt con Google Gemini / Vertex AI');
     const text = await this.vertexAiService.generateContent({
       systemInstruction: options.systemInstruction,
       contents: options.contents,
@@ -305,12 +607,11 @@ export class AiAssistantService {
   normalizeForFuzzy(text: string): string {
     if (!text) return '';
 
-    // Separar CamelCase (ej: "DetalleCompra" -> "Detalle Compra")
     const spacedCamel = text.replace(/([a-z])([A-Z])/g, '$1 $2');
 
     const stopwords = new Set([
       'de', 'la', 'el', 'los', 'las', 'del', 'un', 'una', 'unos', 'unas',
-      'tabla', 'tablas', 'clase', 'clases', 'entidad', 'entidades', 'nodo', 'nodos'
+      'tabla', 'tablas', 'clase', 'clases', 'entidad', 'entidades', 'nodo', 'nodos',
     ]);
 
     const words = spacedCamel
@@ -320,8 +621,8 @@ export class AiAssistantService {
       .split(/[^a-z0-9]+/);
 
     const stemmedWords = words
-      .filter(w => w.length > 0 && !stopwords.has(w))
-      .map(w => {
+      .filter((w) => w.length > 0 && !stopwords.has(w))
+      .map((w) => {
         if (/[aeiou]s$/i.test(w) && w.length > 3) return w.slice(0, -1);
         if (w.endsWith('es') && w.length > 4) return w.slice(0, -2);
         return w;
@@ -336,17 +637,13 @@ export class AiAssistantService {
     const cleanQuery = this.normalizeForFuzzy(query);
     if (!cleanQuery) return undefined;
 
-    // 1. Coincidencia por ID
-    const byId = nodes.find(n => n.id.toLowerCase() === query.toLowerCase().trim());
+    const byId = nodes.find((n) => n.id.toLowerCase() === query.toLowerCase().trim());
     if (byId) return byId;
 
-    // 2. Coincidencia exacta normalizada
-    const byNormalized = nodes.find(n => this.normalizeForFuzzy(n.name) === cleanQuery);
+    const byNormalized = nodes.find((n) => this.normalizeForFuzzy(n.name) === cleanQuery);
     if (byNormalized) return byNormalized;
 
-    // 3. Coincidencia por prefijo/raíz SOLO si la diferencia de longitud es mínima (<= 2 caracteres, ej: género o inflexión)
-    // NUNCA coincidir si es una tabla compuesta o intermedia (ej: "Usuario_Products" NO es "Usuario")
-    return nodes.find(n => {
+    return nodes.find((n) => {
       const nodeNorm = this.normalizeForFuzzy(n.name);
       if (nodeNorm.length < 3 || cleanQuery.length < 3) return false;
       const lenDiff = Math.abs(nodeNorm.length - cleanQuery.length);
@@ -359,6 +656,13 @@ export class AiAssistantService {
     const currentConnections: UmlConnection[] = dto.currentConnections || [];
     const prompt = dto.prompt.trim();
 
+    const intentMode = this.classifyIntent(prompt, dto.mode);
+
+    // Rutas consultivas / colaborativas (NO mutan el diagrama!)
+    if (intentMode !== 'MUTATE') {
+      return this.handleConsultativeIntent(dto, intentMode, currentNodes, currentConnections);
+    }
+
     // 0. DETECCIÓN DE LIMPIEZA TOTAL / ELIMINAR TODAS LAS TABLAS
     const isAttributeOrMethodOperation = /(?:atributos?|m[eé]todos?|campos?|propiedad(?:es)?)\b/i.test(prompt);
     const isDeleteAllPrompt = !isAttributeOrMethodOperation && (
@@ -368,21 +672,25 @@ export class AiAssistantService {
     );
 
     if (isDeleteAllPrompt) {
-      this.broadcastAiMutation(
-        dto.diagramId,
-        dto.roomCode,
+      await this.broadcastAiMutation(
+        dto,
         [],
         [],
         'Todas las tablas y relaciones han sido eliminadas del diagrama',
+        [],
       );
 
       return {
         success: true,
         action: 'diagram_mutated',
+        intentMode: 'MUTATE',
+        mutatedDiagram: true,
         message: 'Todas las tablas y relaciones han sido eliminadas del diagrama.',
         nodes: [],
         connections: [],
         changesSummary: 'Limpieza total del diagrama.',
+        disciplineAlerts: [],
+        broadcastedToRoom: dto.broadcastToRoom !== false,
       };
     }
 
@@ -403,18 +711,18 @@ export class AiAssistantService {
       this.collaborationGateway.lockNodeForAi(dto.diagramId, dto.roomCode, node.id);
     }
 
-    // PROCESAMIENTO UNIFICADO MEDIANTE VERTEX AI GEMINI 2.5 FLASH
     const historyBlock = dto.sessionHistory && dto.sessionHistory.length > 0
-      ? `\nHISTORIAL DE ACTIVIDAD RECIENTE EN ESTA SESIÓN:\n${JSON.stringify(dto.sessionHistory.slice(-12).map((h: any) => `[${h.timestamp || 'reciente'}] ${h.actor || 'Usuario'}: ${h.title} - ${h.description}`), null, 2)}\n`
+      ? `\nHISTORIAL DE ACTIVIDAD RECIENTE EN ESTA SESIÓN:\n${JSON.stringify(dto.sessionHistory.slice(-12).map((h: any) => `[${h.timestamp || 'reciente'}] ${h.actor || h.userName || 'Usuario'}: ${h.title || h.action} - ${h.description || h.detail || ''}`), null, 2)}\n`
       : '';
 
     const userContent = `
 ESTADO ACTUAL DEL DIAGRAMA:
+SOLICITADO POR: ${dto.authorUserName || 'Colaborador'}
 NODOS ACTUALES (${currentNodes.length}):
-${JSON.stringify(currentNodes.map(n => ({ id: n.id, name: n.name, ...(n.elementType && n.elementType !== 'CLASS' ? { elementType: n.elementType } : {}), ...(n.stereotype ? { stereotype: n.stereotype } : {}), ...(n.noteContent ? { noteContent: n.noteContent } : {}), attributes: n.attributes, methods: n.methods })), null, 2)}
+${JSON.stringify(currentNodes.map((n) => ({ id: n.id, name: n.name, ...(n.createdByName ? { createdBy: n.createdByName } : {}), ...(n.elementType && n.elementType !== 'CLASS' ? { elementType: n.elementType } : {}), ...(n.stereotype ? { stereotype: n.stereotype } : {}), ...(n.noteContent ? { noteContent: n.noteContent } : {}), attributes: n.attributes, methods: n.methods })), null, 2)}
 
 CONEXIONES ACTUALES (${currentConnections.length}):
-${JSON.stringify(currentConnections.map(c => ({ id: c.id, sourceNodeId: c.sourceNodeId, targetNodeId: c.targetNodeId, type: c.type, sourceMultiplicity: c.sourceMultiplicity, targetMultiplicity: c.targetMultiplicity })), null, 2)}
+${JSON.stringify(currentConnections.map((c) => ({ id: c.id, sourceNodeId: c.sourceNodeId, targetNodeId: c.targetNodeId, type: c.type, sourceMultiplicity: c.sourceMultiplicity, targetMultiplicity: c.targetMultiplicity })), null, 2)}
 ${historyBlock}
 INSTRUCCIÓN DEL USUARIO:
 "${prompt}"
@@ -440,11 +748,11 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
         formatJson: true,
         provider: dto.provider,
         model: dto.model,
+        temperature: 0.1,
       });
 
       const parsed = this.cleanAndParseJson(responseText);
 
-      // Solo omitir aclaración si el usuario dio especificaciones técnicas concretas (atributos tipados, etc.)
       const hasStructuralSpecs =
         /(?:uuid|string|integer|long|double|float|boolean|bigdecimal|localdate|localdatetime|date|text|byte\[\]|\:|\-\>)/i.test(prompt) ||
         /(?:con\s+(?:atributos?|campos?|columnas?|id|nombre|name|email))/i.test(prompt);
@@ -460,6 +768,8 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
         return {
           success: false,
           action: 'clarification_required',
+          intentMode: 'MUTATE',
+          mutatedDiagram: false,
           message: clarificationMsg,
           nodes: currentNodes,
           connections: currentConnections,
@@ -469,7 +779,6 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
         };
       }
 
-      // Fusión inteligente: Vertex AI devuelve el estado completo del diagrama
       const merged = this.mergeNodesAndConnections(
         currentNodes,
         currentConnections,
@@ -478,46 +787,467 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
         prompt,
       );
 
-      // Resolución automática de relaciones muchos a muchos hacia tablas intermedias
       const resolved = this.resolveManyToManyRelationships(merged.nodes, merged.connections);
 
       const finalNodes = this.sanitizeNodes(resolved.nodes);
       const finalConnections = this.sanitizeConnections(resolved.connections, finalNodes);
+      const affectedClasses = finalNodes
+        .filter((n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE')
+        .map((n) => n.name)
+        .slice(0, 8);
+      const disciplineAlerts = this.analyzeOmtDiscipline(finalNodes, finalConnections);
 
-      this.broadcastAiMutation(
-        dto.diagramId,
-        dto.roomCode,
+      await this.broadcastAiMutation(
+        dto,
         finalNodes,
         finalConnections,
-        parsed.changesSummary || 'Mutación estructural aplicada al diagrama',
+        parsed.message || parsed.changesSummary || 'Mutación estructural aplicada al diagrama',
+        affectedClasses,
+        providerUsed,
+        modelUsed,
       );
 
       return {
         success: true,
         action: 'diagram_mutated',
+        intentMode: 'MUTATE',
+        mutatedDiagram: true,
         message: parsed.message || parsed.changesSummary || 'Diagrama actualizado por Copilot IA.',
         nodes: finalNodes,
         connections: finalConnections,
         changesSummary: parsed.changesSummary || 'Mutación aplicada al diagrama UML.',
         providerUsed,
         modelUsed,
+        disciplineAlerts,
+        broadcastedToRoom: dto.broadcastToRoom !== false,
       };
     } catch (err: any) {
       this.logger.error(`Error procesando prompt de texto IA: ${err.message || err}`);
       return this.handleFallbackPrompt(dto, currentNodes, currentConnections);
     } finally {
-      // 3. Liberar exclusión mutua garantizada para todos los nodos bloqueados
       for (const node of targetNodesToLock) {
         this.collaborationGateway.unlockNodeForAi(dto.diagramId, dto.roomCode, node.id);
       }
     }
   }
 
+  /**
+   * Maneja intervenciones colaborativas donde la IA opina, revisa, valida disciplina OMT/UML
+   * o resume sesiones multi-día sin mutar el diagrama.
+   */
+  private async handleConsultativeIntent(
+    dto: AiPromptDto,
+    intentMode: Exclude<AiResolvedIntentMode, 'MUTATE'>,
+    currentNodes: UmlClassNode[],
+    currentConnections: UmlConnection[],
+  ): Promise<AiResponseDto> {
+    const prompt = dto.prompt.trim();
+    const disciplineAlerts = this.analyzeOmtDiscipline(currentNodes, currentConnections);
+    const requesterName = dto.authorUserName || 'Colaborador';
+
+    let roomMessages: any[] = [];
+    let recentEvents: any[] = [];
+    let existingDiagram: any = null;
+    let resumeBundle: any = null;
+
+    if (isValidUuid(dto.diagramId)) {
+      if (this.yjsSyncService) {
+        try {
+          if (intentMode === 'RECAP' && dto.authorUserId && isValidUuid(dto.authorUserId)) {
+            resumeBundle = await this.yjsSyncService.getResumeBundle(dto.diagramId, dto.authorUserId);
+            roomMessages = resumeBundle.recentMessages || [];
+            recentEvents = resumeBundle.recentEvents || [];
+          } else {
+            const hist = await this.yjsSyncService.getRoomHistory(dto.diagramId, 25);
+            roomMessages = hist.recentChatMessages || [];
+            recentEvents = hist.recentActivityLogs || [];
+          }
+        } catch (err: any) {
+          this.logger.warn(`[AiAssistant] No se pudo cargar historial colaborativo: ${err?.message || err}`);
+        }
+      }
+
+      if (this.diagramService && dto.authorUserId && isValidUuid(dto.authorUserId)) {
+        try {
+          existingDiagram = await this.diagramService.findOne(dto.diagramId, dto.authorUserId);
+        } catch {
+          // Opcional: si no tiene usuario o acceso read, continuamos con los nodos recibidos en dto
+        }
+      }
+    }
+
+    const selectedNodesInfo = (dto.selectedNodeIds || [])
+      .map((id) => currentNodes.find((n) => n.id === id))
+      .filter(Boolean)
+      .map((n) => n!.name);
+
+    const teamChatContext = roomMessages.slice(-10).map((m: any) =>
+      `[${m.senderType === 'ai' ? 'Copilot IA' : m.userName || 'Dev'}]: ${m.message}`,
+    );
+
+    const eventsContext = recentEvents.slice(-12).map((e: any) =>
+      `[Sesión #${e.sessionNumber || 1}] ${e.userName || 'Dev'}: ${e.action}${e.detail ? ` (${e.detail})` : ''}`,
+    );
+
+    const resumeContextBlock = resumeBundle
+      ? `\nDATOS DE SESIÓN Y CONTRIBUCIONES:\n${JSON.stringify({
+          diagramName: resumeBundle.diagram?.name,
+          sessionNumber: resumeBundle.session?.sessionNumber,
+          activeDateKeys: resumeBundle.session?.activeDateKeys,
+          sinceLastVisit: resumeBundle.sinceLastVisit,
+          contributorStats: resumeBundle.contributorStats,
+        }, null, 2)}\n`
+      : '';
+
+    const userContent = `
+MODO DE INTERVENCIÓN: ${intentMode}
+(${intentMode === 'ADVISE' ? 'Asesoría grupal y opinión arquitectónica sin mutar el diagrama' : intentMode === 'REVIEW' ? 'Revisión técnica constructiva del diagrama actual' : intentMode === 'DISCIPLINE' ? 'Auditoría de disciplina OMT, UML 2.5 y preparación Spring Boot' : 'Resumen ejecutivo multi-sesión para retomar el trabajo en equipo'})
+
+COLABORADOR QUE CONSULTA: ${requesterName}
+NODOS SELECCIONADOS COMO FOCO: ${selectedNodesInfo.length > 0 ? selectedNodesInfo.join(', ') : 'Todo el diagrama'}
+
+ESTADO ACTUAL DEL DIAGRAMA (${currentNodes.filter((n) => !n.isAnchor).length} elementos visibles, ${currentConnections.length} conexiones):
+${JSON.stringify(currentNodes.filter((n) => !n.isAnchor).map((n) => ({
+  id: n.id,
+  name: n.name,
+  elementType: n.elementType || 'CLASS',
+  createdBy: n.createdByName || null,
+  lastModifiedBy: n.lastModifiedByName || null,
+  attributes: n.attributes,
+  methods: n.methods,
+})), null, 2)}
+
+CONEXIONES:
+${JSON.stringify(currentConnections.map((c) => ({
+  sourceNodeId: c.sourceNodeId,
+  targetNodeId: c.targetNodeId,
+  type: c.type,
+  name: c.name,
+  sourceMultiplicity: c.sourceMultiplicity,
+  targetMultiplicity: c.targetMultiplicity,
+})), null, 2)}
+
+ALERTAS DETERMINISTAS OMT/UML DETECTADAS:
+${JSON.stringify(disciplineAlerts, null, 2)}
+${resumeContextBlock}
+CHAT GRUPAL RECIENTE EN SALA:
+${teamChatContext.length > 0 ? teamChatContext.join('\n') : '(Sin mensajes previos)'}
+
+ACTIVIDAD RECIENTE DEL EQUIPO:
+${eventsContext.length > 0 ? eventsContext.join('\n') : '(Sin eventos registrados aún)'}
+
+CONSULTA DE ${requesterName.toUpperCase()}:
+"${prompt}"
+`;
+
+    let providerUsed: string | undefined;
+    let modelUsed: string | undefined;
+    let responseMessage = '';
+    let responseSummary = '';
+    let parsedSuggestions: any[] = [];
+
+    try {
+      const generated = await this.generateWithPreferredProvider({
+        systemInstruction: COLLAB_PARTNER_SYSTEM_INSTRUCTION,
+        contents: userContent,
+        responseMimeType: 'application/json',
+        formatJson: true,
+        provider: dto.provider,
+        model: dto.model,
+        temperature: 0.25,
+      });
+
+      providerUsed = generated.providerUsed;
+      modelUsed = generated.modelUsed;
+
+      try {
+        const parsed = this.cleanAndParseJson(generated.responseText);
+        responseMessage = (parsed.message || '').trim();
+        responseSummary = (parsed.summary || '').trim();
+        if (Array.isArray(parsed.suggestions)) {
+          parsedSuggestions = parsed.suggestions;
+        }
+      } catch {
+        // Si un modelo local devolvió texto libre útil en lugar de JSON, lo aprovechamos directamente
+        responseMessage = (generated.responseText || '').trim();
+      }
+    } catch (err: any) {
+      this.logger.warn(`[AiAssistant] Fallback determinista en modo ${intentMode}: ${err?.message || err}`);
+    }
+
+    if (!responseMessage) {
+      responseMessage = this.buildDeterministicConsultativeMessage(
+        intentMode,
+        requesterName,
+        currentNodes,
+        currentConnections,
+        disciplineAlerts,
+        resumeBundle,
+      );
+      providerUsed = providerUsed || 'omt-analyzer';
+      modelUsed = modelUsed || 'deterministic-advisor';
+    }
+
+    // Normalizar sugerencias combinando LLM + alertas OMT deterministas cuando aplique
+    const normalizedSuggestions: AiSuggestionItem[] = [];
+    const seenSuggestionTitles = new Set<string>();
+
+    for (const s of parsedSuggestions.slice(0, 4)) {
+      const title = (s?.title || '').trim();
+      const message = (s?.message || '').trim();
+      if (!title || !message) continue;
+      const targetNode = s.targetClassName ? this.findNodeFuzzy(currentNodes, s.targetClassName) : undefined;
+      const severity: 'idea' | 'warning' | 'discipline' =
+        s.severity === 'discipline' || s.severity === 'warning' ? s.severity : 'idea';
+      seenSuggestionTitles.add(title.toLowerCase());
+      normalizedSuggestions.push({
+        id: `sug_${Date.now()}_${normalizedSuggestions.length}`,
+        severity,
+        targetNodeId: targetNode?.id,
+        targetClassName: targetNode?.name || s.targetClassName || undefined,
+        title: title.slice(0, 80),
+        message,
+        suggestedPrompt: typeof s.suggestedPrompt === 'string' && s.suggestedPrompt.trim() ? s.suggestedPrompt.trim() : undefined,
+      });
+    }
+
+    if (intentMode === 'DISCIPLINE' || intentMode === 'REVIEW' || normalizedSuggestions.length === 0) {
+      for (const alert of disciplineAlerts) {
+        if (normalizedSuggestions.length >= 4) break;
+        const title = alert.className ? `${alert.code}: ${alert.className}` : alert.code;
+        if (seenSuggestionTitles.has(title.toLowerCase())) continue;
+        seenSuggestionTitles.add(title.toLowerCase());
+        normalizedSuggestions.push({
+          id: `sug_omt_${Date.now()}_${normalizedSuggestions.length}`,
+          severity: alert.severity,
+          targetNodeId: alert.targetNodeId,
+          targetClassName: alert.className,
+          title,
+          message: alert.message,
+          suggestedPrompt: alert.suggestedPrompt,
+        });
+      }
+    }
+
+    // Fijar ideas/hallazgos en la pizarra persistida para que todo el equipo los vea ("aparezcan en la pizarra")
+    const annotationsAdded: any[] = [];
+    if (
+      isValidUuid(dto.diagramId) &&
+      this.diagramService &&
+      dto.createWhiteboardNotes !== false &&
+      intentMode !== 'RECAP' &&
+      normalizedSuggestions.length > 0
+    ) {
+      const existingOpenTitles = new Set(
+        ((existingDiagram?.aiAnnotations || []) as any[])
+          .filter((a) => a.status === 'open')
+          .map((a) => `${(a.title || '').toLowerCase()}::${(a.targetNodeId || '').toLowerCase()}`),
+      );
+
+      let latestDiagramAfterNotes: any = null;
+      for (const sug of normalizedSuggestions.slice(0, 3)) {
+        const dedupKey = `${sug.title.toLowerCase()}::${(sug.targetNodeId || '').toLowerCase()}`;
+        if (existingOpenTitles.has(dedupKey)) continue;
+        try {
+          latestDiagramAfterNotes = await this.diagramService.addAiAnnotation(dto.diagramId, {
+            targetNodeId: sug.targetNodeId ?? null,
+            targetClassName: sug.targetClassName ?? null,
+            severity: sug.severity,
+            title: sug.title,
+            message: sug.message,
+            authorName: 'Copilot IA',
+            requestedByUserName: requesterName,
+            suggestedAction: sug.suggestedPrompt
+              ? { suggestedPrompt: sug.suggestedPrompt, mode: intentMode }
+              : null,
+          });
+          const addedList = latestDiagramAfterNotes?.aiAnnotations || [];
+          if (addedList.length > 0) {
+            annotationsAdded.push(addedList[addedList.length - 1]);
+          }
+        } catch (err: any) {
+          this.logger.warn(`[AiAssistant] No se pudo guardar anotación en pizarra: ${err?.message || err}`);
+        }
+      }
+
+      if (
+        latestDiagramAfterNotes &&
+        typeof this.collaborationGateway?.broadcastAiAnnotationsUpdated === 'function'
+      ) {
+        this.collaborationGateway.broadcastAiAnnotationsUpdated(
+          dto.diagramId,
+          dto.roomCode,
+          latestDiagramAfterNotes.aiAnnotations || [],
+        );
+      }
+    }
+
+    // Difundir respuesta al chat grupal de la sala para que todo el equipo vea y escuche
+    let broadcastedToRoom = false;
+    if (dto.broadcastToRoom !== false) {
+      broadcastedToRoom = await this.publishAiGroupChatMessage(dto, {
+        message: responseMessage,
+        aiMode: intentMode,
+        mutatedDiagram: false,
+        targetNodes: normalizedSuggestions
+          .map((s) => s.targetClassName)
+          .filter((v): v is string => Boolean(v)),
+        providerUsed,
+        modelUsed,
+      });
+    }
+
+    if (isValidUuid(dto.diagramId) && this.yjsSyncService && annotationsAdded.length > 0) {
+      try {
+        await this.yjsSyncService.recordAuthorEvent({
+          diagramId: dto.diagramId,
+          roomCode: dto.roomCode,
+          actorType: 'ai',
+          userId: 'ai_copilot_partner',
+          userName: '✨ Copilot IA',
+          category: 'ai',
+          action:
+            intentMode === 'DISCIPLINE'
+              ? `Auditó disciplina OMT/UML (${annotationsAdded.length} notas)`
+              : intentMode === 'REVIEW'
+                ? `Revisó el diseño (${annotationsAdded.length} recomendaciones)`
+                : `Aportó ${annotationsAdded.length} idea(s) en la pizarra`,
+          detail: responseSummary || responseMessage.slice(0, 140),
+          affectedClasses: normalizedSuggestions
+            .map((s) => s.targetClassName)
+            .filter((v): v is string => Boolean(v)),
+          color: '#8B5CF6',
+        });
+      } catch (err: any) {
+        this.logger.warn(`[AiAssistant] No se pudo registrar AuthorEvent consultivo: ${err?.message || err}`);
+      }
+    }
+
+    const actionByMode: Record<Exclude<AiResolvedIntentMode, 'MUTATE'>, string> = {
+      ADVISE: 'advise',
+      REVIEW: 'review',
+      DISCIPLINE: 'discipline',
+      RECAP: 'recap',
+    };
+
+    return {
+      success: true,
+      action: actionByMode[intentMode],
+      intentMode,
+      mutatedDiagram: false,
+      message: responseMessage,
+      nodes: currentNodes,
+      connections: currentConnections,
+      changesSummary:
+        responseSummary ||
+        `Intervención grupal (${intentMode}) sin modificar el lienzo.`,
+      providerUsed,
+      modelUsed,
+      suggestions: normalizedSuggestions,
+      annotationsAdded,
+      disciplineAlerts,
+      broadcastedToRoom,
+    };
+  }
+
+  private buildDeterministicConsultativeMessage(
+    intentMode: Exclude<AiResolvedIntentMode, 'MUTATE'>,
+    requesterName: string,
+    currentNodes: UmlClassNode[],
+    currentConnections: UmlConnection[],
+    alerts: DisciplineAlertItem[],
+    resumeBundle: any,
+  ): string {
+    const classNames = currentNodes
+      .filter((n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE')
+      .map((n) => n.name);
+
+    if (intentMode === 'RECAP') {
+      if (resumeBundle) {
+        const statsText = (resumeBundle.contributorStats || [])
+          .slice(0, 4)
+          .map((c: any) => `${c.userName} (${c.totalEvents} acciones)`)
+          .join(', ');
+        const recent = (resumeBundle.sinceLastVisit?.highlights || []).slice(0, 3).join(' | ');
+        return `Hola ${requesterName} y equipo: el diagrama "${resumeBundle.diagram?.name || 'actual'}" está en la sesión #${resumeBundle.session?.sessionNumber || 1} con ${classNames.length} clases y ${currentConnections.length} relaciones. ${statsText ? `Aportes acumulados: ${statsText}.` : ''} ${recent ? `Últimos hitos: ${recent}.` : 'El lienzo no se ha modificado.'}`;
+      }
+      return `Resumen rápido para el equipo: actualmente tenemos ${classNames.length} clase(s) (${classNames.join(', ') || 'lienzo vacío'}) y ${currentConnections.length} relación(es).`;
+    }
+
+    if (intentMode === 'DISCIPLINE' || intentMode === 'REVIEW') {
+      if (alerts.length === 0) {
+        return `Revisé las ${classNames.length} clase(s) y ${currentConnections.length} relación(es) del diagrama y cumplen correctamente con las reglas OMT/UML básicas (sin atributos duplicados, M:N pendientes ni clases sin identificador).`;
+      }
+      const bullets = alerts.slice(0, 3).map((a) => `• ${a.message}`).join(' ');
+      return `${requesterName}, revisé el diagrama bajo reglas OMT/UML y encontré ${alerts.length} punto(s) para revisar en equipo (sin alterar el lienzo): ${bullets}`;
+    }
+
+    return `${requesterName}, analicé el diagrama actual (${classNames.length} clases: ${classNames.slice(0, 5).join(', ') || 'ninguna aún'}). No modifiqué nada del lienzo; si desean que agregue clases, atributos o relaciones concretas, indíquenme el cambio exacto o apliquen una sugerencia de la pizarra.`;
+  }
+
+  private async publishAiGroupChatMessage(
+    dto: {
+      diagramId: string;
+      roomCode?: string;
+      authorUserId?: string;
+      authorUserName?: string;
+    },
+    params: {
+      message: string;
+      aiMode: AiResolvedIntentMode;
+      mutatedDiagram: boolean;
+      targetNodes?: string[];
+      providerUsed?: string;
+      modelUsed?: string;
+    },
+  ): Promise<boolean> {
+    try {
+      if (
+        isValidUuid(dto.diagramId) &&
+        typeof this.collaborationGateway?.broadcastAiGroupMessage === 'function'
+      ) {
+        await this.collaborationGateway.broadcastAiGroupMessage(dto.diagramId, dto.roomCode, {
+          message: params.message,
+          aiMode: params.aiMode,
+          requestedByUserId: dto.authorUserId,
+          requestedByUserName: dto.authorUserName,
+          targetNodes: params.targetNodes || [],
+          mutatedDiagram: params.mutatedDiagram,
+          providerUsed: params.providerUsed,
+          modelUsed: params.modelUsed,
+        });
+        return true;
+      }
+
+      if (this.collaborationGateway?.server) {
+        const target = dto.diagramId ? `diagram_${dto.diagramId}` : dto.roomCode;
+        if (target) {
+          this.collaborationGateway.server.to(target).emit('chat_message_received', {
+            userId: 'ai_copilot_partner',
+            userName: '✨ Copilot IA',
+            senderType: 'ai',
+            aiMode: params.aiMode,
+            requestedByUserName: dto.authorUserName || null,
+            targetNodes: params.targetNodes || [],
+            mutatedDiagram: params.mutatedDiagram,
+            providerUsed: params.providerUsed || null,
+            modelUsed: params.modelUsed || null,
+            message: params.message,
+            timestamp: new Date().toISOString(),
+          });
+          return true;
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`No se pudo publicar mensaje grupal de IA: ${e}`);
+    }
+    return false;
+  }
+
   async processVisionDiagram(dto: AiVisionPromptDto): Promise<AiResponseDto> {
     const currentNodes: UmlClassNode[] = dto.currentNodes || [];
     const currentConnections: UmlConnection[] = dto.currentConnections || [];
 
-    // Limpiar Base64 y extraer el mimeType si venía como data URI
     let mimeType = dto.mimeType || 'image/png';
     const mimeMatch = (dto.imageBase64 || '').match(/^data:([^;]+);base64,/);
     if (mimeMatch && mimeMatch[1]) {
@@ -548,6 +1278,11 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 5. Asigna posiciones (x, y) ordenadas y separadas en una cuadrícula clara.
 `;
 
+    const configuredProvider = (this.configService.get<string>('AI_PROVIDER') || 'vertex').toLowerCase() as 'ollama' | 'vertex';
+    const requestedProvider = dto.provider || configuredProvider;
+    let providerUsed: 'ollama' | 'vertex' = 'vertex';
+    let modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview';
+
     try {
       const userPromptInstruction = dto.prompt
         ? `Instrucción o requerimiento específico del usuario a aplicar sobre el diagrama: "${dto.prompt}". Aplica esta indicación preservando la totalidad de las clases y conexiones del diagrama visual.`
@@ -557,33 +1292,102 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 1. DEBES digitalizar y extraer absolutamente el 100% de las clases/tablas visibles en la imagen sin omitir ninguna entidad (revisa metódicamente de izquierda a derecha y de arriba a abajo toda la imagen).
 2. ${userPromptInstruction}`;
 
-      const contents = [
-        {
-          inlineData: {
-            mimeType,
-            data: cleanBase64,
-          },
-        },
-        {
-          text: promptText,
-        },
-      ];
-
       let responseText = '';
-      try {
-        responseText = await this.vertexAiService.generateContent({
-          systemInstruction: visionSystemInstruction,
-          contents,
-          responseMimeType: 'application/json',
-        });
-      } catch (vertexErr: any) {
-        this.logger.error(`[Vision] Error en digitalización con Gemini: ${vertexErr?.message || vertexErr}`);
-        throw new Error(`No se pudo digitalizar la imagen con Gemini: ${vertexErr?.message || vertexErr}. Por favor intenta nuevamente.`);
+
+      // Intento Local-First con Ollama Vision (ej. qwen2.5vl:7b en Colab/Local) si se solicitó Ollama
+      if (requestedProvider === 'ollama') {
+        try {
+          const isAvail = await this.ollamaAiService.isAvailable();
+          if (isAvail) {
+            const installedModels = await this.ollamaAiService.listModels();
+            const isExplicitVisionModel =
+              dto.model && /(?:vl|vision|llava|minicpm|moondream)/i.test(dto.model);
+            const preferredVision = this.ollamaAiService.getVisionModelName();
+            const matchedInstalledVision = installedModels.find((m) => m === preferredVision)
+              || installedModels.find((m) => /(?:vl|vision|llava|minicpm|moondream)/i.test(m));
+            const visionModel = isExplicitVisionModel
+              ? dto.model!
+              : matchedInstalledVision || preferredVision;
+
+            this.logger.log(`[Vision] Intentando digitalización local/Colab con Ollama (${visionModel})...`);
+            responseText = await this.ollamaAiService.generateContent({
+              model: visionModel,
+              systemInstruction: visionSystemInstruction,
+              contents: promptText,
+              images: [cleanBase64],
+              formatJson: true,
+              temperature: 0.1,
+              numCtx: 6144,
+            });
+            providerUsed = 'ollama';
+            modelUsed = visionModel;
+          }
+        } catch (ollamaVisionErr: any) {
+          this.logger.warn(
+            `[Vision] Ollama visión no pudo procesar la imagen (${ollamaVisionErr?.message || ollamaVisionErr}). Fallback a Gemini Vision...`,
+          );
+          responseText = '';
+        }
+      }
+
+      if (!responseText) {
+        const contents = [
+          {
+            inlineData: {
+              mimeType,
+              data: cleanBase64,
+            },
+          },
+          {
+            text: promptText,
+          },
+        ];
+
+        try {
+          responseText = await this.vertexAiService.generateContent({
+            systemInstruction: visionSystemInstruction,
+            contents,
+            responseMimeType: 'application/json',
+          });
+          providerUsed = 'vertex';
+          modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview';
+        } catch (vertexErr: any) {
+          this.logger.error(`[Vision] Error en digitalización con Gemini: ${vertexErr?.message || vertexErr}`);
+          throw new Error(`No se pudo digitalizar la imagen con Gemini: ${vertexErr?.message || vertexErr}. Por favor intenta nuevamente.`);
+        }
       }
 
       const parsed = this.cleanAndParseJson(responseText);
 
-      // Resolución automática de relaciones muchos a muchos hacia tablas intermedias
+      // Si el usuario pidió explícitamente solo analizar la imagen sin alterar el lienzo (mode === 'advise')
+      if (dto.mode === 'advise') {
+        const detectedNames = (parsed.nodes || []).filter((n: any) => !n.isAnchor).map((n: any) => n.name);
+        const adviceMsg =
+          parsed.message ||
+          `Analicé la imagen adjunta y detecté ${detectedNames.length} entidad(es): ${detectedNames.join(', ')}. No modifiqué el lienzo actual.`;
+        await this.publishAiGroupChatMessage(dto, {
+          message: adviceMsg,
+          aiMode: 'ADVISE',
+          mutatedDiagram: false,
+          targetNodes: detectedNames,
+          providerUsed,
+          modelUsed,
+        });
+        return {
+          success: true,
+          action: 'advise',
+          intentMode: 'ADVISE',
+          mutatedDiagram: false,
+          message: adviceMsg,
+          nodes: currentNodes,
+          connections: currentConnections,
+          changesSummary: `Análisis visual de imagen sin mutar lienzo (${detectedNames.length} entidades detectadas).`,
+          providerUsed,
+          modelUsed,
+          broadcastedToRoom: dto.broadcastToRoom !== false,
+        };
+      }
+
       const resolved = this.resolveManyToManyRelationships(parsed.nodes || [], parsed.connections || []);
 
       let finalNodes = resolved.nodes;
@@ -604,36 +1408,49 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
       const updatedNodes = this.sanitizeNodes(finalNodes);
       const updatedConnections = this.sanitizeConnections(finalConnections, updatedNodes);
+      const extractedNames = updatedNodes
+        .filter((n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE')
+        .map((n) => n.name)
+        .slice(0, 8);
+      const disciplineAlerts = this.analyzeOmtDiscipline(updatedNodes, updatedConnections);
 
-      this.broadcastAiMutation(
-        dto.diagramId,
-        dto.roomCode,
+      await this.broadcastAiMutation(
+        dto,
         updatedNodes,
         updatedConnections,
-        `Digitalización visual de diagrama completada (${updatedNodes.length} clases detectadas)`,
+        parsed.message || `Digitalización visual de diagrama completada (${updatedNodes.length} clases detectadas)`,
+        extractedNames,
+        providerUsed,
+        modelUsed,
       );
 
       return {
         success: true,
         action: 'vision_extract',
+        intentMode: 'MUTATE',
+        mutatedDiagram: true,
         message: parsed.message || `Se digitalizaron ${updatedNodes.length} clases y ${updatedConnections.length} relaciones desde la imagen.`,
         nodes: updatedNodes,
         connections: updatedConnections,
         changesSummary: `Digitalización visual completada: ${updatedNodes.length} clases y ${updatedConnections.length} relaciones extraídas.`,
-        providerUsed: 'vertex',
-        modelUsed: this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview',
+        providerUsed,
+        modelUsed,
+        disciplineAlerts,
+        broadcastedToRoom: dto.broadcastToRoom !== false,
       };
     } catch (err: any) {
       this.logger.error(`Error procesando visión de diagrama IA: ${err.message || err}`);
       return {
         success: false,
         action: 'error',
-        message: `No se pudo digitalizar la imagen con Vertex AI Vision: ${err.message || 'Error de procesamiento'}. Por favor intenta con una imagen más nítida o en formato PNG/JPEG.`,
+        intentMode: 'MUTATE',
+        mutatedDiagram: false,
+        message: `No se pudo digitalizar la imagen: ${err.message || 'Error de procesamiento'}. Por favor intenta con una imagen más nítida o en formato PNG/JPEG.`,
         nodes: currentNodes,
         connections: currentConnections,
-        changesSummary: 'Fallo al procesar imagen con Gemini Vision.',
-        providerUsed: 'vertex',
-        modelUsed: this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview',
+        changesSummary: 'Fallo al procesar imagen con Visión IA.',
+        providerUsed,
+        modelUsed,
       };
     }
   }
@@ -651,7 +1468,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
     const asksForRelations = /(?:relaci[oó]n|conecta|asocia|cardinalidad|multiplicidad|muchos|uno\s+a|pertenece|tiene|vincula|\*|\-\-)/i.test(prompt);
 
-    // Detectar si el usuario solicitó específicamente agregar una tabla concreta sin relaciones
     const singleTableAddMatch = prompt.match(
       /(?:crea(?:r)?|agrega(?:r)?|a[ñn]ade(?:r)?|inserta(?:r)?)\s+(?:una\s+|la\s+)?(?:nueva\s+)?(?:tabla|clase|entidad)\s*(?:(?:llamada|denominada|de|para)\s+)?([a-zA-Z0-9_]+)/i,
     );
@@ -660,17 +1476,13 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
     const mergedNodesMap = new Map<string, UmlClassNode>();
 
     if (isFullGeneration && aiNodes.length > 0) {
-      // Reemplazo completo de esquema inicial
       for (const node of aiNodes) {
         const id = node.id || `node_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         mergedNodesMap.set(id, { ...node, id });
       }
     } else if (isDeletePrompt && aiNodes.length === 0) {
-      // Si fue eliminación y el resultado quedó vacío
       return { nodes: [], connections: [] };
     } else if (isDeletePrompt && aiNodes.length > 0) {
-      // Si el prompt fue de eliminación de tablas y Vertex AI devolvió las tablas restantes:
-      // Conservamos las posiciones y datos de las tablas existentes que Vertex AI mantuvo
       for (const aiNode of aiNodes) {
         if (!aiNode || !aiNode.name) continue;
         const existingNode = this.findNodeFuzzy(currentNodes, aiNode.name);
@@ -708,13 +1520,12 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         }
       }
     } else {
-      // Fusión normal (adición / modificación / eliminación de atributos): preservar todos los nodos actuales
       for (const node of currentNodes) {
         mergedNodesMap.set(node.id, { ...node });
       }
 
       let maxPosX = currentNodes.reduce((max, n) => Math.max(max, n.position.x + (n.width || 220)), 50);
-      let maxPosY = 80;
+      const maxPosY = 80;
 
       for (const aiNode of aiNodes) {
         if (!aiNode || !aiNode.name) continue;
@@ -741,14 +1552,10 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
               : existingNode.methods,
           });
         } else {
-          // Si el usuario solo pidió agregar UNA tabla específica y NO pidió relaciones:
           if (requestedTableName && !asksForRelations) {
-            // Contar cuántos nodos nuevos ha generado el LLM en total que no existían
             const newAiNodes = aiNodes.filter(
               (n) => !currentNodes.some((cn) => cn.id === n.id || this.normalizeForFuzzy(cn.name) === this.normalizeForFuzzy(n.name)),
             );
-            // Si el LLM generó una sola tabla nueva, ¡es la tabla solicitada por el usuario!
-            // Solo filtramos si generó múltiples tablas para evitar stubs/tablas intermedias alucinadas (ej: Usuario_Products)
             if (newAiNodes.length > 1) {
               const aiNodeNorm = this.normalizeForFuzzy(aiNode.name);
               const requestedNorm = requestedTableName;
@@ -789,7 +1596,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       }
     }
 
-    // Salvaguarda determinista: Si el usuario solicitó explícitamente eliminar todos los atributos de una tabla específica
     const deleteAllAttrsMatch = prompt.match(
       /(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|vac[ií]a(?:r)?)\s+(?:todos\s+los\s+|los\s+)?atributos\s+(?:de\s+(?:la\s+)?(?:tabla|clase|entidad)\s*|de\s+)?([A-Za-z0-9_<>«»]+)/i,
     );
@@ -807,7 +1613,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       }
     }
 
-    // Salvaguarda determinista: Si el usuario solicitó explícitamente eliminar todos los métodos de una tabla específica
     const deleteAllMethodsMatch = prompt.match(
       /(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|vac[ií]a(?:r)?)\s+(?:todos\s+los\s+|los\s+)?m[eé]todos\s+(?:de\s+(?:la\s+)?(?:tabla|clase|entidad)\s*|de\s+)?([A-Za-z0-9_<>«»]+)/i,
     );
@@ -825,9 +1630,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       }
     }
 
-    // Limpieza en cascada para clases de asociación / tablas intermedias:
-    // Si una tabla participante en una relación muchos a muchos fue eliminada de mergedNodesMap,
-    // se debe eliminar en cascada la tabla asociativa intermedia (AB), su nodo ancla y sus conexiones.
     const remainingNodeIds = new Set(mergedNodesMap.keys());
     const nodesToRemoveInCascade = new Set<string>();
 
@@ -850,14 +1652,16 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       }
     }
 
-    // Limpiar nodos ancla huérfanos
     for (const [nodeId, node] of mergedNodesMap.entries()) {
       if (node.isAnchor) {
         const hasActiveConn = currentConnections.some((c) => {
           const sId = c.sourceNodeId || c.sourceId.replace(/_(top|bottom|left|right)$/, '');
           const tId = c.targetNodeId || c.targetId.replace(/_(top|bottom|left|right)$/, '');
-          return (c.assocAnchorNodeId === nodeId || sId === nodeId || tId === nodeId) &&
-                 remainingNodeIds.has(sId) && remainingNodeIds.has(tId);
+          return (
+            (c.assocAnchorNodeId === nodeId || sId === nodeId || tId === nodeId) &&
+            remainingNodeIds.has(sId) &&
+            remainingNodeIds.has(tId)
+          );
         });
         if (!hasActiveConn) {
           nodesToRemoveInCascade.add(nodeId);
@@ -871,9 +1675,8 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
     const mergedNodes = Array.from(mergedNodesMap.values());
 
-    // Fusión de conexiones
     const mergedConnsMap = new Map<string, UmlConnection>();
-    const mergedNodeIds = new Set(mergedNodes.map(n => n.id));
+    const mergedNodeIds = new Set(mergedNodes.map((n) => n.id));
 
     if (!isFullGeneration) {
       for (const conn of currentConnections) {
@@ -888,7 +1691,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
     const resolveNode = (idOrName?: string): UmlClassNode | undefined => {
       if (!idOrName) return undefined;
       const clean = idOrName.replace(/_(top|bottom|left|right)$/, '').trim();
-      return mergedNodes.find(n => n.id === clean) || this.findNodeFuzzy(mergedNodes, clean);
+      return mergedNodes.find((n) => n.id === clean) || this.findNodeFuzzy(mergedNodes, clean);
     };
 
     for (const aiConn of aiConnections) {
@@ -896,8 +1699,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       const targetNode = resolveNode(aiConn.targetNodeId || aiConn.targetId);
 
       if (sourceNode && targetNode && sourceNode.id !== targetNode.id) {
-        // Salvaguarda: Si el usuario NO solicitó relaciones y solo pidió agregar una tabla,
-        // no aceptar conexiones nuevas que vinculen tablas recién agregadas con las existentes
         if (requestedTableName && !asksForRelations) {
           const isSourceExisting = currentNodes.some((n) => n.id === sourceNode.id);
           const isTargetExisting = currentNodes.some((n) => n.id === targetNode.id);
@@ -910,7 +1711,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         }
 
         const connId = aiConn.id && !aiConn.id.startsWith('conn_xxx') ? aiConn.id : `conn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        
+
         mergedConnsMap.set(connId, {
           id: connId,
           sourceNodeId: sourceNode.id,
@@ -932,40 +1733,154 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
     };
   }
 
-  private broadcastAiMutation(
-    diagramId: string,
-    roomCode: string | undefined,
+  private async broadcastAiMutation(
+    dto: {
+      diagramId: string;
+      roomCode?: string;
+      authorUserId?: string;
+      authorUserName?: string;
+      broadcastToRoom?: boolean;
+      persistChanges?: boolean;
+    },
     nodes: UmlClassNode[],
     connections: UmlConnection[],
     summary: string,
-  ): void {
+    affectedClasses: string[] = [],
+    providerUsed?: string,
+    modelUsed?: string,
+  ): Promise<void> {
     try {
-      if (!this.collaborationGateway?.server) return;
+      const { diagramId, roomCode } = dto;
+      if (
+        dto.persistChanges === true &&
+        isValidUuid(diagramId) &&
+        this.diagramService &&
+        typeof this.diagramService.saveAst === 'function'
+      ) {
+        await this.diagramService.saveAst(
+          diagramId,
+          {
+            nodes: nodes.map((n, nIdx) => ({
+              id: n.id,
+              name: n.name,
+              elementType: (n.elementType as any) || (n.assocMainConnId ? 'ASSOCIATION_CLASS' : 'CLASS'),
+              stereotype: n.stereotype ?? null,
+              noteContent: n.noteContent ?? null,
+              positionX: n.position?.x ?? 100 + (nIdx % 3) * 240,
+              positionY: n.position?.y ?? 80 + Math.floor(nIdx / 3) * 200,
+              width: n.isAnchor ? 0 : (n.width ?? 220),
+              height: n.height ?? null,
+              isAnchor: Boolean(n.isAnchor),
+              assocMainConnId: n.assocMainConnId ?? null,
+              attributes: (n.attributes || []).map((a, idx) => ({
+                name: a.name,
+                type: a.type,
+                visibility: (a.visibility as any) || '-',
+                isPrimaryKey: Boolean(a.isPrimaryKey),
+                isNullable: a.isNullable ?? !a.isPrimaryKey,
+                orderIndex: idx,
+              })),
+              methods: (n.methods || []).map((m, idx) => ({
+                name: m.name,
+                parameters: m.parameters || '',
+                returnType: m.returnType || 'void',
+                visibility: (m.visibility as any) || '+',
+                orderIndex: idx,
+              })),
+            })),
+            connections: connections.map((c) => ({
+              id: c.id,
+              sourceNodeId: c.sourceNodeId || c.sourceId.replace(/_(top|bottom|left|right)$/, ''),
+              targetNodeId: c.targetNodeId || c.targetId.replace(/_(top|bottom|left|right)$/, ''),
+              sourceId: c.sourceId,
+              targetId: c.targetId,
+              type: c.type,
+              lineStyle: c.lineStyle || 'segment',
+              name: c.name ?? null,
+              sourceMultiplicity: c.sourceMultiplicity || '',
+              targetMultiplicity: c.targetMultiplicity || '',
+              assocAnchorNodeId: c.assocAnchorNodeId ?? null,
+            })),
+          },
+          isValidUuid(dto.authorUserId || '') ? dto.authorUserId : undefined,
+          {
+            actorType: 'ai',
+            actorName: dto.authorUserName ? `✨ Copilot IA (vía ${dto.authorUserName})` : '✨ Copilot IA',
+            recordEvent: false,
+          },
+        );
+      }
 
-      const payload = {
+      const syncPayload = {
         nodes,
         connections,
         userId: 'ai_copilot_vertex',
-        userName: '✨ Copilot IA (Vertex AI)',
+        userName: '✨ Copilot IA',
         action: 'ai_mutation',
       };
 
-      const chatPayload = {
-        userId: 'ai_copilot_vertex',
-        userName: '✨ Copilot IA (Vertex AI)',
-        message: `🤖 ${summary}`,
-        timestamp: new Date().toISOString(),
-      };
+      if (this.collaborationGateway?.server) {
+        if (diagramId) {
+          this.collaborationGateway.server.to(`diagram_${diagramId}`).emit('diagram_synced', syncPayload);
+        } else if (roomCode) {
+          this.collaborationGateway.server.to(roomCode).emit('diagram_synced', syncPayload);
+        }
+      }
 
-      // Emitir solo a una sala para no duplicar eventos
-      if (diagramId) {
-        this.collaborationGateway.server.to(`diagram_${diagramId}`).emit('diagram_synced', payload);
-        this.collaborationGateway.server.to(`diagram_${diagramId}`).emit('chat_message_received', chatPayload);
-      } else if (roomCode) {
-        this.collaborationGateway.server.to(roomCode).emit('diagram_synced', payload);
-        this.collaborationGateway.server.to(roomCode).emit('chat_message_received', chatPayload);
+      if (dto.broadcastToRoom !== false) {
+        if (
+          isValidUuid(diagramId) &&
+          typeof this.collaborationGateway?.broadcastAiGroupMessage === 'function'
+        ) {
+          await this.collaborationGateway.broadcastAiGroupMessage(diagramId, roomCode, {
+            message: summary,
+            aiMode: 'MUTATE',
+            requestedByUserId: dto.authorUserId,
+            requestedByUserName: dto.authorUserName,
+            targetNodes: affectedClasses,
+            mutatedDiagram: true,
+            providerUsed,
+            modelUsed,
+          });
+        } else if (this.collaborationGateway?.server) {
+          const chatPayload = {
+            userId: 'ai_copilot_vertex',
+            userName: '✨ Copilot IA (Vertex AI)',
+            senderType: 'ai',
+            aiMode: 'MUTATE',
+            mutatedDiagram: true,
+            requestedByUserName: dto.authorUserName || null,
+            message: `🤖 ${summary}`,
+            timestamp: new Date().toISOString(),
+          };
+          if (diagramId) {
+            this.collaborationGateway.server.to(`diagram_${diagramId}`).emit('chat_message_received', chatPayload);
+          } else if (roomCode) {
+            this.collaborationGateway.server.to(roomCode).emit('chat_message_received', chatPayload);
+          }
+        }
+      }
+
+      if (isValidUuid(diagramId) && this.yjsSyncService) {
+        await this.yjsSyncService.recordAuthorEvent({
+          diagramId,
+          roomCode,
+          actorType: 'ai',
+          userId: 'ai_copilot_partner',
+          userName: '✨ Copilot IA',
+          category: 'ai',
+          action: dto.authorUserName
+            ? `Editó el diagrama por solicitud de ${dto.authorUserName}`
+            : 'Editó el diagrama UML con Copilot IA',
+          detail: summary.slice(0, 180),
+          affectedClasses,
+          color: '#8B5CF6',
+        });
       }
     } catch (e) {
+      if (e instanceof ForbiddenException) {
+        throw e;
+      }
       this.logger.warn(`No se pudo emitir broadcast WebSocket de IA: ${e}`);
     }
   }
@@ -1027,7 +1942,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       const sStems = getStems(sourceNode.name);
       const tStems = getStems(targetNode.name);
 
-      // Buscar posibles tablas intermedias existentes para esta relación
       const candidates: { node: UmlClassNode; score: number }[] = [];
 
       for (const n of nodeMap.values()) {
@@ -1037,12 +1951,10 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
 
         let score = 0;
 
-        // 1. Vinculación directa mediante assocMainConnId
         if (n.assocMainConnId === conn.id) {
           score += 100;
         }
 
-        // 2. Conectado al ancla de la conexión vía association_class
         if (conn.assocAnchorNodeId) {
           const isLinkedToAnchor = Array.from(connMap.values()).some(
             (c) =>
@@ -1053,7 +1965,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           if (isLinkedToAnchor) score += 90;
         }
 
-        // 3. Conexión tipo association_class que apunta a este nodo
         const hasAssocClassLink = Array.from(connMap.values()).some(
           (c) =>
             c.type === 'association_class' &&
@@ -1062,7 +1973,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         );
         if (hasAssocClassLink) score += 30;
 
-        // 4. Nombre compuesto que incluye raíces de source y target
         const nClean = cleanStr(n.name);
         const hasSourceStem = sStems.some((s) => matchesStem(nClean, s));
         const hasTargetStem = tStems.some((t) => matchesStem(nClean, t));
@@ -1070,7 +1980,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           score += 70;
         }
 
-        // 5. Nombre del nodo coincide con conn.name
         if (conn.name && conn.name !== 'relacion' && !conn.name.startsWith('conn_')) {
           const connNameClean = cleanStr(conn.name);
           if (nClean === connNameClean && nClean.length >= 3) {
@@ -1078,7 +1987,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           }
         }
 
-        // 6. Conectado a ambas entidades fuente y destino
         const connectedToSource = Array.from(connMap.values()).some(
           (c) =>
             c.type !== 'association_class' &&
@@ -1095,7 +2003,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           score += 50;
         }
 
-        // 7. Atributos referencian llaves foráneas de ambas tablas
         if (n.attributes && n.attributes.length > 0) {
           const attrNames = n.attributes.map((a) => cleanStr(a.name));
           const hasSourceAttr = attrNames.some((a) => sStems.some((s) => matchesStem(a, s)));
@@ -1105,8 +2012,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           }
         }
 
-        // Un nodo solo es candidato legítimo a tabla asociativa si está explícitamente vinculado
-        // o si su nombre/estructura combina inequívocamente ambas entidades (source y target)
         const isLegitCandidate =
           n.assocMainConnId === conn.id ||
           (hasSourceStem && hasTargetStem) ||
@@ -1117,7 +2022,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         }
       }
 
-      // Ordenar: mayor score primero, luego mayor cantidad de atributos (favorecer entidad de dominio sobre stub generado)
       candidates.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
         return (b.node.attributes?.length || 0) - (a.node.attributes?.length || 0);
@@ -1126,7 +2030,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       let assocNode: UmlClassNode;
 
       if (candidates.length > 0) {
-        // Seleccionar el mejor candidato como tabla asociativa
         assocNode = candidates[0].node;
         const alreadyWired =
           assocNode.assocMainConnId === conn.id &&
@@ -1140,11 +2043,9 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         assocNode.assocMainConnId = conn.id;
         nodeMap.set(assocNode.id, assocNode);
 
-        // Si existen candidatos duplicados/redundantes (ej. un stub autogenerado además de la tabla real), podarlos
         if (candidates.length > 1) {
           for (let i = 1; i < candidates.length; i++) {
             const redundant = candidates[i].node;
-            // NUNCA podar tablas o entidades de dominio normales: solo podar stubs o duplicados autogenerados de esta misma relación
             const isRedundantStubOfThisRelation =
               redundant.assocMainConnId === conn.id ||
               redundant.id.includes('_assoc') ||
@@ -1181,7 +2082,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           }
         }
       } else {
-        // No existe tabla intermedia previa: sintetizarla
         resolvedCount++;
         const timestamp = Date.now() + resolvedCount + Math.floor(Math.random() * 1000);
         const assocNodeId = `node_${timestamp}_assoc`;
@@ -1193,7 +2093,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         const anchorPosX = Math.round((sourceNode.position.x + targetNode.position.x) / 2);
         const anchorPosY = Math.round((sourceNode.position.y + targetNode.position.y) / 2);
 
-        let assocPosX = Math.max(50, anchorPosX - 110);
+        const assocPosX = Math.max(50, anchorPosX - 110);
         let assocPosY = Math.max(50, anchorPosY + 120);
 
         const isOccupied = Array.from(nodeMap.values()).some(
@@ -1219,9 +2119,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         nodeMap.set(assocNodeId, assocNode);
       }
 
-      // Sanitizar atributos de la tabla asociativa intermedia:
-      // Debe contener ÚNICAMENTE los 2 IDs foráneos correspondientes a sourceNode y targetNode que actúan como clave primaria compuesta.
-      // NO debe tener atributo 'id' artificial, ni atributos inventados como 'quantity', 'cantidad', 'fechaRegistro', etc.
       const getEntityFk = (
         node: UmlClassNode,
         existingAttrs: { name: string; type: string }[] = [],
@@ -1238,9 +2135,9 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           return { name: existingFk.name, type: existingFk.type || 'UUID' };
         }
 
-        const pkAttr = (node.attributes || []).find((a) =>
-          /^(id|.*_id|.*id)$/i.test(a.name.trim()),
-        ) || (node.attributes || [])[0];
+        const pkAttr =
+          (node.attributes || []).find((a) => /^(id|.*_id|.*id)$/i.test(a.name.trim())) ||
+          (node.attributes || [])[0];
 
         const pkType = pkAttr?.type || 'UUID';
 
@@ -1266,14 +2163,12 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       assocNode.methods = [];
       nodeMap.set(assocNode.id, assocNode);
 
-      // Asegurar nodo ancla virtual
       let anchorNode: UmlClassNode | undefined;
       if (conn.assocAnchorNodeId && nodeMap.has(conn.assocAnchorNodeId)) {
         anchorNode = nodeMap.get(conn.assocAnchorNodeId);
       }
 
       if (!anchorNode) {
-        // Buscar si hay un ancla ya conectada con assocNode mediante association_class
         for (const c of connMap.values()) {
           if (c.type === 'association_class') {
             const maybeAnchorId =
@@ -1307,7 +2202,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         nodeMap.set(anchorId, anchorNode);
       }
 
-      // Actualizar la conexión principal con el ancla y multiplicidades
       const updatedMainConn: UmlConnection = {
         ...conn,
         sourceNodeId: sId,
@@ -1319,7 +2213,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       };
       connMap.set(conn.id, updatedMainConn);
 
-      // Asegurar conexión discontinua («link») entre el ancla y la tabla asociativa
       let linkConn = Array.from(connMap.values()).find(
         (c) =>
           c.type === 'association_class' &&
@@ -1363,9 +2256,9 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
   private cleanAndParseJson(text: string): any {
     let clean = text.trim();
     if (clean.startsWith('```json')) {
-      clean = clean.replace(/^```json\n/, '').replace(/\n```$/, '');
+      clean = clean.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
     } else if (clean.startsWith('```')) {
-      clean = clean.replace(/^```\n/, '').replace(/\n```$/, '');
+      clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
     return JSON.parse(clean);
   }
@@ -1384,14 +2277,12 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
       if (clean === 'datetime') return 'LocalDateTime';
       if (clean === 'bool') return 'Boolean';
       if (clean === 'number') return 'Double';
-      const standard = validTypes.find(t => t.toLowerCase() === clean);
+      const standard = validTypes.find((t) => t.toLowerCase() === clean);
       if (standard) return standard;
-      // Preservar nombres de Enum u otros tipos UML válidos (identificadores seguros)
       return /^[A-Za-z_][A-Za-z0-9_<>\[\]]*$/.test(trimmed) ? trimmed : 'String';
     };
 
     return nodes.map((node, index) => {
-      // Deduplicar atributos por nombre preservando visibilidad, PK y nulabilidad si vienen definidos
       const seenAttrs = new Set<string>();
       const dedupedAttributes: UmlAttributeNode[] = [];
       for (const attr of node.attributes || []) {
@@ -1410,7 +2301,6 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         }
       }
 
-      // Deduplicar métodos por nombre + parámetros preservando visibilidad si viene definida
       const seenMethods = new Set<string>();
       const dedupedMethods: UmlMethodNode[] = [];
       for (const m of node.methods || []) {
@@ -1427,11 +2317,12 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         }
       }
 
-      const safeId = (node.id && typeof node.id === 'string' && node.id.trim() !== '')
-        ? node.id.trim()
-        : `node_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`;
+      const safeId =
+        node.id && typeof node.id === 'string' && node.id.trim() !== ''
+          ? node.id.trim()
+          : `node_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`;
 
-      const posX = typeof node.position?.x === 'number' ? node.position.x : 120 + (index * 260) % 780;
+      const posX = typeof node.position?.x === 'number' ? node.position.x : 120 + ((index * 260) % 780);
       const posY = typeof node.position?.y === 'number' ? node.position.y : 80 + Math.floor((index * 260) / 780) * 220;
 
       const sanitized: UmlClassNode = {
@@ -1508,17 +2399,19 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
           assocAnchorNodeId: conn.assocAnchorNodeId || undefined,
         };
       })
-      .filter(conn => nodeMap.has(conn.sourceNodeId || '') && nodeMap.has(conn.targetNodeId || ''));
+      .filter((conn) => nodeMap.has(conn.sourceNodeId || '') && nodeMap.has(conn.targetNodeId || ''));
   }
 
   private handleFallbackPrompt(
-    dto: AiPromptDto,
+    _dto: AiPromptDto,
     currentNodes: UmlClassNode[],
     currentConnections: UmlConnection[],
   ): AiResponseDto {
     return {
       success: false,
       action: 'clarification_required',
+      intentMode: 'MUTATE',
+      mutatedDiagram: false,
       message: 'No fue posible procesar la mutación del diagrama con el motor de IA. Por favor verifica los datos ingresados.',
       nodes: currentNodes,
       connections: currentConnections,

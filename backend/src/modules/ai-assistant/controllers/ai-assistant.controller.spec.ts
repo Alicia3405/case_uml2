@@ -11,6 +11,9 @@ describe('AiAssistantController', () => {
       processTextPrompt: jest.fn(),
       processVisionDiagram: jest.fn(),
       getAvailableModels: jest.fn(),
+      getOllamaRuntimeConfig: jest.fn(),
+      updateOllamaRuntimeConfig: jest.fn(),
+      testOllamaConnection: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -89,5 +92,33 @@ describe('AiAssistantController', () => {
     const result = await controller.processVisionDiagram(dto);
     expect(result).toEqual(mockResponse);
     expect(service.processVisionDiagram).toHaveBeenCalledWith(dto);
+  });
+
+  it('GET /ollama/config, POST /ollama/config y POST /ollama/test deben delegar correctamente', async () => {
+    const mockConfig = {
+      baseUrl: 'https://colab.ngrok-free.app',
+      model: 'qwen2.5:3b',
+      visionModel: 'qwen2.5vl:7b',
+      timeoutMs: 120000,
+      isCustomRuntime: true,
+    };
+    const mockTest = {
+      ok: true,
+      baseUrl: 'https://colab.ngrok-free.app',
+      latencyMs: 42,
+      models: ['qwen2.5:3b', 'qwen2.5vl:7b'],
+      detailedModels: [],
+      defaultModel: 'qwen2.5:3b',
+      visionModel: 'qwen2.5vl:7b',
+      hasVisionModel: true,
+    };
+
+    service.getOllamaRuntimeConfig.mockReturnValue(mockConfig);
+    service.updateOllamaRuntimeConfig.mockReturnValue(mockConfig);
+    service.testOllamaConnection.mockResolvedValue(mockTest);
+
+    expect(await controller.getOllamaConfig()).toEqual(mockConfig);
+    expect(await controller.updateOllamaConfig({ baseUrl: 'https://colab.ngrok-free.app' })).toEqual(mockConfig);
+    expect(await controller.testOllamaConnection({ baseUrl: 'https://colab.ngrok-free.app' })).toEqual(mockTest);
   });
 });

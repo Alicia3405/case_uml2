@@ -66,4 +66,71 @@ describe('OllamaAiService', () => {
 
     expect(result).toBe(mockResponse);
   });
+
+  it('debe permitir actualizar el endpoint Colab/ngrok en caliente y enviar ngrok-skip-browser-warning', async () => {
+    const updated = service.setRuntimeConfig({
+      baseUrl: 'https://demo-colab.ngrok-free.app/',
+      model: 'qwen2.5-coder:7b',
+      visionModel: 'qwen2.5vl:7b',
+    });
+
+    expect(updated.baseUrl).toBe('https://demo-colab.ngrok-free.app');
+    expect(updated.model).toBe('qwen2.5-coder:7b');
+    expect(updated.visionModel).toBe('qwen2.5vl:7b');
+    expect(updated.isCustomRuntime).toBe(true);
+
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        models: [{ name: 'qwen2.5-coder:7b' }, { name: 'qwen2.5vl:7b' }],
+      }),
+    });
+    global.fetch = mockFetch as any;
+
+    const testResult = await service.testConnection();
+    expect(testResult.ok).toBe(true);
+    expect(testResult.hasVisionModel).toBe(true);
+    expect(testResult.models).toContain('qwen2.5vl:7b');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://demo-colab.ngrok-free.app/api/tags',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'ngrok-skip-browser-warning': 'true',
+        }),
+      }),
+    );
+  });
+
+  it('debe enviar imágenes Base64 limpias a Ollama Vision en /api/generate', async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ response: '{"nodes":[]}' }),
+    });
+    global.fetch = mockFetch as any;
+
+    await service.generateContent({
+      model: 'qwen2.5vl:7b',
+      contents: 'Extrae diagrama',
+      images: ['data:image/png;base64,QUJDRA=='],
+      formatJson: true,
+    });
+
+    const bodyPassed = JSON.parse((mockFetch.mock.calls[0][1] as any).body);
+    expect(bodyPassed.model).toBe('qwen2.5vl:7b');
+    expect(bodyPassed.images).toEqual(['QUJDRA==']);
+  });
+
+  it('debe restablecer URL y modelos de entorno cuando resetToEnv es true', () => {
+    service.setRuntimeConfig({
+      baseUrl: 'https://colab-temp.ngrok-free.app',
+      model: 'qwen2.5-coder:7b',
+      visionModel: 'llava:7b',
+    });
+    expect(service.getRuntimeConfig().isCustomRuntime).toBe(true);
+
+    const reset = service.setRuntimeConfig({ resetToEnv: true });
+    expect(reset.baseUrl).toBe('http://localhost:11434');
+    expect(reset.model).toBe('qwen2.5:3b');
+    expect(reset.isCustomRuntime).toBe(false);
+  });
 });

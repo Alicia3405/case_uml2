@@ -1,9 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsArray } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional, IsArray, IsBoolean, IsIn } from 'class-validator';
+
+export type AiPromptMode = 'auto' | 'mutate' | 'advise' | 'review' | 'discipline' | 'recap';
 
 export class AiPromptDto {
   @ApiProperty({
-    description: 'Instrucción o comando en lenguaje natural para el asistente UML',
+    description: 'Instrucción, pregunta o consulta en lenguaje natural para el compañero Copilot IA',
     example: 'Crea una tabla Producto con atributos id UUID, nombre String, precio Double y conéctala con Categoria con relación de asociación muchos a uno',
   })
   @IsString()
@@ -18,57 +20,105 @@ export class AiPromptDto {
   @IsNotEmpty()
   diagramId: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Código de sala de colaboración opcional',
-    required: false,
     example: 'ROOM-FAC123',
   })
   @IsOptional()
   @IsString()
   roomCode?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Lista actual de nodos del diagrama para contexto',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   currentNodes?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Lista actual de conexiones del diagrama para contexto',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   currentConnections?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Historial de actividades realizadas en la sesión para contexto ampliado',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   sessionHistory?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Proveedor de IA a utilizar (ollama o vertex)',
-    required: false,
     example: 'ollama',
   })
   @IsOptional()
   @IsString()
   provider?: 'ollama' | 'vertex';
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Modelo de IA específico a utilizar (ej: qwen2.5:3b, qwen2.5-coder:7b)',
-    required: false,
     example: 'qwen2.5-coder:7b',
   })
   @IsOptional()
   @IsString()
   model?: string;
+
+  @ApiPropertyOptional({
+    description: 'Modo explícito de participación de la IA (auto | mutate | advise | review | discipline | recap)',
+    example: 'auto',
+  })
+  @IsOptional()
+  @IsIn(['auto', 'mutate', 'advise', 'review', 'discipline', 'recap'])
+  mode?: AiPromptMode;
+
+  @ApiPropertyOptional({
+    description: 'Indica si la respuesta de la IA debe difundirse en el chat grupal de la sala',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  broadcastToRoom?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Indica si las ideas o alertas detectadas deben fijarse como anotaciones en la pizarra',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  createWhiteboardNotes?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'ID del colaborador que invoca a la IA',
+  })
+  @IsOptional()
+  @IsString()
+  authorUserId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Nombre visible del colaborador que invoca a la IA',
+  })
+  @IsOptional()
+  @IsString()
+  authorUserName?: string;
+
+  @ApiPropertyOptional({
+    description: 'IDs de nodos seleccionados actualmente en el lienzo como foco de consulta o revisión',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  selectedNodeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Si es true y la IA muta el diagrama, persiste automáticamente el AST en MongoDB además de sincronizar por WebSocket',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  persistChanges?: boolean;
 }

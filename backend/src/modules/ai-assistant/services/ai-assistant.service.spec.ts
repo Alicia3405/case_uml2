@@ -18,8 +18,14 @@ describe('AiAssistantService', () => {
     const mockOllamaAiService = {
       isAvailable: jest.fn().mockResolvedValue(false),
       listModels: jest.fn().mockResolvedValue([]),
+      listDetailedModels: jest.fn().mockResolvedValue([]),
       generateContent: jest.fn(),
       getModelName: jest.fn().mockReturnValue('qwen2.5:3b'),
+      getVisionModelName: jest.fn().mockReturnValue('qwen2.5vl:7b'),
+      getBaseUrl: jest.fn().mockReturnValue('http://localhost:11434'),
+      getRuntimeConfig: jest.fn(),
+      setRuntimeConfig: jest.fn(),
+      testConnection: jest.fn(),
     };
 
     const mockConfigService = {
@@ -848,6 +854,286 @@ describe('AiAssistantService', () => {
       expect(res.models.length).toBe(1);
       expect(res.models[0].id).toBe('gemini-3.5-flash-lite');
       expect(res.defaultProvider).toBe('vertex');
+    });
+  });
+
+  describe('2do Parcial: IA como desarrollador más, Intent Router y Disciplina OMT', () => {
+    it('classifyIntent nunca debe clasificar preguntas consultivas o teóricas como MUTATE', () => {
+      expect(service.classifyIntent('¿Qué opinas de agregar un atributo descuento a Pedido?')).toBe('ADVISE');
+      expect(service.classifyIntent('¿Deberíamos crear una clase Temporal o usar Estado?')).toBe('ADVISE');
+      expect(service.classifyIntent('No recuerdo para qué sirve composición vs agregación')).toBe('ADVISE');
+      expect(service.classifyIntent('Revisa el diagrama y dime qué atributos faltan')).toBe('REVIEW');
+      expect(service.classifyIntent('Audita las reglas OMT y normalización')).toBe('DISCIPLINE');
+      expect(service.classifyIntent('¿Qué avanzamos ayer en este proyecto?')).toBe('RECAP');
+      expect(service.classifyIntent('Agrega una tabla Pedido con id UUID y total Double')).toBe('MUTATE');
+      expect(service.classifyIntent('¿Puedes agregar una tabla Pago con id UUID y monto Double?')).toBe('MUTATE');
+      expect(service.classifyIntent('¿Qué opinas?', 'mutate')).toBe('MUTATE');
+    });
+
+    it('analyzeOmtDiscipline debe detectar clases sin PK, nombres no PascalCase y M:N sin resolver', () => {
+      const nodes = [
+        { id: 'n1', name: 'detalle pedido', position: { x: 0, y: 0 }, attributes: [{ name: 'cantidad', type: 'Integer' }], methods: [] },
+        { id: 'n2', name: 'Producto', position: { x: 200, y: 0 }, attributes: [{ name: 'id', type: 'UUID' }], methods: [] },
+        { id: 'n3', name: 'Categoria', position: { x: 400, y: 0 }, attributes: [], methods: [] },
+      ];
+      const connections = [
+        {
+          id: 'c1',
+          sourceNodeId: 'n1',
+          targetNodeId: 'n2',
+          sourceId: 'n1_right',
+          targetId: 'n2_left',
+          type: 'association',
+          sourceMultiplicity: '*',
+          targetMultiplicity: '*',
+        },
+      ];
+
+      const alerts = service.analyzeOmtDiscipline(nodes, connections);
+      const codes = alerts.map((a) => a.code);
+      expect(codes).toContain('OMT_NAMING');
+      expect(codes).toContain('OMT_MISSING_PK');
+      expect(codes).toContain('OMT_UNRESOLVED_MN');
+      expect(codes).toContain('OMT_EMPTY_CLASS');
+      expect(codes).toContain('OMT_ISOLATED_CLASS');
+    });
+
+    it('en modo ADVISE no debe mutar nodos ni conexiones y debe responder al equipo', async () => {
+      const currentNodes = [
+        { id: 'n1', name: 'Pedido', position: { x: 100, y: 100 }, attributes: [{ name: 'id', type: 'UUID' }], methods: [] },
+      ];
+
+      vertexAiService.generateContent.mockResolvedValueOnce(
+        JSON.stringify({
+          message: 'Ana, recomiendo agregar el atributo estado String a Pedido para controlar su ciclo.',
+          summary: 'Sugerencia sobre estado de Pedido',
+          suggestions: [
+            {
+              severity: 'idea',
+              targetClassName: 'Pedido',
+              title: 'Agregar estado de pedido',
+              message: 'Permite rastrear PENDIENTE, PAGADO y ENVIADO.',
+              suggestedPrompt: 'Agrega el atributo estado String a Pedido',
+            },
+          ],
+        }),
+      );
+
+      const res = await service.processTextPrompt({
+        prompt: '¿Qué opinas de cómo quedó Pedido?',
+        diagramId: 'diag-123',
+        roomCode: 'ROOM-1',
+        authorUserName: 'Ana',
+        currentNodes,
+        currentConnections: [],
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.intentMode).toBe('ADVISE');
+      expect(res.mutatedDiagram).toBe(false);
+      expect(res.nodes).toEqual(currentNodes);
+      expect(res.connections).toEqual([]);
+      expect(res.suggestions).toHaveLength(1);
+      expect(res.suggestions![0].targetNodeId).toBe('n1');
+      expect(res.suggestions![0].suggestedPrompt).toContain('estado');
+      expect(collaborationGateway.lockNodeForAi).not.toHaveBeenCalled();
+    });
+
+    it('en modo colaborativo completo debe persistir anotaciones en pizarra y emitir chat grupal', async () => {
+      const diagramId = 'd9b736b4-2b62-4217-a068-d0a5180f9702';
+      const userId = '11111111-1111-4111-8111-111111111111';
+      const mockDiagramService = {
+        findOne: jest.fn().mockResolvedValue({ id: diagramId, aiAnnotations: [] }),
+        addAiAnnotation: jest.fn().mockResolvedValue({
+          id: diagramId,
+          aiAnnotations: [{ id: 'ai_note_1', title: 'OMT_MISSING_PK: Cliente', status: 'open' }],
+        }),
+      };
+      const mockYjsSync = {
+        getRoomHistory: jest.fn().mockResolvedValue({
+          recentChatMessages: [{ senderType: 'human', userName: 'Luis', message: 'Revisemos Cliente' }],
+          recentActivityLogs: [{ sessionNumber: 2, userName: 'Ana', action: 'Creó Cliente' }],
+        }),
+        recordAuthorEvent: jest.fn().mockResolvedValue(null),
+      };
+      const mockGatewayWithCollab = {
+        server: { to: jest.fn().mockReturnThis(), emit: jest.fn() },
+        lockNodeForAi: jest.fn(),
+        unlockNodeForAi: jest.fn(),
+        broadcastAiGroupMessage: jest.fn().mockResolvedValue({ id: 'ai_msg_1' }),
+        broadcastAiAnnotationsUpdated: jest.fn(),
+      };
+
+      const moduleCollab = await Test.createTestingModule({
+        providers: [
+          AiAssistantService,
+          { provide: VertexAiService, useValue: vertexAiService },
+          { provide: OllamaAiService, useValue: (service as any).ollamaAiService },
+          { provide: CollaborationGateway, useValue: mockGatewayWithCollab },
+          { provide: ConfigService, useValue: (service as any).configService },
+          { provide: (await import('../../diagrams/services/diagram.service')).DiagramService, useValue: mockDiagramService },
+          { provide: (await import('../../projects/services/yjs-sync.service')).YjsSyncService, useValue: mockYjsSync },
+        ],
+      }).compile();
+
+      const collabService = moduleCollab.get(AiAssistantService);
+
+      vertexAiService.generateContent.mockResolvedValueOnce(
+        JSON.stringify({
+          message: 'Equipo: detecté que Cliente necesita clave primaria id.',
+          summary: 'Auditoría OMT de Cliente',
+          suggestions: [
+            {
+              severity: 'discipline',
+              targetClassName: 'Cliente',
+              title: 'Agregar PK a Cliente',
+              message: 'Toda clase entidad requiere identificador único.',
+              suggestedPrompt: 'Agrega id UUID a la tabla Cliente',
+            },
+          ],
+        }),
+      );
+
+      const res = await collabService.processTextPrompt({
+        prompt: 'Audita las reglas OMT de este diagrama',
+        diagramId,
+        roomCode: 'ROOM-TEAM',
+        authorUserId: userId,
+        authorUserName: 'Luis',
+        currentNodes: [
+          { id: 'n_cli', name: 'Cliente', position: { x: 80, y: 80 }, attributes: [{ name: 'nombre', type: 'String' }], methods: [] },
+        ],
+        currentConnections: [],
+      });
+
+      expect(res.intentMode).toBe('DISCIPLINE');
+      expect(res.mutatedDiagram).toBe(false);
+      expect(res.broadcastedToRoom).toBe(true);
+      expect(mockDiagramService.addAiAnnotation).toHaveBeenCalled();
+      expect(mockGatewayWithCollab.broadcastAiAnnotationsUpdated).toHaveBeenCalled();
+      expect(mockGatewayWithCollab.broadcastAiGroupMessage).toHaveBeenCalledWith(
+        diagramId,
+        'ROOM-TEAM',
+        expect.objectContaining({
+          aiMode: 'DISCIPLINE',
+          mutatedDiagram: false,
+          requestedByUserName: 'Luis',
+        }),
+      );
+      expect(mockYjsSync.recordAuthorEvent).toHaveBeenCalled();
+    });
+
+    it('debe soportar Ollama Vision Local-First y hacer fallback a Gemini si Ollama Vision falla', async () => {
+      const mockOllama = (service as any).ollamaAiService;
+      mockOllama.isAvailable = jest.fn().mockResolvedValue(true);
+      mockOllama.listModels = jest.fn().mockResolvedValue(['qwen2.5vl:7b']);
+      mockOllama.generateContent = jest.fn().mockResolvedValueOnce(
+        JSON.stringify({
+          message: 'Extraído con Qwen Vision',
+          nodes: [
+            { id: 'n_1', name: 'Factura', position: { x: 100, y: 100 }, attributes: [{ name: 'id', type: 'UUID' }], methods: [] },
+          ],
+          connections: [],
+        }),
+      );
+
+      const resOllama = await service.processVisionDiagram({
+        imageBase64: 'data:image/png;base64,QUJDRA==',
+        mimeType: 'image/png',
+        diagramId: 'diag-123',
+        provider: 'ollama',
+      });
+
+      expect(resOllama.success).toBe(true);
+      expect(resOllama.providerUsed).toBe('ollama');
+      expect(resOllama.modelUsed).toBe('qwen2.5vl:7b');
+      expect(resOllama.nodes[0].name).toBe('Factura');
+
+      // Ahora probamos fallback a Vertex cuando Ollama Vision lanza error
+      mockOllama.generateContent = jest.fn().mockRejectedValueOnce(new Error('model not loaded'));
+      vertexAiService.generateContent.mockResolvedValueOnce(
+        JSON.stringify({
+          message: 'Extraído con Gemini fallback',
+          nodes: [
+            { id: 'n_2', name: 'Cliente', position: { x: 120, y: 120 }, attributes: [{ name: 'id', type: 'UUID' }], methods: [] },
+          ],
+          connections: [],
+        }),
+      );
+
+      const resFallback = await service.processVisionDiagram({
+        imageBase64: 'data:image/png;base64,QUJDRA==',
+        mimeType: 'image/png',
+        diagramId: 'diag-123',
+        provider: 'ollama',
+      });
+
+      expect(resFallback.success).toBe(true);
+      expect(resFallback.providerUsed).toBe('vertex');
+      expect(resFallback.nodes[0].name).toBe('Cliente');
+    });
+
+    it('cuando persistChanges es true y muta el diagrama, debe guardar el AST en DiagramService', async () => {
+      const diagramId = 'd9b736b4-2b62-4217-a068-d0a5180f9702';
+      const userId = '11111111-1111-4111-8111-111111111111';
+      const mockDiagramService = {
+        saveAst: jest.fn().mockResolvedValue({ id: diagramId }),
+      };
+
+      const modulePersist = await Test.createTestingModule({
+        providers: [
+          AiAssistantService,
+          { provide: VertexAiService, useValue: vertexAiService },
+          { provide: OllamaAiService, useValue: (service as any).ollamaAiService },
+          { provide: CollaborationGateway, useValue: collaborationGateway },
+          { provide: ConfigService, useValue: (service as any).configService },
+          { provide: (await import('../../diagrams/services/diagram.service')).DiagramService, useValue: mockDiagramService },
+        ],
+      }).compile();
+
+      const persistService = modulePersist.get(AiAssistantService);
+
+      vertexAiService.generateContent.mockResolvedValueOnce(
+        JSON.stringify({
+          isClarificationRequired: false,
+          action: 'diagram_mutated',
+          message: 'Tabla Pago creada',
+          nodes: [
+            {
+              id: 'node_pago',
+              name: 'Pago',
+              position: { x: 140, y: 120 },
+              attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+              methods: [],
+            },
+          ],
+          connections: [],
+        }),
+      );
+
+      const res = await persistService.processTextPrompt({
+        prompt: 'Crea la tabla Pago con id UUID',
+        diagramId,
+        roomCode: 'ROOM-PERSIST',
+        authorUserId: userId,
+        authorUserName: 'Ana',
+        persistChanges: true,
+        currentNodes: [],
+        currentConnections: [],
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.mutatedDiagram).toBe(true);
+      expect(mockDiagramService.saveAst).toHaveBeenCalledWith(
+        diagramId,
+        expect.objectContaining({
+          nodes: expect.arrayContaining([
+            expect.objectContaining({ name: 'Pago' }),
+          ]),
+        }),
+        userId,
+        expect.objectContaining({ actorType: 'ai', recordEvent: false }),
+      );
     });
   });
 });

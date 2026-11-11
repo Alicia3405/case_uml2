@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsArray } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional, IsArray, IsBoolean, IsIn } from 'class-validator';
 
 export class AiVisionPromptDto {
   @ApiProperty({
@@ -19,9 +19,8 @@ export class AiVisionPromptDto {
   @IsNotEmpty()
   mimeType: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Instrucción adicional opcional para guiar la extracción del diagrama',
-    required: false,
     example: 'Digitaliza todas las clases y relaciones de la foto del pizarrón',
   })
   @IsOptional()
@@ -36,56 +35,88 @@ export class AiVisionPromptDto {
   @IsNotEmpty()
   diagramId: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Código de sala de colaboración opcional',
-    required: false,
     example: 'ROOM-FAC123',
   })
   @IsOptional()
   @IsString()
   roomCode?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Lista actual de nodos del diagrama para fusión/actualización',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   currentNodes?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Lista actual de conexiones del diagrama para fusión/actualización',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   currentConnections?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Historial de actividades realizadas en la sesión para contexto ampliado',
     type: [Object],
-    required: false,
   })
   @IsOptional()
   @IsArray()
   sessionHistory?: any[];
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Proveedor de IA a utilizar',
-    required: false,
     example: 'vertex',
   })
   @IsOptional()
   @IsString()
   provider?: 'ollama' | 'vertex';
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Modelo de IA específico',
-    required: false,
   })
   @IsOptional()
   @IsString()
   model?: string;
+
+  @ApiPropertyOptional({
+    description: 'Modo explícito al analizar imagen (auto | mutate | advise)',
+    example: 'auto',
+  })
+  @IsOptional()
+  @IsIn(['auto', 'mutate', 'advise'])
+  mode?: 'auto' | 'mutate' | 'advise';
+
+  @ApiPropertyOptional({
+    description: 'Indica si el resultado debe anunciarse en el chat grupal de la sala',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  broadcastToRoom?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'ID del colaborador que sube la imagen',
+  })
+  @IsOptional()
+  @IsString()
+  authorUserId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Nombre del colaborador que sube la imagen',
+  })
+  @IsOptional()
+  @IsString()
+  authorUserName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Si es true y la IA digitaliza/muta el diagrama, persiste el AST en MongoDB',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  persistChanges?: boolean;
 }
