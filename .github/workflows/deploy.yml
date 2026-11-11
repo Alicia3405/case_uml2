@@ -75,6 +75,25 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
+            # Liberar caché Docker, imágenes huérfanas y logs antiguos para evitar ENOSPC (sin tocar volúmenes)
+            echo "🧹 [AWS EC2] Espacio en disco antes de limpiar:"
+            df -h /
+            sudo docker container prune -f || true
+            sudo docker builder prune -af || true
+            sudo docker image prune -af || true
+            sudo apt-get clean || true
+            sudo journalctl --vacuum-time=2d || true
+            sudo rm -rf /tmp/npm-* /home/ubuntu/.npm /root/.npm || true
+            AVAIL_KB=$( (df -Pk /var/lib/docker 2>/dev/null || df -Pk /) | awk 'END {print $4}' )
+            if [ "${AVAIL_KB:-0}" -lt 2097152 ]; then
+              echo "⚠️ Espacio libre menor a 2 GB (${AVAIL_KB} KB); liberando imágenes anteriores de web/backend..."
+              sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 stop web backend || true
+              sudo docker compose -f "$HOME/case_uml2/infra/docker-compose.yml" -p case_uml2 rm -f web backend || true
+              sudo docker image prune -af || true
+            fi
+            echo "🧹 [AWS EC2] Espacio en disco tras limpiar:"
+            df -h /
+
             # Desplegar servicios con Docker Compose en el servidor (proyecto case_uml2)
             if [ -d "infra" ]; then
               cd infra
@@ -84,9 +103,20 @@ jobs:
                 export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
               fi
 
-              sudo -E docker compose -p case_uml2 up -d --build --remove-orphans
+              echo "🔨 [1/2] Construyendo frontend web..."
+              sudo -E docker compose -p case_uml2 build web
+              sudo docker builder prune -af || true
+
+              echo "🔨 [2/2] Construyendo backend API..."
+              sudo -E docker compose -p case_uml2 build backend
+              sudo docker builder prune -af || true
+
+              echo "🚀 Levantando servicios actualizados..."
+              sudo -E docker compose -p case_uml2 up -d --remove-orphans
               sudo -E docker compose -p case_uml2 restart nginx || true
+              sudo docker image prune -f || true
               sudo -E docker compose -p case_uml2 ps
+              df -h /
             fi
 
             echo "✅ [AWS EC2] Despliegue en producción completado con éxito!"

@@ -8,10 +8,13 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci || npm install --legacy-peer-deps
+RUN (npm ci --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund) && \
+    npm cache clean --force && \
+    rm -rf /root/.npm /tmp/*
 
 COPY . .
-RUN npm run build -- --configuration=production
+RUN npm run build -- --configuration=production && \
+    rm -rf /app/.angular /tmp/*
 
 FROM nginx:alpine AS runner
 
