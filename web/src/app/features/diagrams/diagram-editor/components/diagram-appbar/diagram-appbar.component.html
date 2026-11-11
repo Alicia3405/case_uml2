@@ -38,13 +38,14 @@
 
           <div class="h-3 w-px bg-[#356AA3] dark:bg-[#283256]"></div>
 
-          <!-- Avatares con colores diferenciados -->
+          <!-- Avatares con colores diferenciados e indicador de Anfitrión -->
           <div class="flex items-center -space-x-1.5">
             @for (collab of collaborationService.collaborators(); track collab.userId) {
               <div
-                class="w-5.5 h-5.5 rounded-full border-2 border-[#1B4E8C] dark:border-[#14182E] text-white font-bold text-[9.5px] flex items-center justify-center shadow-md select-none transition-transform hover:scale-125 cursor-default"
+                class="relative w-5.5 h-5.5 rounded-full border-2 text-white font-bold text-[9.5px] flex items-center justify-center shadow-md select-none transition-transform hover:scale-125 cursor-default"
+                [ngClass]="collaborationService.sessionMeta()?.hostUserId === collab.userId ? 'border-amber-400 ring-1 ring-amber-400/70' : 'border-[#1B4E8C] dark:border-[#14182E]'"
                 [style.backgroundColor]="collab.color"
-                [title]="collab.userName">
+                [title]="collab.userName + (collaborationService.sessionMeta()?.hostUserId === collab.userId ? ' (Anfitrión)' : '')">
                 {{ collab.userName.charAt(0).toUpperCase() }}
               </div>
             }
@@ -123,6 +124,36 @@
             </span>
           }
         </button>
+
+        @if (diagramId()) {
+          <button
+            (click)="openResumeModal.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+            [title]="'appbar.resumeTooltip' | translate"
+            class="bg-[#163D6C] hover:bg-amber-700/80 dark:bg-[#101426] dark:hover:bg-amber-900/50 text-amber-200 border border-[#3972AF] dark:border-[#283256] text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+            <ng-icon name="heroClock" class="text-xs text-amber-300 shrink-0"></ng-icon>
+            <span class="hidden xl:inline">{{ 'appbar.resumeBtn' | translate }}</span>
+            @if (collaborationService.sessionMeta()?.sessionNumber; as sNum) {
+              <span class="px-1 rounded bg-amber-500/20 text-amber-200 text-[9px] font-bold">
+                #{{ sNum }}
+              </span>
+            }
+          </button>
+
+          <button
+            (click)="toggleNotifications.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+            [title]="'appbar.notificationsTooltip' | translate"
+            [ngClass]="isNotificationsOpen()
+              ? 'bg-rose-700 text-white border-rose-400'
+              : 'bg-[#163D6C] hover:bg-rose-700/70 dark:bg-[#101426] dark:hover:bg-rose-900/40 text-sky-100 border-[#3972AF] dark:border-[#283256]'"
+            class="relative border text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+            <ng-icon name="heroBell" class="text-xs text-amber-300 shrink-0"></ng-icon>
+            @if (unreadNotificationCount() > 0) {
+              <span class="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[9px] font-bold leading-tight animate-pulse">
+                {{ unreadNotificationCount() }}
+              </span>
+            }
+          </button>
+        }
       </div>
 
       <!-- Botón Guardar en Base de Datos (Oculto o Deshabilitado para VIEWER) -->

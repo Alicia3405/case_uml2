@@ -1,5 +1,6 @@
 import {
   Component,
+  computed,
   inject,
   signal,
   input,
@@ -29,12 +30,27 @@ import {
   heroChevronDown,
   heroChevronUp,
   heroDocumentMagnifyingGlass,
+  heroCog6Tooth,
+  heroLightBulb,
+  heroExclamationTriangle,
+  heroBolt,
+  heroShieldCheck,
+  heroCheck,
 } from '@ng-icons/heroicons/outline';
 import { AuthService } from '../../../../../core/services/auth.service';
-import { AiAssistantService, AiResponse, AiModelOption } from '../../../../../core/services/ai-assistant.service';
+import {
+  AiAssistantService,
+  AiResponse,
+  AiModelOption,
+  AiPromptMode,
+  AiResolvedIntentMode,
+  AiSuggestionItem,
+  DisciplineAlertItem,
+} from '../../../../../core/services/ai-assistant.service';
 import { LocalOcrVisionService } from '../../../../../core/services/local-ocr-vision.service';
 import { VoiceCommandService } from '../../../../../core/services/voice-command.service';
 import {
+  AiAnnotationItem,
   UmlClassNode,
   UmlConnection,
 } from '../../../../../core/models/diagram.model';
@@ -48,6 +64,12 @@ export interface AiChatMessage {
   changesSummary?: string;
   providerUsed?: 'ollama' | 'vertex' | 'local-ocr';
   modelUsed?: string;
+  intentMode?: AiResolvedIntentMode;
+  mutatedDiagram?: boolean;
+  suggestions?: AiSuggestionItem[];
+  disciplineAlerts?: DisciplineAlertItem[];
+  annotationsCount?: number;
+  broadcastedToRoom?: boolean;
   timestamp: Date;
   status?: 'success' | 'clarification' | 'error' | 'pending';
 }
@@ -76,6 +98,12 @@ import { TranslatePipe } from '../../../../../core/i18n';
       heroChevronDown,
       heroChevronUp,
       heroDocumentMagnifyingGlass,
+      heroCog6Tooth,
+      heroLightBulb,
+      heroExclamationTriangle,
+      heroBolt,
+      heroShieldCheck,
+      heroCheck,
     }),
   ],
   templateUrl: './ai-assistant-panel.component.html',
@@ -97,6 +125,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
   readonly roomCode = input<string | null>(null);
   readonly currentNodes = input<UmlClassNode[]>([]);
   readonly currentConnections = input<UmlConnection[]>([]);
+  readonly selectedNodeIds = input<string[]>([]);
 
   // Outputs
   readonly closePanel = output<void>();
@@ -106,6 +135,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     summary: string;
     rawResponse?: any;
   }>();
+  readonly annotationsCreated = output<AiAnnotationItem[]>();
 
   // Modelos de IA disponibles y seleccionados por el usuario
   readonly availableModels = signal<AiModelOption[]>([]);
@@ -114,6 +144,31 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
   readonly isOllamaAvailable = signal<boolean>(false);
   readonly isLoadingModels = signal<boolean>(false);
   readonly isModelDropdownOpen = signal<boolean>(false);
+  readonly serverOllamaVisionModel = signal<string>('qwen2.5vl:7b');
+
+  // Modo de interacción Copilot (2do Examen Parcial)
+  readonly promptMode = signal<AiPromptMode>('auto');
+  readonly broadcastToRoom = signal<boolean>(true);
+  readonly createWhiteboardNotes = signal<boolean>(true);
+
+  readonly modeOptions: Array<{ id: AiPromptMode; label: string; emoji: string; hint: string }> = [
+    { id: 'auto', label: 'Auto', emoji: '🤖', hint: 'Detecta automáticamente si consultas o editas' },
+    { id: 'advise', label: 'Opinar', emoji: '💡', hint: 'Consejos, atributos y teoría OMT sin tocar el lienzo' },
+    { id: 'review', label: 'Revisar', emoji: '🔍', hint: 'Evalúa clases, relaciones o qué hizo el equipo' },
+    { id: 'discipline', label: 'OMT/UML', emoji: '📐', hint: 'Disciplina de PKs, N:M y normalización' },
+    { id: 'mutate', label: 'Editar', emoji: '⚡', hint: 'Aplica cambios reales sobre clases/atributos' },
+    { id: 'recap', label: 'Resumen', emoji: '🕒', hint: 'Resume avances multi-día y autores' },
+  ];
+
+  // Conector Ollama Local / Google Colab (ngrok) en caliente
+  readonly showOllamaConfig = signal<boolean>(false);
+  readonly ollamaUrlDraft = signal<string>('http://localhost:11434');
+  readonly ollamaModelDraft = signal<string>('qwen2.5:3b');
+  readonly ollamaVisionModelDraft = signal<string>('qwen2.5vl:7b');
+  readonly ollamaIsCustomRuntime = signal<boolean>(false);
+  readonly isTestingOllama = signal<boolean>(false);
+  readonly isSavingOllama = signal<boolean>(false);
+  readonly ollamaTestStatus = signal<{ ok: boolean; text: string; models?: string[] } | null>(null);
 
   // Estados reactivos internos
   readonly isAiProcessing = signal<boolean>(false);
@@ -123,12 +178,20 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
   readonly isVoiceListening = signal<boolean>(false);
   readonly showWebcamModal = signal<boolean>(false);
 
+  readonly selectedFocusNames = computed(() => {
+    const ids = new Set(this.selectedNodeIds());
+    if (ids.size === 0) return [];
+    return this.currentNodes()
+      .filter((n) => !n.isAnchor && ids.has(n.id))
+      .map((n) => n.name);
+  });
+
   // Historial conversacional
   readonly aiChatMessages = signal<AiChatMessage[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: '¡Hola! Soy tu Copilot de Modelado UML.\n\nPuedes elegir entre tus modelos locales de Ollama (ej: Qwen 2.5 Coder) o Gemini en la nube mediante el selector de modelos. Pídeme crear tablas, agregar atributos, conectar entidades, o adjuntar un boceto para digitalizarlo.',
+      text: '¡Hola! Soy tu compañero Copilot de Modelado UML.\n\nNo editaré el lienzo sin tu permiso: puedes pedirme opinión ("¿qué atributos le pondrías?"), revisar errores OMT/UML, consultar qué avanzaron tus compañeros, o pedirme editar el diagrama. También puedes conectar tu Ollama de Google Colab (ngrok).',
       timestamp: new Date(),
     },
   ]);
@@ -138,6 +201,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadAvailableModels();
+    this.loadOllamaRuntimeConfig(true);
   }
 
   loadAvailableModels(): void {
@@ -149,8 +213,10 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
         const models: AiModelOption[] = data?.models || [];
         this.availableModels.set(models);
         this.isOllamaAvailable.set(data?.isOllamaAvailable ?? false);
+        if (data?.ollamaVisionModel) {
+          this.serverOllamaVisionModel.set(data.ollamaVisionModel);
+        }
 
-        // Verificar si existe una preferencia guardada en localStorage
         const savedModelId = localStorage.getItem('uml_preferred_ai_model');
         const foundSaved = models.find((m) => m.id === savedModelId);
 
@@ -169,7 +235,6 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
       error: (err) => {
         this.isLoadingModels.set(false);
         console.warn('No se pudieron listar los modelos de IA:', err);
-        // Fallback en caso de error de red
         this.availableModels.set([
           {
             id: 'gemini-2.5-flash',
@@ -181,6 +246,131 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
         ]);
         this.selectedModelId.set('gemini-2.5-flash');
         this.selectedProvider.set('vertex');
+      },
+    });
+  }
+
+  toggleOllamaConfigPanel(): void {
+    const next = !this.showOllamaConfig();
+    this.showOllamaConfig.set(next);
+    if (next) {
+      this.ollamaTestStatus.set(null);
+      this.loadOllamaRuntimeConfig(false);
+    }
+  }
+
+  loadOllamaRuntimeConfig(silent = false): void {
+    this.aiService.getOllamaConfig().subscribe({
+      next: (cfg) => {
+        if (!cfg) return;
+        this.ollamaUrlDraft.set(cfg.baseUrl || 'http://localhost:11434');
+        this.ollamaModelDraft.set(cfg.model || 'qwen2.5:3b');
+        this.ollamaVisionModelDraft.set(cfg.visionModel || 'qwen2.5vl:7b');
+        this.ollamaIsCustomRuntime.set(Boolean(cfg.isCustomRuntime));
+        this.serverOllamaVisionModel.set(cfg.visionModel || 'qwen2.5vl:7b');
+      },
+      error: (err) => {
+        if (!silent) {
+          this.ollamaTestStatus.set({
+            ok: false,
+            text: err?.error?.message || 'No se pudo obtener la configuración actual de Ollama.',
+          });
+        }
+      },
+    });
+  }
+
+  testOllamaConnection(): void {
+    const url = this.ollamaUrlDraft().trim();
+    if (!url || this.isTestingOllama()) return;
+    this.isTestingOllama.set(true);
+    this.ollamaTestStatus.set(null);
+
+    this.aiService.testOllamaConnection(url).subscribe({
+      next: (res) => {
+        this.isTestingOllama.set(false);
+        if (res.ok) {
+          const visionInfo = res.hasVisionModel ? ' • Visión OK' : ' • Sin modelo visión';
+          this.ollamaTestStatus.set({
+            ok: true,
+            text: `Conectado en ${res.latencyMs} ms (${res.models.length} modelos${visionInfo})`,
+            models: res.models,
+          });
+        } else {
+          this.ollamaTestStatus.set({
+            ok: false,
+            text: res.error || 'No respondió el servidor Ollama/Colab en esa URL.',
+          });
+        }
+      },
+      error: (err) => {
+        this.isTestingOllama.set(false);
+        this.ollamaTestStatus.set({
+          ok: false,
+          text: err?.error?.message || err?.message || 'Error al probar conexión con Ollama/Colab.',
+        });
+      },
+    });
+  }
+
+  saveOllamaConfig(): void {
+    const baseUrl = this.ollamaUrlDraft().trim();
+    if (!baseUrl || this.isSavingOllama()) return;
+    this.isSavingOllama.set(true);
+
+    this.aiService
+      .updateOllamaConfig({
+        baseUrl,
+        model: this.ollamaModelDraft().trim() || undefined,
+        visionModel: this.ollamaVisionModelDraft().trim() || undefined,
+      })
+      .subscribe({
+        next: (cfg) => {
+          this.isSavingOllama.set(false);
+          this.ollamaUrlDraft.set(cfg.baseUrl);
+          this.ollamaModelDraft.set(cfg.model);
+          this.ollamaVisionModelDraft.set(cfg.visionModel);
+          this.ollamaIsCustomRuntime.set(Boolean(cfg.isCustomRuntime));
+          this.serverOllamaVisionModel.set(cfg.visionModel);
+          this.ollamaTestStatus.set({
+            ok: true,
+            text: `Endpoint conectado en caliente (${cfg.baseUrl}). Actualizando modelos...`,
+          });
+          localStorage.setItem('uml_preferred_ai_model', cfg.model);
+          this.loadAvailableModels();
+        },
+        error: (err) => {
+          this.isSavingOllama.set(false);
+          this.ollamaTestStatus.set({
+            ok: false,
+            text: err?.error?.message || 'URL inválida o rechazada por el servidor.',
+          });
+        },
+      });
+  }
+
+  resetOllamaConfig(): void {
+    if (this.isSavingOllama()) return;
+    this.isSavingOllama.set(true);
+    this.aiService.updateOllamaConfig({ resetToEnv: true }).subscribe({
+      next: (cfg) => {
+        this.isSavingOllama.set(false);
+        this.ollamaUrlDraft.set(cfg.baseUrl);
+        this.ollamaModelDraft.set(cfg.model);
+        this.ollamaVisionModelDraft.set(cfg.visionModel);
+        this.ollamaIsCustomRuntime.set(false);
+        this.ollamaTestStatus.set({
+          ok: true,
+          text: `Restablecido a configuración por defecto (${cfg.baseUrl}).`,
+        });
+        this.loadAvailableModels();
+      },
+      error: (err) => {
+        this.isSavingOllama.set(false);
+        this.ollamaTestStatus.set({
+          ok: false,
+          text: err?.error?.message || 'No se pudo restablecer Ollama.',
+        });
       },
     });
   }
@@ -227,20 +417,50 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     }
   }
 
-  setAiSuggestion(text: string): void {
+  setAiSuggestion(text: string, forcedMode?: AiPromptMode): void {
     this.aiPrompt.set(text);
+    if (forcedMode) {
+      this.promptMode.set(forcedMode);
+    }
+  }
+
+  private resolveVisionProviderAndModel(): { provider: 'ollama' | 'vertex'; model: string } {
+    const provider = this.selectedProvider();
+    const selModel = this.selectedModelId();
+    if (provider === 'ollama') {
+      const looksLikeVision = /(?:vl|vision|llava|minicpm|moondream)/i.test(selModel);
+      return {
+        provider: 'ollama',
+        model: looksLikeVision
+          ? selModel
+          : (this.ollamaVisionModelDraft() || this.serverOllamaVisionModel() || 'qwen2.5vl:7b'),
+      };
+    }
+    return {
+      provider: 'vertex',
+      model: selModel || 'gemini-2.5-flash',
+    };
   }
 
   // -------------------------------------------------------------
-  // PROMPT / ENVÍO DE MENSAJES (TEXTO / VISIÓN)
+  // PROMPT / ENVÍO DE MENSAJES (TEXTO / VISIÓN / CONSULTIVO)
   // -------------------------------------------------------------
   applyAiPrompt(): void {
     const promptText = this.aiPrompt().trim();
     const imageBase64 = this.attachedImageBase64();
 
-    if (this.isReadOnly() || (!promptText && !imageBase64) || this.isAiProcessing()) {
+    if ((!promptText && !imageBase64) || this.isAiProcessing()) {
       return;
     }
+
+    if (this.isReadOnly() && (imageBase64 || this.promptMode() === 'mutate')) {
+      return;
+    }
+
+    const effectiveMode: AiPromptMode =
+      this.isReadOnly() && this.promptMode() === 'auto'
+        ? 'advise'
+        : this.promptMode();
 
     const userMessageText = promptText || (imageBase64 ? 'Digitalizar diagrama desde imagen adjunta' : '');
     const sentImage = imageBase64;
@@ -265,8 +485,15 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     const rCode = this.roomCode() || undefined;
     const provider = this.selectedProvider();
     const model = this.selectedModelId();
+    const commonOpts = {
+      mode: effectiveMode,
+      broadcastToRoom: this.isReadOnly() ? false : this.broadcastToRoom(),
+      createWhiteboardNotes: this.isReadOnly() ? false : this.createWhiteboardNotes(),
+      selectedNodeIds: this.selectedNodeIds(),
+    };
 
     if (sentImage) {
+      const visionTarget = this.resolveVisionProviderAndModel();
       this.aiService
         .sendVisionPrompt(
           sentImage,
@@ -277,7 +504,11 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
           this.currentNodes(),
           this.currentConnections(),
           [],
-          { provider: 'vertex', model: 'gemini-2.5-flash' },
+          {
+            ...commonOpts,
+            provider: visionTarget.provider,
+            model: visionTarget.model,
+          },
         )
         .subscribe({
           next: (res) => this.handleAiResponse(res, '📸 Reconocimiento de Boceto / Imagen', sentImage),
@@ -292,7 +523,11 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
           this.currentNodes(),
           this.currentConnections(),
           [],
-          { provider, model },
+          {
+            ...commonOpts,
+            provider,
+            model,
+          },
         )
         .subscribe({
           next: (res) => this.handleAiResponse(res, '✨ Copilot IA (Prompt)'),
@@ -303,6 +538,48 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     this.aiPrompt.set('');
     this.attachedImageBase64.set(null);
     this.attachedImageName.set(null);
+  }
+
+  executeSuggestion(suggestedPrompt?: string): void {
+    const clean = suggestedPrompt?.trim();
+    if (!clean || this.isReadOnly() || this.isAiProcessing()) return;
+
+    this.aiChatMessages.update((msgs) => [
+      ...msgs,
+      {
+        id: 'msg-sug-' + Date.now(),
+        sender: 'user',
+        text: `⚡ Aplicar sugerencia: ${clean}`,
+        timestamp: new Date(),
+      },
+    ]);
+
+    this.isAiProcessing.set(true);
+    this.scrollToBottom();
+
+    const dId = this.diagramId() || 'temp_diagram';
+    const rCode = this.roomCode() || undefined;
+    this.aiService
+      .sendTextPrompt(
+        clean,
+        dId,
+        rCode,
+        this.currentNodes(),
+        this.currentConnections(),
+        [],
+        {
+          provider: this.selectedProvider(),
+          model: this.selectedModelId(),
+          mode: 'mutate',
+          broadcastToRoom: this.broadcastToRoom(),
+          createWhiteboardNotes: this.createWhiteboardNotes(),
+          selectedNodeIds: this.selectedNodeIds(),
+        },
+      )
+      .subscribe({
+        next: (res) => this.handleAiResponse(res, '⚡ Sugerencia Aplicada'),
+        error: (err) => this.handleAiError(err),
+      });
   }
 
   async runLocalOcrAnalysis(imageOverride?: string): Promise<void> {
@@ -385,12 +662,34 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     this.scrollToBottom();
   }
 
+  getIntentBadgeLabel(mode?: AiResolvedIntentMode): string {
+    switch (mode) {
+      case 'ADVISE':
+        return '💡 Opinión / Asesoría';
+      case 'REVIEW':
+        return '🔍 Revisión del Modelo';
+      case 'DISCIPLINE':
+        return '📐 Disciplina OMT/UML';
+      case 'RECAP':
+        return '🕒 Resumen Multi-Sesión';
+      case 'MUTATE':
+        return '⚡ Cambio en Pizarra';
+      default:
+        return '🤖 Copilot IA';
+    }
+  }
+
   private handleAiResponse(res: AiResponse, sourceTag: string, sentImage?: string | null): void {
     this.isAiProcessing.set(false);
 
-    const summary = res.changesSummary || res.message || 'Diagrama actualizado por Copilot IA.';
+    const summary = res.changesSummary || res.message || 'Respuesta de Copilot IA.';
     const isClarification = res.action === 'clarification' || res.action === 'clarification_required';
     const isError = !res.success && !isClarification;
+
+    const shouldMutate =
+      res.mutatedDiagram !== undefined
+        ? Boolean(res.mutatedDiagram)
+        : Boolean(res.action === 'diagram_mutated' || res.action === 'vision_extract');
 
     let status: 'success' | 'clarification' | 'error' = 'success';
     if (isClarification) status = 'clarification';
@@ -401,17 +700,27 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
       {
         id: 'msg-res-' + Date.now(),
         sender: 'assistant',
-        text: res.message || (isClarification ? 'Por favor aclara la solicitud.' : '¡Diagrama modelado con éxito!'),
+        text: res.message || (isClarification ? 'Por favor aclara la solicitud.' : '¡Listo!'),
         changesSummary: summary,
         status,
         providerUsed: res.providerUsed,
         modelUsed: res.modelUsed,
+        intentMode: res.intentMode,
+        mutatedDiagram: shouldMutate,
+        suggestions: res.suggestions || [],
+        disciplineAlerts: res.disciplineAlerts || [],
+        annotationsCount: res.annotationsAdded?.length || 0,
+        broadcastedToRoom: Boolean(res.broadcastedToRoom),
         retryImageBase64: isError && sentImage ? sentImage : undefined,
         timestamp: new Date(),
       },
     ]);
 
-    if (res.success && res.nodes && res.nodes.length > 0) {
+    if (res.annotationsAdded && res.annotationsAdded.length > 0) {
+      this.annotationsCreated.emit(res.annotationsAdded);
+    }
+
+    if (res.success && shouldMutate && !this.isReadOnly() && Array.isArray(res.nodes)) {
       this.applyMutation.emit({
         nodes: res.nodes,
         connections: res.connections || [],

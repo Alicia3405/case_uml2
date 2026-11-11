@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TranslationService } from './translation.service';
 
 class MockStorage {
@@ -23,8 +23,13 @@ describe('TranslationService', () => {
 
   beforeEach(() => {
     mockStorage = new MockStorage();
-    (globalThis as any).localStorage = mockStorage;
+    vi.stubGlobal('localStorage', mockStorage);
+    vi.stubGlobal('navigator', { language: 'es-ES' });
     service = new TranslationService();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('debe crearse e iniciar en español por defecto si no hay storage', () => {

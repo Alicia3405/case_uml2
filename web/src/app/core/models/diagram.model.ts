@@ -77,6 +77,29 @@ export interface UmlMethod {
   orderIndex?: number;
 }
 
+export type AiAnnotationSeverity = 'idea' | 'warning' | 'discipline' | 'resolved';
+export type AiAnnotationStatus = 'open' | 'applied' | 'dismissed';
+
+export interface AiAnnotationItem {
+  id: string;
+  targetNodeId?: string | null;
+  targetClassName?: string | null;
+  severity: AiAnnotationSeverity;
+  title: string;
+  message: string;
+  authorName: string;
+  requestedByUserName?: string | null;
+  suggestedAction?: {
+    suggestedPrompt?: string;
+    code?: string;
+    [key: string]: any;
+  } | null;
+  status: AiAnnotationStatus;
+  createdAt?: string;
+  resolvedAt?: string | null;
+  resolvedByUserName?: string | null;
+}
+
 export interface UmlClassNode {
   id: string;
   name: string;
@@ -90,6 +113,11 @@ export interface UmlClassNode {
   methods: UmlMethod[];
   isAnchor?: boolean;
   assocMainConnId?: string;
+  createdByUserId?: string;
+  createdByName?: string;
+  lastModifiedByUserId?: string;
+  lastModifiedByName?: string;
+  lastModifiedAt?: string;
 }
 
 export interface UmlConnection {
@@ -108,12 +136,33 @@ export interface UmlConnection {
   assocAnchorNodeId?: string;
 }
 
+export interface DiagramSnapshotItem {
+  id: string;
+  diagramId: string;
+  sessionId?: string | null;
+  sessionNumber: number;
+  sessionDate: string;
+  label: string;
+  summary: string;
+  savedByUserId: string;
+  savedByName: string;
+  nodes: any[];
+  connections: any[];
+  aiAnnotations?: AiAnnotationItem[];
+  createdAt: string;
+}
+
 export interface DiagramDto {
   id: string;
   projectId: string | null;
   name: string;
   version: string;
   defaultLineStyle: UmlLineStyle;
+  aiAnnotations?: AiAnnotationItem[];
+  lastModifiedByUserId?: string | null;
+  lastModifiedByName?: string | null;
+  lastModifiedAt?: string | null;
+  revisionCount?: number;
   nodes: {
     id: string;
     name: string;
@@ -126,6 +175,11 @@ export interface DiagramDto {
     height?: number | null;
     isAnchor?: boolean;
     assocMainConnId?: string | null;
+    createdByUserId?: string;
+    createdByName?: string;
+    lastModifiedByUserId?: string;
+    lastModifiedByName?: string;
+    lastModifiedAt?: string;
     attributes?: UmlAttribute[];
     methods?: UmlMethod[];
   }[];

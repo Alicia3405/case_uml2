@@ -30,6 +30,8 @@ import {
   heroCircleStack,
   heroCodeBracket,
   heroChatBubbleLeftRight,
+  heroBell,
+  heroClock,
 } from '@ng-icons/heroicons/outline';
 import { AuthService } from '../../../../../core/services/auth.service';
 import { CollaborationService } from '../../../../../core/services/collaboration.service';
@@ -71,6 +73,8 @@ import { ThemeToggleComponent } from '../../../../../core/components/theme-toggl
       heroCircleStack,
       heroCodeBracket,
       heroChatBubbleLeftRight,
+      heroBell,
+      heroClock,
     }),
   ],
   templateUrl: './diagram-appbar.component.html',
@@ -98,6 +102,9 @@ export class DiagramAppbarComponent {
   readonly redoCount = input<number>(0);
   readonly isCollabOpen = input<boolean>(false);
   readonly unreadChatCount = input<number>(0);
+  readonly openAnnotationsCount = input<number>(0);
+  readonly unreadNotificationCount = input<number>(0);
+  readonly isNotificationsOpen = input<boolean>(false);
 
   // Outputs
   readonly saveDiagram = output<void>();
@@ -115,6 +122,8 @@ export class DiagramAppbarComponent {
   readonly openSqlDdl = output<void>();
   readonly openXmiValidator = output<void>();
   readonly toggleCollabPanel = output<void>();
+  readonly openResumeModal = output<void>();
+  readonly toggleNotifications = output<void>();
 
   // Estados de dropdowns locales
   readonly isExportDropdownOpen = signal<boolean>(false);

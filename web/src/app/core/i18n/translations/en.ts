@@ -175,6 +175,9 @@ export const en = {
     xmiTooltip: 'OMG XMI 2.1 Viewer & Validator',
     collabBtn: 'Team & Chat',
     collabTooltip: 'Open Collaborative Room: Chat, Live Audit Log & Permissions',
+    resumeBtn: 'Resume',
+    resumeTooltip: 'Multi-session continuity, contributions & checkpoints (snapshots)',
+    notificationsTooltip: 'Notifications (@mentions & AI alerts)',
   },
   toolbar: {
     title: 'Modeling Tools',
@@ -372,6 +375,18 @@ export const en = {
     ocrOfflineTooltip: 'Digitize image offline in browser (Tesseract.js 2D)',
     ocrRetryBtn: 'Retry Offline with Tesseract OCR',
     ocrRunning: 'Running 2D Offline OCR in browser...',
+    modeLabel: 'Copilot Mode',
+    modes: {
+      auto: 'Auto',
+      advise: 'Advise',
+      review: 'Review',
+      discipline: 'OMT/UML',
+      mutate: 'Edit',
+      recap: 'Recap',
+    },
+    broadcastToggle: 'Broadcast to group chat',
+    notesToggle: 'Pin whiteboard notes',
+    colabConnectorBtn: 'Ollama / Colab',
   },
   profile: {
     title: 'My User Profile',
@@ -499,5 +514,9 @@ export const en = {
     ownerOnlyNote: 'Only the Project Owner (OWNER) can change roles and ZIP download permissions.',
     removeConfirm: 'Are you sure you want to remove this collaborator from the project?',
     permissionUpdatedBanner: 'Your permissions have been updated',
+    mentionHint: 'Tip: type @IA or @copilot to summon the AI in this group chat.',
+    hostBadge: 'Host',
+    transferHost: 'Make Host',
+    contributionsTitle: 'Contributions (Multi-Session)',
   },
 };

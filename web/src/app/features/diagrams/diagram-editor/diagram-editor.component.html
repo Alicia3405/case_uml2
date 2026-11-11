@@ -13,6 +13,9 @@
     [redoCount]="redoCount()"
     [isCollabOpen]="isCollabPanelOpen()"
     [unreadChatCount]="collaborationService.unreadChatCount()"
+    [openAnnotationsCount]="openAiAnnotations().length"
+    [unreadNotificationCount]="collaborationService.unreadNotificationCount()"
+    [isNotificationsOpen]="showNotificationsDrawer()"
     (saveDiagram)="saveToBackend()"
     (undoAction)="undo()"
     (redoAction)="redo()"
@@ -20,6 +23,8 @@
     (openSqlDdl)="showSqlModal.set(true)"
     (openXmiValidator)="showXmiModal.set(true)"
     (toggleCollabPanel)="toggleCollabPanel()"
+    (openResumeModal)="openResumeModal()"
+    (toggleNotifications)="toggleNotificationsDrawer()"
     (exportBmp)="downloadBmpFile()"
     (exportXmi)="downloadXmiFile()"
     (exportJson)="downloadJsonFile()"
@@ -115,6 +120,46 @@
           <button (click)="setPointerMode()" class="ml-2 bg-blue-800 hover:bg-blue-700 px-2 py-0.5 rounded text-[10px] cursor-pointer">
             {{ 'toolbar.cancelEsc' | translate }}
           </button>
+        </div>
+      }
+
+      <!-- Banner Continuidad Multi-Sesión ("Lo nuevo desde tu última visita") -->
+      @if (sinceLastVisitBanner(); as slv) {
+        <div
+          (click)="$event.stopPropagation()"
+          [ngClass]="selectedRelationType() ? 'top-14' : 'top-3.5'"
+          class="absolute left-1/2 -translate-x-1/2 z-40 max-w-xl w-[calc(100%-2rem)] bg-amber-50/95 dark:bg-[#1A203E]/95 border border-amber-400 dark:border-indigo-500 text-slate-800 dark:text-slate-100 px-3.5 py-2 rounded-lg shadow-xl text-[11px] flex items-center justify-between gap-3 backdrop-blur-sm animate-in fade-in slide-in-from-top-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <ng-icon name="heroClock" class="text-sm text-amber-600 dark:text-amber-400 shrink-0"></ng-icon>
+            <div class="min-w-0">
+              <p class="font-bold truncate">
+                Desde tu última visita: {{ slv.changesCount }} cambio(s)
+                @if (slv.contributors.length > 0) {
+                  <span class="font-normal text-slate-600 dark:text-slate-300">por {{ slv.contributors.join(', ') }}</span>
+                }
+              </p>
+              @if (slv.touchedClasses.length > 0) {
+                <p class="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                  Clases tocadas: {{ slv.touchedClasses.join(', ') }}
+                </p>
+              }
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              (click)="openResumeModal(); $event.stopPropagation()"
+              class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[10px] font-bold cursor-pointer transition-colors">
+              Ver resumen
+            </button>
+            <button
+              type="button"
+              (click)="sinceLastVisitBanner.set(null); $event.stopPropagation()"
+              title="Descartar aviso"
+              class="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 cursor-pointer">
+              <ng-icon name="heroXMark" class="text-xs"></ng-icon>
+            </button>
+          </div>
         </div>
       }
 
@@ -509,6 +554,30 @@
                     }
                   }
 
+                  @let nodeAnns = getNodeOpenAnnotations(node.id, node.name);
+                  @if (node.lastModifiedByName || node.createdByName || nodeAnns.length > 0) {
+                    <div
+                      (click)="$event.stopPropagation()"
+                      class="px-2 py-0.5 bg-black/[0.04] dark:bg-white/[0.04] border-t border-black/10 dark:border-[#2A3561] flex items-center justify-between gap-1 text-[9px] font-mono text-slate-500 dark:text-slate-400">
+                      <span
+                        class="truncate"
+                        [title]="(node.lastModifiedByName || node.createdByName) ? ('Última edición: ' + (node.lastModifiedByName || node.createdByName)) : ''">
+                        @if (node.lastModifiedByName || node.createdByName; as authorName) {
+                          ✍️ {{ authorName }}
+                        }
+                      </span>
+                      @if (nodeAnns.length > 0) {
+                        <button
+                          type="button"
+                          (click)="focusAnnotationsForNode(node.id, $event)"
+                          title="Ver notas e ideas de Copilot IA para esta clase"
+                          class="px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/80 hover:bg-purple-200 dark:hover:bg-purple-900 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 font-bold shrink-0 cursor-pointer transition-colors">
+                          💡 {{ nodeAnns.length }} IA
+                        </button>
+                      }
+                    </div>
+                  }
+
                 }
 
               </div>
@@ -532,6 +601,132 @@
         [isReadOnly]="isReadOnly()">
       </app-uml-voice-dock>
 
+      <!-- Pizarra Flotante de Ideas y Alertas IA Persistidas (Copilot Partner) -->
+      @if (openAiAnnotations().length > 0) {
+        <div
+          (click)="$event.stopPropagation()"
+          class="absolute bottom-4 right-4 z-40">
+          @if (!showWhiteboardNotesPanel()) {
+            <button
+              type="button"
+              (click)="showWhiteboardNotesPanel.set(true)"
+              class="bg-purple-700 hover:bg-purple-600 text-white border border-purple-400/60 shadow-xl rounded-full px-3.5 py-1.5 flex items-center gap-2 text-xs font-mono font-bold cursor-pointer transition-all hover:scale-105">
+              <ng-icon name="heroLightBulb" class="text-sm text-amber-300"></ng-icon>
+              <span>{{ openAiAnnotations().length }} idea(s) IA en pizarra</span>
+              <ng-icon name="heroChevronUp" class="text-xs"></ng-icon>
+            </button>
+          } @else {
+            <div class="w-80 sm:w-96 max-h-[340px] flex flex-col bg-white/95 dark:bg-[#14182E]/95 backdrop-blur-md border border-purple-400/70 dark:border-purple-600/80 rounded-lg shadow-2xl overflow-hidden text-xs">
+              <div class="px-3 py-2 bg-gradient-to-r from-purple-700 to-indigo-800 text-white flex items-center justify-between gap-2 shrink-0">
+                <div class="flex items-center gap-1.5 min-w-0 font-mono text-[11px] font-bold">
+                  <ng-icon name="heroLightBulb" class="text-sm text-amber-300 shrink-0"></ng-icon>
+                  <span class="truncate">Pizarra IA ({{ openAiAnnotations().length }})</span>
+                  @if (focusedAnnotationNodeId()) {
+                    <button
+                      type="button"
+                      (click)="clearFocusedAnnotationFilter()"
+                      title="Mostrar notas de todo el diagrama"
+                      class="px-1.5 py-0.2 rounded bg-white/20 hover:bg-white/30 text-[9px] font-normal flex items-center gap-1 cursor-pointer shrink-0">
+                      <span>{{ getFocusedNodeName() }}</span>
+                      <span>✕</span>
+                    </button>
+                  }
+                </div>
+                <button
+                  type="button"
+                  (click)="showWhiteboardNotesPanel.set(false)"
+                  title="Minimizar pizarra IA"
+                  class="text-purple-100 hover:text-white p-0.5 rounded hover:bg-white/10 cursor-pointer shrink-0">
+                  <ng-icon name="heroChevronDown" class="text-sm"></ng-icon>
+                </button>
+              </div>
+
+              <div class="flex-1 overflow-y-auto p-2.5 space-y-2 bg-[#F9F7FA] dark:bg-[#0E1225]">
+                @if (filteredWhiteboardAnnotations().length === 0) {
+                  <div class="text-center py-4 text-[11px] font-mono text-slate-500 dark:text-slate-400 space-y-1.5">
+                    <p>Sin notas abiertas para {{ getFocusedNodeName() }}.</p>
+                    <button
+                      type="button"
+                      (click)="clearFocusedAnnotationFilter()"
+                      class="px-2.5 py-1 rounded bg-purple-600 text-white text-[10px] font-bold cursor-pointer">
+                      Ver todas ({{ openAiAnnotations().length }})
+                    </button>
+                  </div>
+                } @else {
+                  @for (ann of filteredWhiteboardAnnotations(); track ann.id) {
+                    <div
+                      class="p-2 rounded border text-[11px] space-y-1.5 bg-white dark:bg-[#151A30] shadow-xs"
+                      [ngClass]="ann.severity === 'discipline'
+                        ? 'border-rose-300 dark:border-rose-700/80'
+                        : ann.severity === 'warning'
+                          ? 'border-amber-300 dark:border-amber-700/80'
+                          : 'border-purple-200 dark:border-purple-700/70'">
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="flex flex-wrap items-center gap-1 min-w-0">
+                          <span
+                            class="px-1.5 py-0.2 rounded font-mono text-[8.5px] font-bold uppercase shrink-0"
+                            [ngClass]="ann.severity === 'discipline'
+                              ? 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-200'
+                              : ann.severity === 'warning'
+                                ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-200'
+                                : 'bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200'">
+                            {{ ann.severity === 'discipline' ? '📐 OMT' : ann.severity === 'warning' ? '⚠️ Alerta' : '💡 Idea' }}
+                          </span>
+                          @if (ann.targetClassName) {
+                            <button
+                              type="button"
+                              (click)="focusNodeFromAnnotation(ann)"
+                              title="Resaltar clase en el lienzo"
+                              class="px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-[#1E2442] hover:bg-indigo-100 dark:hover:bg-[#252E56] text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-[#3B487A] font-mono text-[9px] font-bold cursor-pointer truncate max-w-[140px]">
+                              {{ ann.targetClassName }}
+                            </button>
+                          }
+                        </div>
+                        @if (ann.requestedByUserName) {
+                          <span class="text-[9px] font-mono text-slate-400 shrink-0 truncate max-w-[100px]" [title]="'Solicitado por ' + ann.requestedByUserName">
+                            {{ ann.requestedByUserName }}
+                          </span>
+                        }
+                      </div>
+
+                      <p class="font-bold text-slate-900 dark:text-slate-100 leading-snug">{{ ann.title }}</p>
+                      <p class="text-[10.5px] text-slate-600 dark:text-slate-300 leading-snug">{{ ann.message }}</p>
+
+                      @if (!isReadOnly()) {
+                        <div class="flex flex-wrap items-center justify-end gap-1.5 pt-1 border-t border-slate-100 dark:border-[#222B4D]">
+                          @if (ann.suggestedAction?.suggestedPrompt) {
+                            <button
+                              type="button"
+                              (click)="applyWhiteboardAnnotation(ann)"
+                              [disabled]="applyingAnnotationId() === ann.id"
+                              class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[9.5px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50">
+                              <ng-icon name="heroBolt" class="text-[10px]"></ng-icon>
+                              <span>{{ applyingAnnotationId() === ann.id ? 'Aplicando...' : 'Aplicar' }}</span>
+                            </button>
+                          }
+                          <button
+                            type="button"
+                            (click)="setWhiteboardAnnotationStatus(ann.id, 'applied')"
+                            class="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#1E2442] hover:bg-emerald-100 dark:hover:bg-emerald-950/60 text-slate-700 dark:text-slate-200 font-mono text-[9.5px] cursor-pointer">
+                            ✓ Resuelta
+                          </button>
+                          <button
+                            type="button"
+                            (click)="setWhiteboardAnnotationStatus(ann.id, 'dismissed')"
+                            class="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#1E2442] hover:bg-rose-100 dark:hover:bg-rose-950/60 text-slate-500 dark:text-slate-400 font-mono text-[9.5px] cursor-pointer">
+                            Descartar
+                          </button>
+                        </div>
+                      }
+                    </div>
+                  }
+                }
+              </div>
+            </div>
+          }
+        </div>
+      }
+
     </div>
   </div>
 
@@ -543,13 +738,16 @@
       [roomCode]="collaborationService.activeRoomCode()"
       [currentNodes]="nodes()"
       [currentConnections]="connections()"
+      [selectedNodeIds]="selectedNodeIdsList()"
       (closePanel)="isAiPanelOpen.set(false)"
-      (applyMutation)="onAiMutation($event)">
+      (applyMutation)="onAiMutation($event)"
+      (annotationsCreated)="onAnnotationsCreated($event)">
     </app-ai-assistant-panel>
 
     <!-- 2.4 [PANEL LATERAL DERECHO] SALA COLABORATIVA: CHAT, BITÁCORA Y PERMISOS -->
     <app-collaboration-panel
       [isOpen]="isCollabPanelOpen()"
+      [diagramId]="currentDiagramId()"
       [projectId]="currentProjectId()"
       [projectCreatedBy]="projectCreatedBy()"
       [currentUserRole]="currentUserRole()"
@@ -1065,6 +1263,286 @@
               {{ 'editor.jsonModal.apply' | translate }}
             </button>
           }
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- 9. POPOVER: NOTIFICACIONES DE SALA (@MENCIONES Y ALERTAS IA) -->
+  @if (showNotificationsDrawer()) {
+    <div class="fixed top-12 right-4 z-50 w-96 max-w-[calc(100vw-2rem)] max-h-[75vh] bg-white dark:bg-[#14182E] border border-slate-300 dark:border-[#3B487A] rounded-lg shadow-2xl flex flex-col overflow-hidden text-xs animate-in fade-in slide-in-from-top-2">
+      <div class="px-3.5 py-2.5 bg-slate-900 dark:bg-[#0D1124] text-white flex items-center justify-between gap-2 border-b border-slate-700 dark:border-[#283256] shrink-0">
+        <div class="flex items-center gap-2 font-mono font-bold">
+          <ng-icon name="heroBell" class="text-sm text-amber-300"></ng-icon>
+          <span>Notificaciones</span>
+          @if (collaborationService.unreadNotificationCount() > 0) {
+            <span class="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[9.5px]">
+              {{ collaborationService.unreadNotificationCount() }}
+            </span>
+          }
+        </div>
+        <div class="flex items-center gap-2">
+          @if (collaborationService.unreadNotificationCount() > 0) {
+            <button
+              type="button"
+              (click)="markAllNotificationsRead()"
+              class="text-[10px] font-mono text-cyan-300 hover:text-cyan-200 underline cursor-pointer">
+              Marcar leídas
+            </button>
+          }
+          <button
+            type="button"
+            (click)="showNotificationsDrawer.set(false)"
+            class="text-slate-400 hover:text-white p-0.5 cursor-pointer">
+            <ng-icon name="heroXMark" class="text-sm"></ng-icon>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-[#222B4D]">
+        @if (collaborationService.notifications().length === 0) {
+          <div class="p-6 text-center text-slate-400 dark:text-slate-500 font-mono text-[11px]">
+            No tienes notificaciones ni menciones pendientes.
+          </div>
+        } @else {
+          @for (notif of collaborationService.notifications(); track notif.id) {
+            <button
+              type="button"
+              (click)="onNotificationClick(notif)"
+              [ngClass]="isNotificationRead(notif)
+                ? 'bg-white dark:bg-[#14182E] opacity-75'
+                : 'bg-indigo-50/70 dark:bg-[#1A2142]'"
+              class="w-full text-left px-3.5 py-2.5 hover:bg-slate-100 dark:hover:bg-[#1E264A] transition-colors cursor-pointer space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  @if (!isNotificationRead(notif)) {
+                    <span class="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                  }
+                  <span class="font-bold text-slate-900 dark:text-slate-100 truncate">{{ notif.title }}</span>
+                </div>
+                <span
+                  class="px-1.5 py-0.2 rounded font-mono text-[8.5px] uppercase font-bold shrink-0"
+                  [ngClass]="notif.severity === 'discipline'
+                    ? 'bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
+                    : notif.severity === 'warning'
+                      ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
+                      : notif.severity === 'mention'
+                        ? 'bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-300'
+                        : 'bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300'">
+                  {{ notif.severity }}
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{{ notif.body }}</p>
+              <div class="flex items-center justify-between text-[9px] font-mono text-slate-400">
+                <span>Por {{ notif.actorName }}</span>
+                <span>{{ notif.createdAt | date:'short' }}</span>
+              </div>
+            </button>
+          }
+        }
+      </div>
+    </div>
+  }
+
+  <!-- 10. MODAL: CONTINUIDAD MULTI-SESIÓN, RESUMEN Y CHECKPOINTS (SNAPSHOTS) -->
+  @if (showResumeModal()) {
+    <div class="fixed inset-0 bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div class="bg-[#F9F7F5] dark:bg-[#14182E] border border-slate-300 dark:border-[#3B487A] rounded-lg shadow-2xl max-w-4xl w-full max-h-[88vh] flex flex-col overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
+
+        <div class="px-4 py-3 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between border-b border-indigo-700/50 shrink-0">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded bg-amber-500/20 border border-amber-400/50 flex items-center justify-center shrink-0">
+              <ng-icon name="heroClock" class="text-base text-amber-300"></ng-icon>
+            </div>
+            <div class="min-w-0">
+              <h2 class="font-bold uppercase tracking-wide text-xs truncate">
+                Continuidad Multi-Sesión & Checkpoints — {{ currentDiagramName() }}
+              </h2>
+              <p class="text-[10px] font-mono text-indigo-200">
+                Persistencia MongoDB entre sesiones de distintos días, contribuciones y puntos de restauración
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            (click)="showResumeModal.set(false)"
+            class="text-slate-300 hover:text-white p-1 cursor-pointer">
+            <ng-icon name="heroXMark" class="text-base"></ng-icon>
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+          @if (isLoadingResume() && !resumeBundle()) {
+            <div class="py-10 text-center font-mono text-slate-500 dark:text-slate-400">
+              Cargando historial multi-sesión...
+            </div>
+          } @else if (resumeBundle(); as bundle) {
+
+            <!-- KPIs de Sesión -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono">
+              <div class="p-2.5 rounded bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256]">
+                <div class="text-[9.5px] text-slate-500 uppercase">Sesión Actual</div>
+                <div class="text-sm font-bold text-indigo-700 dark:text-indigo-300">#{{ bundle.session?.sessionNumber || 1 }}</div>
+              </div>
+              <div class="p-2.5 rounded bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256]">
+                <div class="text-[9.5px] text-slate-500 uppercase">Días Activos</div>
+                <div class="text-sm font-bold text-emerald-700 dark:text-emerald-300">{{ bundle.session?.activeDateKeys?.length || 1 }}</div>
+              </div>
+              <div class="p-2.5 rounded bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256]">
+                <div class="text-[9.5px] text-slate-500 uppercase">Revisiones AST</div>
+                <div class="text-sm font-bold text-amber-700 dark:text-amber-300">{{ bundle.diagram.revisionCount || 0 }}</div>
+              </div>
+              <div class="p-2.5 rounded bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256]">
+                <div class="text-[9.5px] text-slate-500 uppercase">Anfitrión</div>
+                <div class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">👑 {{ bundle.session?.hostUserName || 'Automático' }}</div>
+              </div>
+            </div>
+
+            <!-- Qué cambió desde tu última visita + CTA @IA -->
+            <div class="p-3 rounded-lg bg-indigo-50/80 dark:bg-[#192040] border border-indigo-200 dark:border-[#3B487A] space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="font-mono text-[11px] font-bold uppercase text-indigo-900 dark:text-indigo-200">
+                  Lo nuevo desde tu última visita ({{ bundle.sinceLastVisit.changesCount }} evento(s))
+                </h3>
+                <button
+                  type="button"
+                  (click)="askAiRecapFromModal()"
+                  class="px-2.5 py-1 rounded bg-purple-700 hover:bg-purple-600 text-white font-mono text-[10px] font-bold flex items-center gap-1 cursor-pointer">
+                  <ng-icon name="heroSparkles" class="text-xs text-amber-300"></ng-icon>
+                  <span>Pedir resumen a &#64;IA en el chat</span>
+                </button>
+              </div>
+              @if (bundle.sinceLastVisit.changesCount === 0) {
+                <p class="text-[11px] text-slate-600 dark:text-slate-300">
+                  Estás completamente al día con la última actividad del equipo.
+                </p>
+              } @else {
+                @if (bundle.sinceLastVisit.contributors.length > 0) {
+                  <p class="text-[11px] text-slate-700 dark:text-slate-200">
+                    <strong>Participantes recientes:</strong> {{ bundle.sinceLastVisit.contributors.join(', ') }}
+                  </p>
+                }
+                @if (bundle.sinceLastVisit.touchedClasses.length > 0) {
+                  <p class="text-[11px] text-slate-700 dark:text-slate-200">
+                    <strong>Clases tocadas:</strong> {{ bundle.sinceLastVisit.touchedClasses.join(', ') }}
+                  </p>
+                }
+                @if (bundle.sinceLastVisit.highlights.length > 0) {
+                  <ul class="list-disc pl-4 text-[10.5px] font-mono text-slate-600 dark:text-slate-300 space-y-0.5">
+                    @for (h of bundle.sinceLastVisit.highlights.slice(0, 5); track $index) {
+                      <li>{{ h }}</li>
+                    }
+                  </ul>
+                }
+              }
+            </div>
+
+            <!-- Guardar nuevo Checkpoint manual -->
+            @if (!isReadOnly()) {
+              <div class="p-3 rounded-lg bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256] flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  [ngModel]="snapshotLabelDraft()"
+                  (ngModelChange)="snapshotLabelDraft.set($event)"
+                  (keydown.enter)="createManualCheckpoint()"
+                  placeholder="Etiqueta del checkpoint (ej. Antes de normalizar Pedido y Pagos)..."
+                  class="flex-1 min-w-[200px] px-2.5 py-1.5 bg-[#F9F7F5] dark:bg-[#14182E] border border-slate-300 dark:border-[#2D3762] rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                <button
+                  type="button"
+                  (click)="createManualCheckpoint()"
+                  [disabled]="isCreatingSnapshot()"
+                  class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[11px] font-bold cursor-pointer disabled:opacity-40">
+                  {{ isCreatingSnapshot() ? 'Guardando...' : '+ Guardar Checkpoint' }}
+                </button>
+              </div>
+            }
+
+            <!-- Grid inferior: Checkpoints vs Contribuciones -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <!-- Lista de Checkpoints (Snapshots) -->
+              <div class="p-3 rounded-lg bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256] space-y-2">
+                <h3 class="font-mono text-[10.5px] font-bold uppercase text-slate-700 dark:text-slate-200">
+                  Checkpoints Guardados ({{ bundle.snapshots.length }})
+                </h3>
+                @if (bundle.snapshots.length === 0) {
+                  <p class="text-[11px] font-mono text-slate-400">
+                    Aún no hay checkpoints guardados. Guarda tu modelo o crea uno manualmente arriba.
+                  </p>
+                } @else {
+                  <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    @for (snap of bundle.snapshots; track snap.id) {
+                      <div class="p-2 rounded bg-[#F9F7F5] dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="font-bold text-slate-900 dark:text-slate-100 truncate">{{ snap.label }}</span>
+                          <span class="px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-mono text-[9px] shrink-0">
+                            S{{ snap.sessionNumber }}
+                          </span>
+                        </div>
+                        <p class="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                          {{ snap.summary }} • por {{ snap.savedByName }} • {{ snap.createdAt | date:'short' }}
+                        </p>
+                        @if (!isReadOnly()) {
+                          <div class="flex justify-end pt-1">
+                            <button
+                              type="button"
+                              (click)="restoreCheckpoint(snap)"
+                              [disabled]="isRestoringSnapshot()"
+                              class="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white font-mono text-[9.5px] font-bold cursor-pointer disabled:opacity-40">
+                              {{ isRestoringSnapshot() ? 'Restaurando...' : '♻️ Restaurar versión' }}
+                            </button>
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+
+              <!-- Lista de Contribuciones -->
+              <div class="p-3 rounded-lg bg-white dark:bg-[#0E1225] border border-slate-200 dark:border-[#283256] space-y-2">
+                <h3 class="font-mono text-[10.5px] font-bold uppercase text-slate-700 dark:text-slate-200">
+                  Aportes por Integrante ({{ bundle.contributorStats.length }})
+                </h3>
+                @if (bundle.contributorStats.length === 0) {
+                  <p class="text-[11px] font-mono text-slate-400">Sin contribuciones registradas todavía.</p>
+                } @else {
+                  <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    @for (stat of bundle.contributorStats; track (stat.actorType + '_' + stat.userId)) {
+                      <div class="p-2 rounded bg-[#F9F7F5] dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {{ stat.actorType === 'ai' ? '✨ ' : '' }}{{ stat.userName }}
+                          </span>
+                          <span class="font-mono font-bold text-indigo-700 dark:text-indigo-300 shrink-0">
+                            {{ stat.totalEvents }} acc.
+                          </span>
+                        </div>
+                        <div class="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                          UML: {{ stat.umlEdits }} • Voz: {{ stat.voiceCommands }} • IA: {{ stat.aiInteractions }}
+                        </div>
+                        @if (stat.touchedClasses.length > 0) {
+                          <div class="text-[9.5px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                            Clases: {{ stat.touchedClasses.join(', ') }}
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+
+          }
+        </div>
+
+        <div class="px-4 py-2.5 bg-white dark:bg-[#0E1225] border-t border-slate-200 dark:border-[#283256] flex justify-end shrink-0">
+          <button
+            type="button"
+            (click)="showResumeModal.set(false)"
+            class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-mono text-xs rounded font-bold cursor-pointer">
+            {{ 'common.close' | translate }}
+          </button>
         </div>
 
       </div>

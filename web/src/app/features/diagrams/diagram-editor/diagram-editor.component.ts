@@ -64,12 +64,22 @@ import {
   heroCodeBracket,
   heroQueueList,
   heroChatBubbleBottomCenterText,
+  heroBell,
+  heroClock,
+  heroLightBulb,
+  heroExclamationTriangle,
+  heroChevronUp,
 } from '@ng-icons/heroicons/outline';
 
 import { AuthService } from '../../../core/services/auth.service';
 import { DiagramService } from '../../../core/services/diagram.service';
 import { ProjectService } from '../../../core/services/project.service';
-import { CollaborationService, NodeLock } from '../../../core/services/collaboration.service';
+import {
+  CollaborationService,
+  CollabNotificationItem,
+  NodeLock,
+  ResumeBundleDto,
+} from '../../../core/services/collaboration.service';
 import { AiAssistantService } from '../../../core/services/ai-assistant.service';
 import { XmiService } from '../../../core/services/xmi.service';
 import { XmiClientParser } from '../../../core/services/xmi-client-parser';
@@ -78,6 +88,10 @@ import { BmpExportService } from '../../../core/services/bmp-export.service';
 import { VoiceCommandService, ParsedVoiceCommand } from '../../../core/services/voice-command.service';
 import { ProjectMember } from '../../../core/models/project.model';
 import {
+  AiAnnotationItem,
+  AiAnnotationStatus,
+  DiagramDto,
+  DiagramSnapshotItem,
   UmlRelationshipType,
   UmlLineStyle,
   UmlVisibility,
@@ -180,6 +194,11 @@ interface DiagramSnapshot {
       heroCodeBracket,
       heroQueueList,
       heroChatBubbleBottomCenterText,
+      heroBell,
+      heroClock,
+      heroLightBulb,
+      heroExclamationTriangle,
+      heroChevronUp,
     }),
   ],
   templateUrl: './diagram-editor.component.html',
@@ -289,6 +308,34 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   showSqlModal = signal<boolean>(false);
   showXmiModal = signal<boolean>(false);
 
+  // Copilot IA Pizarra, Continuidad Multi-Sesión & Notificaciones (2do Parcial)
+  aiAnnotations = signal<AiAnnotationItem[]>([]);
+  openAiAnnotations = computed(() => this.aiAnnotations().filter((a) => a.status === 'open'));
+  focusedAnnotationNodeId = signal<string | null>(null);
+  filteredWhiteboardAnnotations = computed(() => {
+    const open = this.openAiAnnotations();
+    const focusId = this.focusedAnnotationNodeId();
+    if (!focusId) return open;
+    const focusNode = this.nodes().find((n) => n.id === focusId);
+    const focusName = (focusNode?.name || '').trim().toLowerCase();
+    return open.filter(
+      (a) =>
+        a.targetNodeId === focusId ||
+        (!a.targetNodeId && focusName && (a.targetClassName || '').trim().toLowerCase() === focusName),
+    );
+  });
+  showWhiteboardNotesPanel = signal<boolean>(true);
+  selectedNodeIdsList = computed(() => (this.selectedNodeId() ? [this.selectedNodeId()!] : []));
+  showResumeModal = signal<boolean>(false);
+  isLoadingResume = signal<boolean>(false);
+  resumeBundle = signal<ResumeBundleDto | null>(null);
+  snapshotLabelDraft = signal<string>('');
+  isCreatingSnapshot = signal<boolean>(false);
+  isRestoringSnapshot = signal<boolean>(false);
+  showNotificationsDrawer = signal<boolean>(false);
+  applyingAnnotationId = signal<string | null>(null);
+  sinceLastVisitBanner = signal<ResumeBundleDto['sinceLastVisit'] | null>(null);
+
   // Nodos y Conexiones del Diagrama
   nodes = signal<UmlClassNode[]>([]);
   connections = signal<UmlConnection[]>([]);
@@ -320,6 +367,9 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
     this.subs.add(
       this.collaborationService.remoteDiagramSync$.subscribe((data) => {
+        if (data.aiAnnotations) {
+          this.aiAnnotations.set(data.aiAnnotations);
+        }
         if (data.action === 'ai_mutation' && data.nodes) {
           this.applyAiMutationWithAnimation(data.nodes, data.connections || []);
         } else if (data.nodes) {
@@ -329,6 +379,46 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           this.connections.set(cleanConns);
           this.updateConnectionEndpoints();
           setTimeout(() => this.updateConnectionEndpoints(), 60);
+          if (data.action === 'snapshot_restore') {
+            this.hasUnsavedChanges.set(false);
+            this.showPermissionToast('♻️ Un colaborador restauró un checkpoint del diagrama.');
+          }
+        }
+      }),
+    );
+
+    this.subs.add(
+      this.collaborationService.aiAnnotationsUpdated$.subscribe((payload) => {
+        if (payload.diagramId && payload.diagramId !== this.currentDiagramId()) return;
+        this.aiAnnotations.set(payload.aiAnnotations || []);
+        if ((payload.aiAnnotations || []).some((a) => a.status === 'open')) {
+          this.showWhiteboardNotesPanel.set(true);
+        }
+      }),
+    );
+
+    this.subs.add(
+      this.collaborationService.notificationReceived$.subscribe((notif) => {
+        const currentUserId = this.authService.currentUser()?.id;
+        if (notif.actorUserId && currentUserId && notif.actorUserId === currentUserId) {
+          return;
+        }
+        const prefix =
+          notif.severity === 'discipline'
+            ? '📐'
+            : notif.severity === 'warning'
+              ? '⚠️'
+              : notif.severity === 'mention'
+                ? '💬'
+                : '🔔';
+        this.showPermissionToast(`${prefix} ${notif.title}: ${notif.body}`);
+      }),
+    );
+
+    this.subs.add(
+      this.collaborationService.hostTransferred$.subscribe((transfer) => {
+        if (transfer?.newHostUserName) {
+          this.showPermissionToast(`👑 Nuevo anfitrión de la sala: ${transfer.newHostUserName}`);
         }
       }),
     );
@@ -631,73 +721,97 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   loadDiagramFromBackend(diagramId: string): void {
     this.diagramService.loadDiagram(diagramId).subscribe({
       next: (diagram) => {
-        this.currentDiagramName.set(diagram.name);
-        this.defaultLineStyle.set(this.normalizeLineStyle(diagram.defaultLineStyle));
-
-        const rawNodes = diagram.nodes || [];
-        const customTypeNames = rawNodes
-          .filter((n) => !n.isAnchor && n.name)
-          .map((n) => n.name.trim());
-
-        this.nodes.set(
-          rawNodes.map((n) => {
-            const elementType = this.normalizeElementType(n.elementType);
-            return {
-              id: n.id,
-              name: n.name,
-              elementType,
-              stereotype: n.stereotype || undefined,
-              noteContent: n.noteContent ?? undefined,
-              position: { x: n.positionX, y: n.positionY },
-              width: n.width || 220,
-              height: n.height || undefined,
-              isAnchor: n.isAnchor,
-              assocMainConnId: n.assocMainConnId || undefined,
-              attributes: (n.attributes || []).map((a, idx) => ({
-                name: a.name,
-                type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
-                visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
-                isPrimaryKey: Boolean(a.isPrimaryKey),
-                isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
-                orderIndex: a.orderIndex ?? idx,
-              })),
-              methods: (n.methods || []).map((m, idx) => ({
-                name: m.name,
-                parameters: m.parameters || '',
-                returnType: this.normalizeReturnType(m.returnType, customTypeNames),
-                visibility: this.normalizeVisibility(m.visibility, '+'),
-                orderIndex: m.orderIndex ?? idx,
-              })),
-            };
-          }),
-        );
-
-        this.connections.set(
-          (diagram.connections || []).map((c) => ({
-            id: c.id,
-            sourceNodeId: c.sourceNodeId || undefined,
-            targetNodeId: c.targetNodeId || undefined,
-            sourceId: c.sourceId,
-            targetId: c.targetId,
-            type: c.type as UmlRelationshipType,
-            lineStyle: this.normalizeLineStyle(c.lineStyle),
-            name: c.name || undefined,
-            sourceMultiplicity: c.sourceMultiplicity || '',
-            targetMultiplicity: c.targetMultiplicity || '',
-            assocAnchorNodeId: c.assocAnchorNodeId || undefined,
-          })),
-        );
-
+        this.applyLoadedDiagramDto(diagram);
         this.collaborationService.joinRoom(diagramId);
 
         this.clearHistory();
         this.hasUnsavedChanges.set(false);
+        this.focusedAnnotationNodeId.set(null);
+
+        // Cargar resumen multi-sesión ("lo que pasó desde tu última visita") sin bloquear el canvas
+        this.collaborationService.getResumeBundle(diagramId).subscribe({
+          next: (bundle) => {
+            this.resumeBundle.set(bundle);
+            if (bundle?.sinceLastVisit && bundle.sinceLastVisit.changesCount > 0) {
+              this.sinceLastVisitBanner.set(bundle.sinceLastVisit);
+            } else {
+              this.sinceLastVisitBanner.set(null);
+            }
+          },
+          error: () => {},
+        });
+
         setTimeout(() => {
           this.updateConnectionEndpoints();
         }, 50);
       },
       error: (err) => this.handleProjectAccessError(err),
     });
+  }
+
+  private applyLoadedDiagramDto(diagram: DiagramDto): void {
+    this.currentDiagramName.set(diagram.name);
+    this.defaultLineStyle.set(this.normalizeLineStyle(diagram.defaultLineStyle));
+    this.aiAnnotations.set(diagram.aiAnnotations || []);
+
+    const rawNodes = diagram.nodes || [];
+    const customTypeNames = rawNodes
+      .filter((n) => !n.isAnchor && n.name)
+      .map((n) => n.name.trim());
+
+    this.nodes.set(
+      rawNodes.map((n) => {
+        const elementType = this.normalizeElementType(n.elementType);
+        return {
+          id: n.id,
+          name: n.name,
+          elementType,
+          stereotype: n.stereotype || undefined,
+          noteContent: n.noteContent ?? undefined,
+          position: { x: n.positionX, y: n.positionY },
+          width: n.width || 220,
+          height: n.height || undefined,
+          isAnchor: n.isAnchor,
+          assocMainConnId: n.assocMainConnId || undefined,
+          createdByUserId: n.createdByUserId,
+          createdByName: n.createdByName,
+          lastModifiedByUserId: n.lastModifiedByUserId,
+          lastModifiedByName: n.lastModifiedByName,
+          lastModifiedAt: n.lastModifiedAt,
+          attributes: (n.attributes || []).map((a, idx) => ({
+            name: a.name,
+            type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
+            visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
+            isPrimaryKey: Boolean(a.isPrimaryKey),
+            isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
+            orderIndex: a.orderIndex ?? idx,
+          })),
+          methods: (n.methods || []).map((m, idx) => ({
+            name: m.name,
+            parameters: m.parameters || '',
+            returnType: this.normalizeReturnType(m.returnType, customTypeNames),
+            visibility: this.normalizeVisibility(m.visibility, '+'),
+            orderIndex: m.orderIndex ?? idx,
+          })),
+        };
+      }),
+    );
+
+    this.connections.set(
+      (diagram.connections || []).map((c) => ({
+        id: c.id,
+        sourceNodeId: c.sourceNodeId || undefined,
+        targetNodeId: c.targetNodeId || undefined,
+        sourceId: c.sourceId,
+        targetId: c.targetId,
+        type: c.type as UmlRelationshipType,
+        lineStyle: this.normalizeLineStyle(c.lineStyle),
+        name: c.name || undefined,
+        sourceMultiplicity: c.sourceMultiplicity || '',
+        targetMultiplicity: c.targetMultiplicity || '',
+        assocAnchorNodeId: c.assocAnchorNodeId || undefined,
+      })),
+    );
   }
 
   normalizeElementType(type: unknown): UmlElementType {
@@ -780,7 +894,9 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       this.isProfileModalOpen() ||
       this.showAuditModal() ||
       this.showSqlModal() ||
-      this.showXmiModal()
+      this.showXmiModal() ||
+      this.showResumeModal() ||
+      this.showNotificationsDrawer()
     );
   }
 
@@ -815,6 +931,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       this.showXmiModal.set(false);
       this.isProfileModalOpen.set(false);
       this.isExportDropdownOpen.set(false);
+      this.showResumeModal.set(false);
+      this.showNotificationsDrawer.set(false);
     } else if ((event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey) {
       if (!isTyping && !this.hasAnyModalOpen() && !this.isReadOnly()) {
         event.preventDefault();
@@ -853,16 +971,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     }
   }
 
-  saveToBackend(): void {
-    if (this.isReadOnly()) return;
-
-    const diagramId = this.currentDiagramId();
-    if (!diagramId) {
-      this.openExportModal();
-      return;
-    }
-
-    const payload: SaveDiagramAstRequest = {
+  private buildSaveAstPayload(): SaveDiagramAstRequest {
+    return {
       defaultLineStyle: this.defaultLineStyle(),
       nodes: this.nodes().map((n) => {
         const elementType = this.normalizeElementType(n.elementType);
@@ -917,18 +1027,60 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         };
       }),
     };
+  }
+
+  saveToBackend(): void {
+    if (this.isReadOnly()) return;
+
+    const diagramId = this.currentDiagramId();
+    if (!diagramId) {
+      this.openExportModal();
+      return;
+    }
+
+    const payload = this.buildSaveAstPayload();
 
     this.diagramService.saveAst(diagramId, payload).subscribe({
-      next: () => {
+      next: (savedDiagram) => {
         this.hasUnsavedChanges.set(false);
+        if (savedDiagram?.aiAnnotations) {
+          this.aiAnnotations.set(savedDiagram.aiAnnotations);
+        }
+        if (savedDiagram?.nodes?.length) {
+          const savedMap = new Map(savedDiagram.nodes.map((sn) => [sn.id, sn]));
+          this.nodes.update((list) =>
+            list.map((n) => {
+              const sn = savedMap.get(n.id);
+              return sn
+                ? {
+                    ...n,
+                    createdByUserId: sn.createdByUserId ?? n.createdByUserId,
+                    createdByName: sn.createdByName ?? n.createdByName,
+                    lastModifiedByUserId: sn.lastModifiedByUserId ?? n.lastModifiedByUserId,
+                    lastModifiedByName: sn.lastModifiedByName ?? n.lastModifiedByName,
+                    lastModifiedAt: sn.lastModifiedAt ?? n.lastModifiedAt,
+                  }
+                : n;
+            }),
+          );
+        }
         this.saveSuccessMessage.set(true);
         setTimeout(() => this.saveSuccessMessage.set(false), 2500);
-        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'save');
+        this.collaborationService.sendDiagramSync(
+          this.nodes(),
+          this.connections(),
+          'save',
+          this.aiAnnotations(),
+        );
         this.collaborationService.sendActivityLog(
           'Guardó el diagrama en la base de datos',
           `${this.nodes().filter((n) => !n.isAnchor).length} elementos`,
           'uml',
         );
+      },
+      error: (err) => {
+        const msg = err?.error?.message || err?.message || 'No se pudo guardar el diagrama';
+        this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
       },
     });
   }
@@ -994,11 +1146,15 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   getNodeHeight(node: UmlClassNode): number {
     if (node.isAnchor) return 0;
     if (node.height && node.height > 0) return node.height;
+    const hasMetaFooter =
+      Boolean(node.lastModifiedByName || node.createdByName) ||
+      this.getNodeOpenAnnotations(node.id, node.name).length > 0;
+    const footerH = hasMetaFooter ? 18 : 0;
     const elType = (node.elementType || 'CLASS').toUpperCase();
     if (elType === 'NOTE') {
       const content = (node.noteContent || node.name || '').trim();
       const wrappedLines = Math.max(2, Math.ceil(content.length / 26) + (content.match(/\n/g)?.length || 0));
-      return 34 + wrappedLines * 17 + 16;
+      return 34 + wrappedLines * 17 + 16 + footerH;
     }
     const hasStereo =
       elType === 'INTERFACE' ||
@@ -1009,7 +1165,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const methodCount = (node.methods || []).length;
     const attrH = attrCount > 0 ? attrCount * 22 + 12 : 28;
     const methodH = methodCount > 0 ? methodCount * 22 + 14 : 0;
-    return headerH + attrH + methodH;
+    return headerH + attrH + methodH + footerH;
   }
 
   getOptimalConnectorId(sourceNode: UmlClassNode, targetNode: UmlClassNode): { sourceId: string; targetId: string } {
@@ -1384,7 +1540,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       assocAnchorNodeId: anchorId,
     };
 
-    const assocNode: UmlClassNode = {
+    const assocNode: UmlClassNode = this.stampLocalAuthor({
       id: assocNodeId,
       name: assocName,
       elementType: 'ASSOCIATION_CLASS',
@@ -1401,7 +1557,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         { name: 'getId', parameters: '', returnType: 'UUID', visibility: '+', orderIndex: 0 },
       ],
       assocMainConnId: mainConnId,
-    };
+    }, true);
 
     const dashedConnId = `conn_${timestamp}_assoc_dashed`;
     const dashedConnection: UmlConnection = {
@@ -1470,7 +1626,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       noteContent = 'Regla de negocio o aclaración del modelo.';
     }
 
-    const newNode: UmlClassNode = {
+    const newNode: UmlClassNode = this.stampLocalAuthor({
       id: `${normalizedType.toLowerCase()}_${timestamp}`,
       name,
       elementType: normalizedType,
@@ -1480,7 +1636,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       width: 220,
       attributes,
       methods,
-    };
+    }, true);
 
     this.nodes.update((list) => [...list, newNode]);
     this.markAsUnsaved();
@@ -1653,7 +1809,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         }));
     }
 
-    this.nodes.update((list) => list.map((n) => (n.id === edited.id ? edited : n)));
+    const stampedEdited = this.stampLocalAuthor(edited, false);
+    this.nodes.update((list) => list.map((n) => (n.id === stampedEdited.id ? stampedEdited : n)));
     this.markAsUnsaved();
     this.closeEditNodeModal();
     this.updateConnectionEndpoints();
@@ -1897,18 +2054,46 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     );
   }
 
-  onAiMutation(event: { nodes: UmlClassNode[]; connections: UmlConnection[]; summary: string }): void {
+  onAiMutation(event: { nodes: UmlClassNode[]; connections: UmlConnection[]; summary: string; rawResponse?: any }): void {
     if (this.isReadOnly()) return;
-    if (event.nodes && event.nodes.length > 0) {
+    if (Array.isArray(event.rawResponse?.annotationsAdded) && event.rawResponse.annotationsAdded.length > 0) {
+      this.onAnnotationsCreated(event.rawResponse.annotationsAdded);
+    }
+
+    const allowEmptyClear = Boolean(event.rawResponse?.mutatedDiagram === true);
+    if (event.nodes && (event.nodes.length > 0 || allowEmptyClear)) {
       this.pushUndoSnapshot();
       this.applyAiMutationWithAnimation(event.nodes, event.connections || []);
-      this.collaborationService.sendDiagramSync(event.nodes, event.connections || [], 'ai_mutation');
+      this.collaborationService.sendDiagramSync(
+        event.nodes,
+        event.connections || [],
+        'ai_mutation',
+        this.aiAnnotations(),
+      );
       this.collaborationService.sendActivityLog(
         event.summary || 'Copilot IA actualizó el diagrama',
         `${event.nodes.filter((n) => !n.isAnchor).length} elemento(s)`,
         'ai',
       );
     }
+  }
+
+  onAnnotationsCreated(added: AiAnnotationItem[]): void {
+    if (!Array.isArray(added) || added.length === 0) return;
+    this.aiAnnotations.update((prev) => {
+      const next = [...prev];
+      for (const item of added) {
+        if (!item?.id) continue;
+        const idx = next.findIndex((existing) => existing.id === item.id);
+        if (idx >= 0) {
+          next[idx] = item;
+        } else {
+          next.push(item);
+        }
+      }
+      return next;
+    });
+    this.showWhiteboardNotesPanel.set(true);
   }
 
   private applyAiMutationWithAnimation(targetNodes: UmlClassNode[], targetConns: UmlConnection[]): void {
@@ -1945,6 +2130,11 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         height: n.height,
         isAnchor: n.isAnchor,
         assocMainConnId: n.assocMainConnId,
+        createdByUserId: n.createdByUserId,
+        createdByName: n.createdByName,
+        lastModifiedByUserId: n.lastModifiedByUserId,
+        lastModifiedByName: n.lastModifiedByName,
+        lastModifiedAt: n.lastModifiedAt,
         attributes: (n.attributes || []).map((a: any, idx: number) => ({
           name: a.name,
           type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
@@ -2445,7 +2635,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           orderIndex: idx,
         }));
 
-        const newNode: UmlClassNode = {
+        const newNode: UmlClassNode = this.stampLocalAuthor({
           id: `class_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: className,
           elementType: 'CLASS',
@@ -2453,7 +2643,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           width: 220,
           attributes: inlineAttrs,
           methods: [],
-        };
+        }, true);
 
         this.pushUndoSnapshot();
         this.nodes.update((list) => [...list, newNode]);
@@ -2478,7 +2668,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           return;
         }
 
-        const newNode: UmlClassNode = {
+        const newNode: UmlClassNode = this.stampLocalAuthor({
           id: `interface_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: ifaceName,
           elementType: 'INTERFACE',
@@ -2487,7 +2677,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           width: 220,
           attributes: [],
           methods: [{ name: 'ejecutar', parameters: '', returnType: 'void', visibility: '+', orderIndex: 0 }],
-        };
+        }, true);
 
         this.pushUndoSnapshot();
         this.nodes.update((list) => [...list, newNode]);
@@ -2513,7 +2703,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
             ? cmd.payload.enumLiterals
             : ['ACTIVO', 'INACTIVO'];
 
-        const newNode: UmlClassNode = {
+        const newNode: UmlClassNode = this.stampLocalAuthor({
           id: `enum_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: enumName,
           elementType: 'ENUM',
@@ -2529,7 +2719,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
             orderIndex: idx,
           })),
           methods: [],
-        };
+        }, true);
 
         this.pushUndoSnapshot();
         this.nodes.update((list) => [...list, newNode]);
@@ -2546,7 +2736,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         const noteCount = this.nodes().filter((n) => !n.isAnchor && n.elementType === 'NOTE').length + 1;
         const noteName = cmd.payload.noteTitle?.trim() || `Nota_${noteCount}`;
 
-        const newNode: UmlClassNode = {
+        const newNode: UmlClassNode = this.stampLocalAuthor({
           id: `note_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: noteName,
           elementType: 'NOTE',
@@ -2555,7 +2745,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           width: 220,
           attributes: [],
           methods: [],
-        };
+        }, true);
 
         this.pushUndoSnapshot();
         this.nodes.update((list) => [...list, newNode]);
@@ -2604,7 +2794,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
         this.pushUndoSnapshot();
         this.nodes.update((list) =>
-          list.map((n) => (n.id === target.id ? { ...n, attributes: [...(n.attributes || []), newAttr] } : n)),
+          list.map((n) => (n.id === target.id ? this.stampLocalAuthor({ ...n, attributes: [...(n.attributes || []), newAttr] }) : n)),
         );
         this.markAsUnsaved();
         this.updateConnectionEndpoints();
@@ -2648,7 +2838,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
         this.pushUndoSnapshot();
         this.nodes.update((list) =>
-          list.map((n) => (n.id === target.id ? { ...n, methods: [...(n.methods || []), newMethod] } : n)),
+          list.map((n) => (n.id === target.id ? this.stampLocalAuthor({ ...n, methods: [...(n.methods || []), newMethod] }) : n)),
         );
         this.markAsUnsaved();
         this.updateConnectionEndpoints();
@@ -2679,7 +2869,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         const reindexed = remaining.map((a, idx) => ({ ...a, orderIndex: idx }));
         this.pushUndoSnapshot();
         this.nodes.update((list) =>
-          list.map((n) => (n.id === target.id ? { ...n, attributes: reindexed } : n)),
+          list.map((n) => (n.id === target.id ? this.stampLocalAuthor({ ...n, attributes: reindexed }) : n)),
         );
         this.markAsUnsaved();
         this.updateConnectionEndpoints();
@@ -2710,7 +2900,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         const reindexed = remaining.map((m, idx) => ({ ...m, orderIndex: idx }));
         this.pushUndoSnapshot();
         this.nodes.update((list) =>
-          list.map((n) => (n.id === target.id ? { ...n, methods: reindexed } : n)),
+          list.map((n) => (n.id === target.id ? this.stampLocalAuthor({ ...n, methods: reindexed }) : n)),
         );
         this.markAsUnsaved();
         this.updateConnectionEndpoints();
@@ -2795,7 +2985,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         const oldName = target.name;
         this.pushUndoSnapshot();
         this.nodes.update((list) =>
-          list.map((n) => (n.id === target.id ? { ...n, name: nextName } : n)),
+          list.map((n) => (n.id === target.id ? this.stampLocalAuthor({ ...n, name: nextName }) : n)),
         );
         this.markAsUnsaved();
         this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_rename');
@@ -2820,5 +3010,283 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         return;
       }
     }
+  }
+
+  // -------------------------------------------------------------
+  // ANOTACIONES IA EN PIZARRA, CONTINUIDAD MULTI-SESIÓN Y NOTIFICACIONES
+  // -------------------------------------------------------------
+  private stampLocalAuthor(node: UmlClassNode, isNew = false): UmlClassNode {
+    const u = this.authService.currentUser();
+    const authorName = u?.fullName || u?.email || node.lastModifiedByName || 'Colaborador';
+    const nowIso = new Date().toISOString();
+    return {
+      ...node,
+      createdByUserId: isNew ? (u?.id || node.createdByUserId) : (node.createdByUserId || u?.id),
+      createdByName: isNew ? authorName : (node.createdByName || authorName),
+      lastModifiedByUserId: u?.id || node.lastModifiedByUserId,
+      lastModifiedByName: authorName,
+      lastModifiedAt: nowIso,
+    };
+  }
+
+  getNodeOpenAnnotations(nodeId: string, nodeName?: string): AiAnnotationItem[] {
+    const normName = (nodeName || '').trim().toLowerCase();
+    return this.openAiAnnotations().filter(
+      (a) =>
+        (a.targetNodeId && a.targetNodeId === nodeId) ||
+        (!a.targetNodeId && normName && (a.targetClassName || '').trim().toLowerCase() === normName),
+    );
+  }
+
+  focusAnnotationsForNode(nodeId: string, event?: MouseEvent): void {
+    if (event) event.stopPropagation();
+    this.selectedNodeId.set(nodeId);
+    this.focusedAnnotationNodeId.set(nodeId);
+    this.showWhiteboardNotesPanel.set(true);
+  }
+
+  clearFocusedAnnotationFilter(): void {
+    this.focusedAnnotationNodeId.set(null);
+  }
+
+  getFocusedNodeName(): string {
+    const focusId = this.focusedAnnotationNodeId();
+    if (!focusId) return '';
+    return this.nodes().find((n) => n.id === focusId)?.name || 'Clase';
+  }
+
+  focusNodeFromAnnotation(ann: AiAnnotationItem): void {
+    if (ann.targetNodeId && this.nodes().some((n) => n.id === ann.targetNodeId)) {
+      this.selectedNodeId.set(ann.targetNodeId);
+      return;
+    }
+    if (ann.targetClassName) {
+      const targetName = ann.targetClassName.trim().toLowerCase();
+      const match = this.nodes().find((n) => !n.isAnchor && n.name.trim().toLowerCase() === targetName);
+      if (match) {
+        this.selectedNodeId.set(match.id);
+      }
+    }
+  }
+
+  applyWhiteboardAnnotation(ann: AiAnnotationItem): void {
+    const prompt = ann.suggestedAction?.suggestedPrompt?.trim();
+    if (!prompt || this.isReadOnly() || this.applyingAnnotationId()) return;
+
+    this.applyingAnnotationId.set(ann.id);
+    const diagramId = this.currentDiagramId() || 'temp_diagram';
+    const roomCode = this.collaborationService.activeRoomCode() || undefined;
+
+    this.aiAssistantService
+      .sendTextPrompt(prompt, diagramId, roomCode, this.nodes(), this.connections(), [], {
+        mode: 'mutate',
+        broadcastToRoom: true,
+        createWhiteboardNotes: false,
+        selectedNodeIds: ann.targetNodeId ? [ann.targetNodeId] : undefined,
+        persistChanges: true,
+      })
+      .subscribe({
+        next: (res) => {
+          this.applyingAnnotationId.set(null);
+          if (res.success && (res.mutatedDiagram || res.action === 'diagram_mutated') && Array.isArray(res.nodes)) {
+            this.pushUndoSnapshot();
+            this.applyAiMutationWithAnimation(res.nodes, res.connections || []);
+            this.setWhiteboardAnnotationStatus(ann.id, 'applied');
+            this.collaborationService.sendActivityLog(
+              `Aplicó nota de Copilot IA: ${ann.title}`,
+              prompt,
+              'ai',
+            );
+            this.showPermissionToast(`⚡ Nota "${ann.title}" aplicada al diagrama.`);
+          } else {
+            this.showPermissionToast(res.message || 'Copilot IA requiere más detalles para aplicar esta nota.');
+          }
+        },
+        error: (err) => {
+          this.applyingAnnotationId.set(null);
+          const msg = err?.error?.message || err?.message || 'Error al aplicar la nota con Copilot IA';
+          this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+        },
+      });
+  }
+
+  setWhiteboardAnnotationStatus(annotationId: string, status: AiAnnotationStatus): void {
+    const diagramId = this.currentDiagramId();
+    if (!diagramId) {
+      this.aiAnnotations.update((list) =>
+        list.map((a) => (a.id === annotationId ? { ...a, status } : a)),
+      );
+      return;
+    }
+
+    this.diagramService.updateAnnotationStatus(diagramId, annotationId, status).subscribe({
+      next: (updatedDiagram) => {
+        const nextList = updatedDiagram.aiAnnotations || [];
+        this.aiAnnotations.set(nextList);
+        this.collaborationService.sendDiagramSync(
+          this.nodes(),
+          this.connections(),
+          'annotation_status',
+          nextList,
+        );
+      },
+      error: (err) => {
+        const msg = err?.error?.message || err?.message || 'No se pudo actualizar la anotación';
+        this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+      },
+    });
+  }
+
+  openResumeModal(): void {
+    this.sinceLastVisitBanner.set(null);
+    this.showNotificationsDrawer.set(false);
+    this.showResumeModal.set(true);
+    this.loadResumeBundle();
+  }
+
+  loadResumeBundle(): void {
+    const diagramId = this.currentDiagramId();
+    if (!diagramId) return;
+
+    this.isLoadingResume.set(true);
+    this.collaborationService.getResumeBundle(diagramId).subscribe({
+      next: (bundle) => {
+        this.resumeBundle.set(bundle);
+        this.isLoadingResume.set(false);
+      },
+      error: () => {
+        this.isLoadingResume.set(false);
+      },
+    });
+  }
+
+  askAiRecapFromModal(): void {
+    this.showResumeModal.set(false);
+    this.isCollabPanelOpen.set(true);
+    if (typeof window !== 'undefined' && window.innerWidth < 1500) {
+      this.isAiPanelOpen.set(false);
+    }
+    this.collaborationService.sendChatMessage(
+      '@IA resume los avances recientes entre sesiones, quién modificó qué clases y sugiere cómo continuar hoy',
+    );
+  }
+
+  createManualCheckpoint(): void {
+    const diagramId = this.currentDiagramId();
+    if (!diagramId || this.isReadOnly() || this.isCreatingSnapshot()) return;
+
+    this.isCreatingSnapshot.set(true);
+    const label = this.snapshotLabelDraft().trim() || undefined;
+
+    const persistSnapshot = () => {
+      this.diagramService.createSnapshot(diagramId, label).subscribe({
+        next: () => {
+          this.isCreatingSnapshot.set(false);
+          this.snapshotLabelDraft.set('');
+          this.loadResumeBundle();
+          this.showPermissionToast('📌 Checkpoint multi-sesión guardado.');
+          this.collaborationService.sendActivityLog(
+            `Guardó checkpoint${label ? `: "${label}"` : ''}`,
+            `${this.nodes().filter((n) => !n.isAnchor).length} elementos`,
+            'system',
+          );
+        },
+        error: (err) => {
+          this.isCreatingSnapshot.set(false);
+          const msg = err?.error?.message || err?.message || 'Error al crear checkpoint';
+          this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+        },
+      });
+    };
+
+    if (this.hasUnsavedChanges()) {
+      this.diagramService.saveAst(diagramId, this.buildSaveAstPayload()).subscribe({
+        next: () => {
+          this.hasUnsavedChanges.set(false);
+          this.collaborationService.sendDiagramSync(
+            this.nodes(),
+            this.connections(),
+            'save',
+            this.aiAnnotations(),
+          );
+          persistSnapshot();
+        },
+        error: () => persistSnapshot(),
+      });
+    } else {
+      persistSnapshot();
+    }
+  }
+
+  restoreCheckpoint(snapshot: DiagramSnapshotItem): void {
+    const diagramId = this.currentDiagramId();
+    if (!diagramId || this.isReadOnly() || this.isRestoringSnapshot()) return;
+
+    const ok = confirm(
+      `¿Restaurar el diagrama al checkpoint "${snapshot.label}" (Sesión #${snapshot.sessionNumber})? Se guardará como versión activa para toda la sala.`,
+    );
+    if (!ok) return;
+
+    this.isRestoringSnapshot.set(true);
+    this.pushUndoSnapshot();
+
+    this.diagramService.restoreSnapshot(diagramId, snapshot.id).subscribe({
+      next: (restoredDiagram) => {
+        this.isRestoringSnapshot.set(false);
+        this.applyLoadedDiagramDto(restoredDiagram);
+        this.hasUnsavedChanges.set(false);
+        this.updateConnectionEndpoints();
+        setTimeout(() => {
+          this.updateConnectionEndpoints();
+          this.fitView();
+        }, 80);
+        this.collaborationService.sendDiagramSync(
+          this.nodes(),
+          this.connections(),
+          'snapshot_restore',
+          this.aiAnnotations(),
+        );
+        this.loadResumeBundle();
+        this.showPermissionToast(`♻️ Checkpoint "${snapshot.label}" restaurado.`);
+      },
+      error: (err) => {
+        this.isRestoringSnapshot.set(false);
+        const msg = err?.error?.message || err?.message || 'No se pudo restaurar el checkpoint';
+        this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+      },
+    });
+  }
+
+  toggleNotificationsDrawer(): void {
+    const next = !this.showNotificationsDrawer();
+    this.showNotificationsDrawer.set(next);
+    const diagramId = this.currentDiagramId();
+    if (next && diagramId) {
+      this.collaborationService.loadNotifications(diagramId).subscribe({ error: () => {} });
+    }
+  }
+
+  isNotificationRead(notif: CollabNotificationItem): boolean {
+    const uid = this.authService.currentUser()?.id;
+    return Boolean(uid && Array.isArray(notif.readByUserIds) && notif.readByUserIds.includes(uid));
+  }
+
+  onNotificationClick(notif: CollabNotificationItem): void {
+    if (!this.isNotificationRead(notif)) {
+      this.collaborationService.markNotificationRead(notif.id).subscribe({ error: () => {} });
+    }
+    if (notif.targetNodeIds && notif.targetNodeIds.length > 0) {
+      const targetId = notif.targetNodeIds[0];
+      if (this.nodes().some((n) => n.id === targetId)) {
+        this.selectedNodeId.set(targetId);
+        this.showNotificationsDrawer.set(false);
+      }
+    }
+  }
+
+  markAllNotificationsRead(): void {
+    const diagramId = this.currentDiagramId();
+    if (!diagramId) return;
+    this.collaborationService.markAllNotificationsRead(diagramId).subscribe({ error: () => {} });
   }
 }

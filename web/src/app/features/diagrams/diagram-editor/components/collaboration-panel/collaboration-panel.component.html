@@ -96,13 +96,49 @@
           </div>
         } @else {
           @for (msg of collaborationService.chatMessages(); track (msg.id || $index)) {
-            @if (isOwnChatMessage(msg.userId)) {
+            @if (msg.senderType === 'ai') {
+              <div class="flex items-start gap-2 animate-in fade-in slide-in-from-bottom-1">
+                <div class="w-6 h-6 rounded-full bg-gradient-to-br from-purple-600 to-indigo-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                  <ng-icon name="heroSparkles" class="text-xs text-amber-200"></ng-icon>
+                </div>
+                <div class="max-w-[88%] space-y-1">
+                  <div class="flex flex-wrap items-center gap-1 text-[9.5px] font-mono">
+                    <span class="font-bold text-purple-800 dark:text-purple-300">{{ msg.userName || '✨ Copilot IA' }}</span>
+                    @if (msg.aiMode) {
+                      <span class="px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 text-[8.5px] font-bold">
+                        {{ getAiModeLabel(msg.aiMode) }}
+                      </span>
+                    }
+                    @if (msg.requestedByUserName) {
+                      <span class="text-[9px] text-slate-500 dark:text-slate-400">
+                        → a {{ msg.requestedByUserName }}
+                      </span>
+                    }
+                  </div>
+                  <div class="px-2.5 py-2 rounded-xl rounded-tl-xs bg-gradient-to-br from-purple-50 to-indigo-50/80 dark:from-[#1B1838] dark:to-[#151A30] border border-purple-300 dark:border-purple-700/80 text-slate-800 dark:text-slate-100 text-[11.5px] shadow-xs whitespace-pre-wrap break-words leading-relaxed">
+                    {{ msg.message }}
+                  </div>
+                  <div class="flex flex-wrap items-center gap-1.5 text-[8.5px] font-mono text-slate-400 dark:text-slate-500">
+                    <span>{{ msg.timestamp | date:'HH:mm:ss' }}</span>
+                    @if (msg.sessionNumber) {
+                      <span>• S{{ msg.sessionNumber }}</span>
+                    }
+                    @if (msg.modelUsed) {
+                      <span class="px-1 rounded bg-slate-200/70 dark:bg-[#1E2442] text-slate-600 dark:text-slate-300">{{ msg.modelUsed }}</span>
+                    }
+                  </div>
+                </div>
+              </div>
+            } @else if (isOwnChatMessage(msg.userId)) {
               <div class="flex flex-col items-end gap-0.5">
                 <div class="max-w-[85%] px-2.5 py-2 rounded-xl rounded-tr-xs bg-indigo-600 dark:bg-indigo-700 text-white text-[11.5px] shadow-xs break-words">
                   {{ msg.message }}
                 </div>
                 <span class="text-[9px] font-mono text-slate-400 dark:text-slate-500 pr-1">
                   Tú • {{ msg.timestamp | date:'HH:mm:ss' }}
+                  @if (msg.sessionNumber) {
+                    <span>• S{{ msg.sessionNumber }}</span>
+                  }
                 </span>
               </div>
             } @else {
@@ -121,6 +157,9 @@
                   </div>
                   <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500">
                     {{ msg.timestamp | date:'HH:mm:ss' }}
+                    @if (msg.sessionNumber) {
+                      <span>• S{{ msg.sessionNumber }}</span>
+                    }
                   </div>
                 </div>
               </div>
@@ -129,23 +168,56 @@
         }
       </div>
 
-      <!-- Input Chat -->
-      <div class="p-2.5 bg-white dark:bg-[#121629] border-t border-[#C0C0C0] dark:border-[#283256] flex items-center gap-2 shrink-0">
-        <input
-          type="text"
-          [ngModel]="chatDraft()"
-          (ngModelChange)="chatDraft.set($event)"
-          (keydown.enter)="onSendChat()"
-          [placeholder]="'collabPanel.chatPlaceholder' | translate"
-          class="flex-1 min-w-0 px-2.5 py-1.5 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-        <button
-          type="button"
-          (click)="onSendChat()"
-          [disabled]="!chatDraft().trim()"
-          [title]="'collabPanel.send' | translate"
-          class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-mono text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-35 disabled:cursor-not-allowed">
-          <ng-icon name="heroPaperAirplane" class="text-xs"></ng-icon>
-        </button>
+      <!-- Barra rápida @IA y Input Chat -->
+      <div class="bg-white dark:bg-[#121629] border-t border-[#C0C0C0] dark:border-[#283256] shrink-0">
+        <div class="px-2.5 pt-2 flex items-center gap-1 overflow-x-auto no-scrollbar text-[9.5px] font-mono">
+          <button
+            type="button"
+            (click)="insertMentionAi()"
+            class="px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/60 hover:bg-purple-200 dark:hover:bg-purple-900/70 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 font-bold shrink-0 cursor-pointer">
+            @IA
+          </button>
+          <button
+            type="button"
+            (click)="insertMentionAi('@IA revisa el diagrama y dinos qué mejorar')"
+            class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-[#2D3762] shrink-0 cursor-pointer">
+            🔍 @IA revisar
+          </button>
+          <button
+            type="button"
+            (click)="insertMentionAi('@IA audita OMT/UML y claves primarias')"
+            class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-[#2D3762] shrink-0 cursor-pointer">
+            📐 @IA auditar
+          </button>
+          <button
+            type="button"
+            (click)="insertMentionAi('@IA resume qué hizo cada compañero')"
+            class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#1A203E] hover:bg-purple-100 dark:hover:bg-[#252E56] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-[#2D3762] shrink-0 cursor-pointer">
+            🕒 @IA resumen
+          </button>
+        </div>
+
+        <div class="p-2.5 pt-1.5 flex items-center gap-2">
+          <input
+            #chatInputEl
+            type="text"
+            [ngModel]="chatDraft()"
+            (ngModelChange)="chatDraft.set($event)"
+            (keydown.enter)="onSendChat()"
+            [placeholder]="'collabPanel.chatPlaceholder' | translate"
+            class="flex-1 min-w-0 px-2.5 py-1.5 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+          <button
+            type="button"
+            (click)="onSendChat()"
+            [disabled]="!chatDraft().trim()"
+            [title]="'collabPanel.send' | translate"
+            class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-mono text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-35 disabled:cursor-not-allowed">
+            <ng-icon name="heroPaperAirplane" class="text-xs"></ng-icon>
+          </button>
+        </div>
+        <div class="px-2.5 pb-1.5 text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate">
+          {{ 'collabPanel.mentionHint' | translate }}
+        </div>
       </div>
     }
 
@@ -180,17 +252,38 @@
                     class="w-2 h-2 rounded-full shrink-0"
                     [style.backgroundColor]="entry.color || '#6366F1'"></span>
                   <span class="font-bold text-[11px] text-slate-900 dark:text-slate-100 truncate">{{ entry.userName }}</span>
+                  @if (entry.actorType === 'ai') {
+                    <span class="px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-200 font-mono text-[8.5px] font-bold shrink-0">
+                      IA
+                    </span>
+                  }
                 </div>
-                <span class="px-1.5 py-0.2 rounded border font-mono text-[8.5px] uppercase font-bold shrink-0" [ngClass]="getCategoryBadgeClass(entry.category)">
-                  {{ entry.category }}
-                </span>
+                <div class="flex items-center gap-1 shrink-0">
+                  @if (entry.sessionNumber) {
+                    <span class="px-1 py-0.2 rounded bg-slate-100 dark:bg-[#1E2442] text-slate-500 dark:text-slate-400 font-mono text-[8.5px]">
+                      S{{ entry.sessionNumber }}
+                    </span>
+                  }
+                  <span class="px-1.5 py-0.2 rounded border font-mono text-[8.5px] uppercase font-bold" [ngClass]="getCategoryBadgeClass(entry.category)">
+                    {{ entry.category }}
+                  </span>
+                </div>
               </div>
               <p class="text-[11px] text-slate-800 dark:text-slate-200 font-medium leading-snug">{{ entry.action }}</p>
               @if (entry.detail) {
                 <p class="text-[10px] font-mono text-slate-500 dark:text-slate-400 break-words">{{ entry.detail }}</p>
               }
+              @if (entry.affectedClasses && entry.affectedClasses.length > 0) {
+                <div class="flex flex-wrap gap-1 pt-0.5">
+                  @for (cls of entry.affectedClasses; track cls) {
+                    <span class="px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-[#1C2242] text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-[#2D3762] font-mono text-[8.5px]">
+                      {{ cls }}
+                    </span>
+                  }
+                </div>
+              }
               <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500 text-right">
-                {{ entry.timestamp | date:'HH:mm:ss' }}
+                {{ entry.sessionDate ? (entry.sessionDate + ' • ') : '' }}{{ entry.timestamp | date:'HH:mm:ss' }}
               </div>
             </div>
           }
@@ -202,6 +295,29 @@
     @if (activeTab() === 'team') {
       <div class="flex-1 p-3 overflow-y-auto space-y-4 bg-[#F4F4F6] dark:bg-[#0D1124] min-h-0">
 
+        <!-- Continuidad Multi-Sesión & Anfitrión -->
+        @if (collaborationService.sessionMeta(); as meta) {
+          <div class="p-2.5 bg-gradient-to-br from-indigo-50 to-white dark:from-[#1A203E] dark:to-[#151A30] border border-indigo-200 dark:border-[#3B487A] rounded space-y-1.5">
+            <div class="flex items-center justify-between font-mono text-[10px]">
+              <span class="font-bold uppercase text-indigo-800 dark:text-indigo-300 flex items-center gap-1">
+                <ng-icon name="heroClock" class="text-xs"></ng-icon>
+                <span>Sesión #{{ meta.sessionNumber || 1 }}</span>
+              </span>
+              <span class="px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-200 text-[9px] font-bold">
+                {{ (meta.activeDateKeys?.length || 1) }} día(s) activo(s)
+              </span>
+            </div>
+            <div class="text-[10.5px] font-mono text-slate-700 dark:text-slate-300 flex items-center justify-between gap-2">
+              <span class="truncate">
+                👑 {{ 'collabPanel.hostBadge' | translate }}: <strong>{{ meta.hostUserName || 'Automático' }}</strong>
+              </span>
+              @if (meta.lastActiveDay) {
+                <span class="text-[9.5px] text-slate-500 dark:text-slate-400 shrink-0">{{ meta.lastActiveDay }}</span>
+              }
+            </div>
+          </div>
+        }
+
         <!-- Conectados en vivo en la sala -->
         <div class="p-2.5 bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] rounded space-y-2">
           <div class="flex items-center justify-between font-mono text-[10px] uppercase font-bold text-slate-600 dark:text-slate-300">
@@ -211,11 +327,71 @@
           @if (collaborationService.collaborators().length === 0) {
             <p class="text-[10.5px] font-mono text-slate-400 dark:text-slate-500">Solo tú en esta sesión.</p>
           } @else {
-            <div class="flex flex-wrap gap-1.5">
+            <div class="space-y-1.5">
               @for (collab of collaborationService.collaborators(); track collab.userId) {
-                <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#1C2242] border border-slate-200 dark:border-[#2D3762] text-[10.5px]">
-                  <span class="w-2 h-2 rounded-full animate-pulse" [style.backgroundColor]="collab.color"></span>
-                  <span class="font-medium text-slate-800 dark:text-slate-200 max-w-[120px] truncate">{{ collab.userName }}</span>
+                <div class="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-100 dark:bg-[#1C2242] border border-slate-200 dark:border-[#2D3762] text-[10.5px]">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="w-2 h-2 rounded-full animate-pulse shrink-0" [style.backgroundColor]="collab.color"></span>
+                    <span class="font-medium text-slate-800 dark:text-slate-200 truncate">{{ collab.userName }}</span>
+                    @if (collaborationService.sessionMeta()?.hostUserId === collab.userId) {
+                      <span class="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-mono text-[8.5px] font-bold shrink-0">
+                        👑 {{ 'collabPanel.hostBadge' | translate }}
+                      </span>
+                    }
+                  </div>
+                  @if (isCurrentHost() && collab.userId !== authService.currentUser()?.id) {
+                    <button
+                      type="button"
+                      (click)="onTransferHost(collab.userId, collab.userName)"
+                      [disabled]="isTransferringHost()"
+                      title="Transferir anfitrión a este colaborador"
+                      class="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40 shrink-0">
+                      <ng-icon name="heroArrowsRightLeft" class="text-[10px]"></ng-icon>
+                      <span>{{ 'collabPanel.transferHost' | translate }}</span>
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Contribuciones acumuladas por autor (incluye Copilot IA) -->
+        <div class="p-2.5 bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] rounded space-y-2">
+          <div class="flex items-center justify-between font-mono text-[10px] uppercase font-bold text-slate-600 dark:text-slate-300">
+            <span>{{ 'collabPanel.contributionsTitle' | translate }}</span>
+            <button
+              type="button"
+              (click)="loadContributions()"
+              [disabled]="isLoadingContributions()"
+              class="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer disabled:opacity-40 text-[9.5px] normal-case">
+              {{ isLoadingContributions() ? 'Cargando...' : 'Actualizar' }}
+            </button>
+          </div>
+          @if (contributorStats().length === 0) {
+            <p class="text-[10px] font-mono text-slate-400 dark:text-slate-500">Sin contribuciones registradas aún.</p>
+          } @else {
+            <div class="space-y-1.5">
+              @for (stat of contributorStats(); track (stat.actorType + '_' + stat.userId)) {
+                <div class="p-1.5 rounded bg-slate-50 dark:bg-[#0E1225] border border-slate-200 dark:border-[#222B4D] text-[10px] space-y-0.5">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-bold text-slate-800 dark:text-slate-200 truncate">
+                      {{ stat.actorType === 'ai' ? '✨ ' : '' }}{{ stat.userName }}
+                    </span>
+                    <span class="font-mono font-bold text-indigo-700 dark:text-indigo-300 shrink-0">
+                      {{ stat.totalEvents }} acc.
+                    </span>
+                  </div>
+                  <div class="text-[9px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                    <span>UML: {{ stat.umlEdits }}</span>
+                    <span>• Voz: {{ stat.voiceCommands }}</span>
+                    <span>• IA: {{ stat.aiInteractions }}</span>
+                  </div>
+                  @if (stat.touchedClasses && stat.touchedClasses.length > 0) {
+                    <div class="text-[9px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                      Clases: {{ stat.touchedClasses.join(', ') }}
+                    </div>
+                  }
                 </div>
               }
             </div>

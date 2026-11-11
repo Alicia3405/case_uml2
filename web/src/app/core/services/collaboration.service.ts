@@ -1,8 +1,9 @@
-import { Injectable, signal, inject, effect, untracked } from '@angular/core';
+import { Injectable, signal, inject, effect, untracked, computed } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { io, Socket } from 'socket.io-client';
-import { Subject } from 'rxjs';
+import { Observable, Subject, map, tap } from 'rxjs';
 import { AuthService } from './auth.service';
-import { UmlClassNode, UmlConnection } from '../models/diagram.model';
+import { AiAnnotationItem, DiagramSnapshotItem, UmlClassNode, UmlConnection } from '../models/diagram.model';
 import { User } from '../models/user.model';
 import { environment } from '../../../environments/environment';
 
@@ -85,11 +86,81 @@ export interface ProjectPermissionsUpdatedEvent {
   timestamp?: string;
 }
 
+export interface ContributorStatsItem {
+  userId: string;
+  userName: string;
+  actorType: 'human' | 'ai';
+  totalEvents: number;
+  umlEdits: number;
+  aiInteractions: number;
+  voiceCommands: number;
+  lastActionAt: string;
+  touchedClasses: string[];
+}
+
+export interface CollabNotificationItem {
+  id: string;
+  projectId?: string | null;
+  diagramId: string;
+  roomCode?: string | null;
+  recipientUserId: string;
+  severity: 'info' | 'warning' | 'discipline' | 'mention';
+  title: string;
+  body: string;
+  actorUserId?: string | null;
+  actorName: string;
+  targetNodeIds: string[];
+  readByUserIds: string[];
+  createdAt: string;
+}
+
+export interface ResumeBundleDto {
+  diagram: {
+    id: string;
+    projectId: string | null;
+    name: string;
+    revisionCount: number;
+    lastModifiedByName: string | null;
+    lastModifiedAt: string | null;
+    classCount: number;
+    connectionCount: number;
+    openAiAnnotationsCount: number;
+  };
+  session: SessionContinuityMeta | null;
+  sinceLastVisit: {
+    lastContributedAt: string | null;
+    changesCount: number;
+    contributors: string[];
+    touchedClasses: string[];
+    highlights: string[];
+  };
+  contributorStats: ContributorStatsItem[];
+  snapshots: DiagramSnapshotItem[];
+  unreadNotifications: CollabNotificationItem[];
+  recentMessages: ChatMessage[];
+  recentEvents: ActivityLog[];
+}
+
+export interface ContributionReportDto {
+  diagramId: string;
+  contributorStats: ContributorStatsItem[];
+  nodeAttribution: Array<{
+    nodeId: string;
+    name: string;
+    elementType: string;
+    createdByName: string | null;
+    lastModifiedByName: string | null;
+    lastModifiedAt: string | null;
+  }>;
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class CollaborationService {
   private readonly authService = inject(AuthService);
+  private readonly http = inject(HttpClient);
+  private readonly apiUrl = `${environment.apiUrl}/collaboration`;
   private socket: Socket | null = null;
   private readonly socketUrl = environment.socketUrl;
   private readonly uuidRegex =
@@ -108,16 +179,22 @@ export class CollaborationService {
   readonly activityLogs = signal<ActivityLog[]>([]);
   readonly unreadChatCount = signal<number>(0);
   readonly isChatPanelVisible = signal<boolean>(false);
-  readonly notifications = signal<any[]>([]);
+  readonly notifications = signal<CollabNotificationItem[]>([]);
+  readonly unreadNotificationCount = computed(() => {
+    const uid = this.authService.currentUser()?.id;
+    return this.notifications().filter(
+      (n) => !(uid && Array.isArray(n.readByUserIds) && n.readByUserIds.includes(uid)),
+    ).length;
+  });
 
   // Observables para cambios remotos
   readonly remoteNodeDrag$ = new Subject<{ nodeId: string; position: { x: number; y: number }; userId: string }>();
-  readonly remoteDiagramSync$ = new Subject<{ nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string; aiAnnotations?: any[] }>();
+  readonly remoteDiagramSync$ = new Subject<{ nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string; aiAnnotations?: AiAnnotationItem[] }>();
   readonly nodeLockRejected$ = new Subject<{ nodeId: string; lockedBy: NodeLock }>();
   readonly projectPermissionsUpdated$ = new Subject<ProjectPermissionsUpdatedEvent>();
   readonly hostTransferred$ = new Subject<any>();
-  readonly aiAnnotationsUpdated$ = new Subject<{ diagramId: string; aiAnnotations: any[] }>();
-  readonly notificationReceived$ = new Subject<any>();
+  readonly aiAnnotationsUpdated$ = new Subject<{ diagramId: string; aiAnnotations: AiAnnotationItem[] }>();
+  readonly notificationReceived$ = new Subject<CollabNotificationItem>();
 
   private readonly MAX_CLIENT_HISTORY = 100;
 
@@ -146,7 +223,7 @@ export class CollaborationService {
     try {
       const stored = localStorage.getItem('uml_studio_user');
       if (stored) return JSON.parse(stored);
-    } catch {}
+    } catch { }
     return null;
   }
 
@@ -201,7 +278,7 @@ export class CollaborationService {
     this.socket.on('user_left', (data: { userId: string; userName?: string }) => {
       this.collaborators.update((list) => list.filter((c) => c.userId !== data.userId));
       this.remoteCursors.update((cursors) => cursors.filter((c) => c.userId !== data.userId));
-      
+
       // Limpiar bloqueos de este usuario si quedaron
       this.activeNodeLocks.update((map) => {
         const next = new Map(map);
@@ -271,10 +348,10 @@ export class CollaborationService {
       this.sessionMeta.update((prev) =>
         prev
           ? {
-              ...prev,
-              hostUserId: transfer.newHostUserId ?? null,
-              hostUserName: transfer.newHostUserName ?? null,
-            }
+            ...prev,
+            hostUserId: transfer.newHostUserId ?? null,
+            hostUserName: transfer.newHostUserName ?? null,
+          }
           : prev,
       );
       this.hostTransferred$.next(transfer);
@@ -335,12 +412,98 @@ export class CollaborationService {
     });
   }
 
+  private unwrap<T>(res: any): T {
+    return (res && typeof res === 'object' && 'data' in res ? res.data : res) as T;
+  }
+
+  getResumeBundle(diagramId: string): Observable<ResumeBundleDto> {
+    return this.http
+      .get<any>(`${this.apiUrl}/diagrams/${diagramId}/resume`)
+      .pipe(map((res) => this.unwrap<ResumeBundleDto>(res)));
+  }
+
+  getContributions(diagramId: string): Observable<ContributionReportDto> {
+    return this.http
+      .get<any>(`${this.apiUrl}/diagrams/${diagramId}/contributions`)
+      .pipe(map((res) => this.unwrap<ContributionReportDto>(res)));
+  }
+
+  transferHost(sessionId: string, targetUserId: string): Observable<SessionContinuityMeta> {
+    return this.http
+      .post<any>(`${this.apiUrl}/sessions/${sessionId}/transfer-host`, { targetUserId })
+      .pipe(
+        map((res) => this.unwrap<SessionContinuityMeta>(res)),
+        tap((updatedSession) => {
+          if (updatedSession) {
+            this.sessionMeta.set(updatedSession);
+          }
+        }),
+      );
+  }
+
+  loadNotifications(diagramId?: string, unreadOnly = false): Observable<CollabNotificationItem[]> {
+    let params = new HttpParams();
+    if (diagramId) {
+      params = params.set('diagramId', diagramId);
+    }
+    if (unreadOnly) {
+      params = params.set('unreadOnly', 'true');
+    }
+
+    return this.http.get<any>(`${this.apiUrl}/notifications`, { params }).pipe(
+      map((res) => this.unwrap<CollabNotificationItem[]>(res) || []),
+      tap((items) => {
+        if (!diagramId || diagramId === this.currentDiagramId()) {
+          this.notifications.set(items);
+        }
+      }),
+    );
+  }
+
+  markNotificationRead(notificationId: string): Observable<CollabNotificationItem | null> {
+    const uid = this.getCurrentUser()?.id;
+    return this.http.patch<any>(`${this.apiUrl}/notifications/${notificationId}/read`, {}).pipe(
+      map((res) => this.unwrap<CollabNotificationItem | null>(res)),
+      tap((updated) => {
+        this.notifications.update((list) =>
+          list.map((n) => {
+            if (n.id !== notificationId) return n;
+            if (updated) return updated;
+            const readBy = new Set(n.readByUserIds || []);
+            if (uid) readBy.add(uid);
+            return { ...n, readByUserIds: Array.from(readBy) };
+          }),
+        );
+      }),
+    );
+  }
+
+  markAllNotificationsRead(diagramId: string): Observable<{ updatedCount: number }> {
+    const uid = this.getCurrentUser()?.id;
+    return this.http
+      .post<any>(`${this.apiUrl}/diagrams/${diagramId}/notifications/read-all`, {})
+      .pipe(
+        map((res) => this.unwrap<{ updatedCount: number }>(res)),
+        tap(() => {
+          if (!uid) return;
+          this.notifications.update((list) =>
+            list.map((n) =>
+              n.diagramId === diagramId && !(n.readByUserIds || []).includes(uid)
+                ? { ...n, readByUserIds: [...(n.readByUserIds || []), uid] }
+                : n,
+            ),
+          );
+        }),
+      );
+  }
+
   joinRoom(diagramId: string, customRoomCode?: string): void {
     const previousId = this.currentDiagramId();
     if (previousId && previousId !== diagramId) {
       this.chatMessages.set([]);
       this.activityLogs.set([]);
       this.unreadChatCount.set(0);
+      this.notifications.set([]);
       this.remoteCursors.set([]);
       this.activeNodeLocks.set(new Map());
     }
@@ -402,6 +565,7 @@ export class CollaborationService {
           if (res.recentActivityLogs) {
             this.activityLogs.set(res.recentActivityLogs);
           }
+          this.loadNotifications(diagramId).subscribe({ error: () => { } });
         }
       },
     );
@@ -426,6 +590,7 @@ export class CollaborationService {
     this.activeNodeLocks.set(new Map());
     this.chatMessages.set([]);
     this.activityLogs.set([]);
+    this.notifications.set([]);
     this.unreadChatCount.set(0);
   }
 
@@ -516,7 +681,12 @@ export class CollaborationService {
     });
   }
 
-  sendDiagramSync(nodes: UmlClassNode[], connections: UmlConnection[], action = 'update'): void {
+  sendDiagramSync(
+    nodes: UmlClassNode[],
+    connections: UmlConnection[],
+    action = 'update',
+    aiAnnotations?: AiAnnotationItem[],
+  ): void {
     const user = this.getCurrentUser();
     const diagramId = this.currentDiagramId();
     const roomCode = this.activeRoomCode();
@@ -529,6 +699,7 @@ export class CollaborationService {
       connections,
       userId: user?.id || 'anon',
       action,
+      ...(aiAnnotations ? { aiAnnotations } : {}),
     });
   }
 

@@ -175,6 +175,9 @@ export const es = {
     xmiTooltip: 'Visor y Validador OMG XMI 2.1',
     collabBtn: 'Equipo & Chat',
     collabTooltip: 'Abrir Sala Colaborativa: Chat, Bitácora en Vivo y Permisos',
+    resumeBtn: 'Retomar',
+    resumeTooltip: 'Continuidad multi-sesión, contribuciones y checkpoints (snapshots)',
+    notificationsTooltip: 'Notificaciones (@menciones y alertas IA)',
   },
   toolbar: {
     title: 'Herramientas de Modelado',
@@ -372,6 +375,18 @@ export const es = {
     ocrOfflineTooltip: 'Digitalizar imagen sin internet en el navegador (Tesseract.js 2D)',
     ocrRetryBtn: 'Reintentar Offline con Tesseract OCR',
     ocrRunning: 'Ejecutando OCR 2D Offline en navegador...',
+    modeLabel: 'Modo del Copilot',
+    modes: {
+      auto: 'Auto',
+      advise: 'Opinar',
+      review: 'Revisar',
+      discipline: 'OMT/UML',
+      mutate: 'Editar',
+      recap: 'Resumen',
+    },
+    broadcastToggle: 'Difundir en chat grupal',
+    notesToggle: 'Fijar notas en pizarra',
+    colabConnectorBtn: 'Ollama / Colab',
   },
   profile: {
     title: 'Mi Perfil de Usuario',
@@ -499,5 +514,9 @@ export const es = {
     ownerOnlyNote: 'Solo el Propietario (OWNER) puede cambiar roles y descarga ZIP.',
     removeConfirm: '¿Estás seguro de remover a este colaborador del proyecto?',
     permissionUpdatedBanner: 'Tus permisos han sido actualizados',
+    mentionHint: 'Tip: escribe @IA o @copilot para invocar a la IA en este chat grupal.',
+    hostBadge: 'Anfitrión',
+    transferHost: 'Hacer anfitrión',
+    contributionsTitle: 'Contribuciones (Multi-Sesión)',
   },
 };

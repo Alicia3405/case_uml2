@@ -26,10 +26,14 @@ import {
   heroPlus,
   heroCheck,
   heroClipboardDocument,
+  heroSparkles,
+  heroClock,
+  heroArrowsRightLeft,
 } from '@ng-icons/heroicons/outline';
 import {
   ActivityCategory,
   CollaborationService,
+  ContributorStatsItem,
 } from '../../../../../core/services/collaboration.service';
 import { AuthService } from '../../../../../core/services/auth.service';
 import { ProjectService } from '../../../../../core/services/project.service';
@@ -56,6 +60,9 @@ export type CollabTab = 'chat' | 'audit' | 'team';
       heroPlus,
       heroCheck,
       heroClipboardDocument,
+      heroSparkles,
+      heroClock,
+      heroArrowsRightLeft,
     }),
   ],
   templateUrl: './collaboration-panel.component.html',
@@ -66,8 +73,10 @@ export class CollaborationPanelComponent {
   private readonly projectService = inject(ProjectService);
 
   @ViewChild('chatScrollEl') chatScrollEl?: ElementRef<HTMLDivElement>;
+  @ViewChild('chatInputEl') chatInputEl?: ElementRef<HTMLInputElement>;
 
   readonly isOpen = input<boolean>(false);
+  readonly diagramId = input<string | null>(null);
   readonly projectId = input<string | null>(null);
   readonly projectCreatedBy = input<string | null>(null);
   readonly currentUserRole = input<string>('EDITOR');
@@ -81,6 +90,11 @@ export class CollaborationPanelComponent {
   readonly auditFilter = signal<'all' | ActivityCategory>('all');
   readonly roomCodeCopied = signal<boolean>(false);
 
+  // Continuidad multi-sesión & anfitrión
+  readonly contributorStats = signal<ContributorStatsItem[]>([]);
+  readonly isLoadingContributions = signal<boolean>(false);
+  readonly isTransferringHost = signal<boolean>(false);
+
   // Invite form signals (OWNER only)
   readonly inviteEmail = signal<string>('');
   readonly inviteRole = signal<ProjectRole>('EDITOR');
@@ -90,6 +104,11 @@ export class CollaborationPanelComponent {
   readonly memberSuccess = signal<string | null>(null);
 
   readonly isOwner = computed(() => this.currentUserRole() === 'OWNER');
+  readonly isCurrentHost = computed(() => {
+    const uid = this.authService.currentUser()?.id;
+    const hostId = this.collaborationService.sessionMeta()?.hostUserId;
+    return Boolean(uid && hostId && uid === hostId);
+  });
 
   readonly filteredActivityLogs = computed(() => {
     const filter = this.auditFilter();
@@ -125,6 +144,67 @@ export class CollaborationPanelComponent {
     this.activeTab.set(tab);
     if (tab === 'chat' && this.isOpen()) {
       this.collaborationService.markChatAsRead();
+    } else if (tab === 'team') {
+      this.loadContributions();
+    }
+  }
+
+  loadContributions(): void {
+    const dId = this.diagramId() || this.collaborationService.currentDiagramId();
+    if (!dId || this.isLoadingContributions()) return;
+    this.isLoadingContributions.set(true);
+    this.collaborationService.getContributions(dId).subscribe({
+      next: (report) => {
+        this.isLoadingContributions.set(false);
+        this.contributorStats.set(report?.contributorStats || []);
+      },
+      error: () => {
+        this.isLoadingContributions.set(false);
+      },
+    });
+  }
+
+  insertMentionAi(presetText?: string): void {
+    if (presetText) {
+      this.chatDraft.set(presetText);
+    } else {
+      const current = this.chatDraft().trim();
+      this.chatDraft.set(current.toLowerCase().startsWith('@ia') ? current + ' ' : `@IA ${current}`);
+    }
+    setTimeout(() => this.chatInputEl?.nativeElement?.focus(), 20);
+  }
+
+  onTransferHost(targetUserId: string, targetName: string): void {
+    const sessionId = this.collaborationService.sessionMeta()?.id;
+    if (!sessionId || !this.isCurrentHost() || this.isTransferringHost()) return;
+    this.isTransferringHost.set(true);
+    this.memberError.set(null);
+    this.collaborationService.transferHost(sessionId, targetUserId).subscribe({
+      next: () => {
+        this.isTransferringHost.set(false);
+        this.memberSuccess.set(`👑 Anfitrión transferido a ${targetName}.`);
+        setTimeout(() => this.memberSuccess.set(null), 2600);
+      },
+      error: (err) => {
+        this.isTransferringHost.set(false);
+        const msg = err?.error?.message || 'No se pudo transferir el rol de anfitrión.';
+        this.memberError.set(Array.isArray(msg) ? msg.join(', ') : msg);
+      },
+    });
+  }
+
+  getAiModeLabel(mode?: string | null): string {
+    switch (mode) {
+      case 'MUTATE':
+        return '⚡ Editó pizarra';
+      case 'REVIEW':
+        return '🔍 Revisión';
+      case 'DISCIPLINE':
+        return '📐 Disciplina OMT';
+      case 'RECAP':
+        return '🕒 Resumen';
+      default:
+        return '💡 Opinión';
     }
   }
 
