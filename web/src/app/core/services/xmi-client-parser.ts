@@ -1,11 +1,30 @@
 import { XMLParser } from 'fast-xml-parser';
-import { UmlClassNode, UmlConnection, UmlLineStyle } from '../models/diagram.model';
+import {
+  UmlAttribute,
+  UmlClassNode,
+  UmlConnection,
+  UmlElementType,
+  UmlLineStyle,
+  UmlMethod,
+  UmlVisibility,
+} from '../models/diagram.model';
 
 export interface ParsedDiagramResult {
   name: string;
   nodes: UmlClassNode[];
   connections: UmlConnection[];
   defaultLineStyle: string;
+}
+
+interface EaElementMeta {
+  sType?: string;
+  xmiType?: string;
+  name?: string;
+  stereotype?: string;
+  documentation?: string;
+  pkAttributes: Set<string>;
+  attrBoundsNullMap: Map<string, boolean>;
+  attrTypeMap: Map<string, string>;
 }
 
 export class XmiClientParser {
@@ -24,7 +43,7 @@ export class XmiClientParser {
 
     const parsed = this.parser.parse(xmlContent);
     const xmiRoot = parsed['xmi:XMI'] || parsed['XMI'] || parsed;
-    if (!xmiRoot) {
+    if (!xmiRoot || (!xmiRoot['uml:Model'] && !xmiRoot['Model'] && !xmiRoot['xmi:Extension'])) {
       throw new Error('El archivo no contiene un nodo raíz XMI válido.');
     }
 
@@ -33,22 +52,44 @@ export class XmiClientParser {
     if (umlModel && umlModel['@_name']) {
       diagramName = umlModel['@_name'];
     }
+    const pkgNode = umlModel?.['packagedElement'];
+    if (
+      pkgNode &&
+      !Array.isArray(pkgNode) &&
+      (pkgNode['@_xmi:type'] === 'uml:Package' || pkgNode['@_type'] === 'uml:Package') &&
+      pkgNode['@_name'] &&
+      diagramName === 'EA_Model'
+    ) {
+      diagramName = pkgNode['@_name'];
+    }
 
-    // 1. Extraer geometrías y estilos de línea desde <xmi:Extension><diagrams><diagram><elements>
+    // 1. Extraer geometrías, estilos de línea y metadatos EA (<xmi:Extension>)
     const geometryMap = new Map<string, { left: number; top: number; width: number; height: number }>();
     const connectorLabelsMap = new Map<string, { name?: string; sMult?: string; tMult?: string }>();
     const connLineStyleMap = new Map<string, UmlLineStyle>();
+    const eaMetaMap = new Map<string, EaElementMeta>();
 
     try {
       this.extractGeometry(xmiRoot, geometryMap, connectorLabelsMap, connLineStyleMap);
-    } catch (e) {
-      // Ignorar errores de layout y continuar con grid
+      this.extractEaElementMetadata(xmiRoot, eaMetaMap);
+    } catch {
+      // Continuar con grid por defecto si no hay bloque EA Extension
     }
 
-    // 2. Extraer clases y elementos
+    // 2. Extraer Clases, Interfaces, Enumeraciones y Notas
     const rawElements = this.collectPackagedElements(umlModel);
     const nodeMap = new Map<string, UmlClassNode>();
+    const customTypeIdToName = new Map<string, string>();
     let gridIdx = 0;
+
+    // Primera pasada rápida para resolver referencias entre clases/enums como tipos
+    for (const elem of rawElements) {
+      const id = elem?.['@_xmi:id'] || elem?.['@_id'];
+      const name = elem?.['@_name'];
+      if (id && name) {
+        customTypeIdToName.set(id, name);
+      }
+    }
 
     for (const elem of rawElements) {
       const type = elem['@_xmi:type'] || elem['@_type'];
@@ -57,13 +98,37 @@ export class XmiClientParser {
 
       if (!id) continue;
 
-      if (type === 'uml:Class' || type === 'uml:AssociationClass' || type === 'Class') {
-        const attributes = this.extractAttributes(elem);
-        const methods = this.extractMethods(elem);
+      const eaMeta = eaMetaMap.get(id);
+      const isClass = type === 'uml:Class' || type === 'uml:AssociationClass' || type === 'Class';
+      const isInterface = type === 'uml:Interface' || type === 'Interface';
+      const isEnum = type === 'uml:Enumeration' || type === 'Enumeration';
+      const isNote = type === 'uml:Comment' || type === 'uml:Note' || type === 'Note';
+
+      if (isClass || isInterface || isEnum || isNote) {
+        const elementType: UmlElementType = isInterface
+          ? 'INTERFACE'
+          : isEnum
+            ? 'ENUM'
+            : isNote
+              ? 'NOTE'
+              : type === 'uml:AssociationClass'
+                ? 'ASSOCIATION_CLASS'
+                : 'CLASS';
+
+        let attributes: UmlAttribute[] = [];
+        let methods: UmlMethod[] = [];
+
+        if (isEnum) {
+          attributes = this.extractEnumLiterals(elem);
+          methods = this.extractMethods(elem, customTypeIdToName);
+        } else if (!isNote) {
+          attributes = this.extractAttributes(elem, eaMeta, customTypeIdToName);
+          methods = this.extractMethods(elem, customTypeIdToName);
+        }
 
         let pos = { x: 80 + (gridIdx % 3) * 280, y: 80 + Math.floor(gridIdx / 3) * 220 };
         let width = 220;
-        let height = 120;
+        let height: number | undefined = undefined;
 
         if (geometryMap.has(id)) {
           const g = geometryMap.get(id)!;
@@ -72,9 +137,19 @@ export class XmiClientParser {
           if (g.height > 40) height = g.height;
         }
 
+        const rawBody =
+          typeof elem['@_body'] === 'string'
+            ? elem['@_body']
+            : typeof elem['body'] === 'string'
+              ? elem['body']
+              : '';
+
         const node: UmlClassNode = {
           id,
-          name: name || `Clase_${gridIdx + 1}`,
+          name: isNote ? (eaMeta?.name || name || 'Nota') : (name || `Clase_${gridIdx + 1}`),
+          elementType,
+          stereotype: eaMeta?.stereotype || (isInterface ? 'interface' : isEnum ? 'enumeration' : undefined),
+          noteContent: isNote ? (rawBody || eaMeta?.documentation || name || '') : undefined,
           position: pos,
           width,
           height,
@@ -88,13 +163,41 @@ export class XmiClientParser {
       }
     }
 
+    // 2.1 Incorporar Notas EA declaradas solo en <xmi:Extension><elements>
+    for (const [elId, meta] of eaMetaMap.entries()) {
+      if (nodeMap.has(elId)) continue;
+      if (meta.xmiType === 'uml:Note' || meta.sType === 'Note') {
+        let pos = { x: 80 + (gridIdx % 3) * 280, y: 80 + Math.floor(gridIdx / 3) * 220 };
+        let width = 220;
+        let height: number | undefined = undefined;
+        if (geometryMap.has(elId)) {
+          const g = geometryMap.get(elId)!;
+          pos = { x: g.left, y: g.top };
+          if (g.width > 50) width = g.width;
+          if (g.height > 40) height = g.height;
+        }
+        nodeMap.set(elId, {
+          id: elId,
+          name: meta.name || 'Nota',
+          elementType: 'NOTE',
+          noteContent: meta.documentation || meta.name || '',
+          position: pos,
+          width,
+          height,
+          attributes: [],
+          methods: [],
+          isAnchor: false,
+        });
+        gridIdx++;
+      }
+    }
+
     // 3. Extraer relaciones
     const connections: UmlConnection[] = [];
     const connSet = new Set<string>();
 
     for (const elem of rawElements) {
       const type = elem['@_xmi:type'] || elem['@_type'];
-      const id = elem['@_xmi:id'] || elem['@_id'];
 
       if (type === 'uml:Association' || type === 'Association' || type === 'uml:AssociationClass') {
         const conn = this.parseAssociation(elem, nodeMap, connectorLabelsMap, connLineStyleMap);
@@ -104,7 +207,7 @@ export class XmiClientParser {
         }
       }
 
-      if (type === 'uml:Class' || type === 'Class') {
+      if (type === 'uml:Class' || type === 'Class' || type === 'uml:Interface' || type === 'Interface') {
         const genConns = this.parseGeneralizations(elem, nodeMap, connLineStyleMap);
         for (const gc of genConns) {
           if (!connSet.has(gc.id)) {
@@ -115,7 +218,7 @@ export class XmiClientParser {
       }
     }
 
-    // 4. Conectores de extensión EA
+    // 4. Conectores de extensión EA (incluye Realisation, Dependency, NoteLink)
     const eaConns = this.extractEaConnectors(xmiRoot, nodeMap, connLineStyleMap);
     for (const ec of eaConns) {
       if (!connSet.has(ec.id)) {
@@ -138,6 +241,17 @@ export class XmiClientParser {
 
     const traverse = (node: any) => {
       if (!node) return;
+
+      const comments = node['ownedComment'];
+      if (comments) {
+        const commentList = Array.isArray(comments) ? comments : [comments];
+        for (const c of commentList) {
+          if (c && typeof c === 'object') {
+            list.push({ '@_xmi:type': c['@_xmi:type'] || 'uml:Comment', ...c });
+          }
+        }
+      }
+
       const pkged = node['packagedElement'] || node['ownedMember'];
       if (pkged) {
         if (Array.isArray(pkged)) {
@@ -156,8 +270,35 @@ export class XmiClientParser {
     return list;
   }
 
-  private static extractAttributes(classElem: any) {
-    const attrs: any[] = [];
+  private static extractEnumLiterals(enumElem: any): UmlAttribute[] {
+    const attrs: UmlAttribute[] = [];
+    const literals = enumElem['ownedLiteral'];
+    if (literals) {
+      const list = Array.isArray(literals) ? literals : [literals];
+      for (const lit of list) {
+        const name = lit?.['@_name'];
+        if (!name) continue;
+        attrs.push({
+          name,
+          type: 'EnumLiteral',
+          visibility: '+',
+          isPrimaryKey: false,
+          isNullable: false,
+        });
+      }
+    }
+    if (attrs.length === 0) {
+      return this.extractAttributes(enumElem);
+    }
+    return attrs;
+  }
+
+  private static extractAttributes(
+    classElem: any,
+    eaMeta?: EaElementMeta,
+    customTypeIdToName?: Map<string, string>,
+  ): UmlAttribute[] {
+    const attrs: UmlAttribute[] = [];
     const owned = classElem['ownedAttribute'] || classElem['attribute'];
     if (!owned) return attrs;
 
@@ -166,30 +307,56 @@ export class XmiClientParser {
       const name = raw['@_name'];
       if (!name) continue;
 
-      let type = 'String';
+      let type = '';
       const typeElem = raw['type'];
       if (typeElem) {
-        if (typeElem['@_xmi:idref']) type = this.cleanTypeName(typeElem['@_xmi:idref']);
-        else if (typeElem['@_name']) type = typeElem['@_name'];
-        else if (typeof typeElem === 'string') type = this.cleanTypeName(typeElem);
+        if (typeElem['@_xmi:idref']) {
+          const ref = typeElem['@_xmi:idref'];
+          type = customTypeIdToName?.get(ref) || eaMeta?.attrTypeMap?.get(name) || this.cleanTypeName(ref);
+        } else if (typeElem['@_name']) {
+          type = typeElem['@_name'];
+        } else if (typeof typeElem === 'string') {
+          type = this.cleanTypeName(typeElem);
+        }
       } else if (raw['@_type']) {
         type = this.cleanTypeName(raw['@_type']);
+      } else if (eaMeta?.attrTypeMap?.get(name)) {
+        type = eaMeta.attrTypeMap.get(name)!;
       }
+
+      const eaDeclaredType = eaMeta?.attrTypeMap?.get(name);
+      if (eaDeclaredType && (!type || type.toLowerCase() === 'string')) {
+        type = eaDeclaredType;
+      }
+
+      const isUnique = raw['@_isUnique'] === 'true' || raw['@_isUnique'] === true;
+      const lowerVal = raw['lowerValue']?.['@_value'];
+      const hasEaPk = eaMeta?.pkAttributes?.has(name) ?? false;
+      const isPrimaryKey =
+        hasEaPk || (isUnique && (name.toLowerCase().endsWith('id') || name.toLowerCase() === 'id'));
+      const isNullable = isPrimaryKey
+        ? false
+        : lowerVal !== undefined
+          ? String(lowerVal) === '0'
+          : (eaMeta?.attrBoundsNullMap?.get(name) ?? true);
 
       attrs.push({
         name,
-        type: this.mapType(type),
-        visibility: raw['@_visibility'] || 'private',
-        isPk: (name.toLowerCase().endsWith('id') || name.toLowerCase() === 'id'),
-        isNullable: false,
+        type: this.mapType(type || 'String'),
+        visibility: this.toVisibilitySymbol(raw['@_visibility'], '-'),
+        isPrimaryKey,
+        isNullable,
       });
     }
 
     return attrs;
   }
 
-  private static extractMethods(classElem: any) {
-    const methods: any[] = [];
+  private static extractMethods(
+    classElem: any,
+    customTypeIdToName?: Map<string, string>,
+  ): UmlMethod[] {
+    const methods: UmlMethod[] = [];
     const owned = classElem['ownedOperation'] || classElem['operation'];
     if (!owned) return methods;
 
@@ -209,8 +376,11 @@ export class XmiClientParser {
           const pDirection = p['@_direction'];
           let pType = 'String';
 
-          if (p['type'] && p['type']['@_xmi:idref']) pType = this.cleanTypeName(p['type']['@_xmi:idref']);
-          else if (p['@_type']) pType = this.cleanTypeName(p['@_type']);
+          if (p['type'] && p['type']['@_xmi:idref']) {
+            pType = customTypeIdToName?.get(p['type']['@_xmi:idref']) || this.cleanTypeName(p['type']['@_xmi:idref']);
+          } else if (p['@_type']) {
+            pType = customTypeIdToName?.get(p['@_type']) || this.cleanTypeName(p['@_type']);
+          }
 
           pType = this.mapType(pType);
 
@@ -226,18 +396,22 @@ export class XmiClientParser {
         name,
         returnType,
         parameters: params.join(', '),
-        visibility: raw['@_visibility'] || 'public',
+        visibility: this.toVisibilitySymbol(raw['@_visibility'], '+'),
       });
     }
 
     return methods;
   }
 
-  private static parseAssociation(assocElem: any, nodeMap: Map<string, any>, labelsMap: Map<string, any>, connLineStyleMap?: Map<string, UmlLineStyle>): UmlConnection | null {
+  private static parseAssociation(
+    assocElem: any,
+    nodeMap: Map<string, UmlClassNode>,
+    labelsMap: Map<string, any>,
+    connLineStyleMap?: Map<string, UmlLineStyle>,
+  ): UmlConnection | null {
     const id = assocElem['@_xmi:id'] || assocElem['@_id'] || `conn_${Date.now()}`;
     const name = assocElem['@_name'] || '';
 
-    // Priorizar ownedEnd con definiciones de tipo
     let ends = assocElem['ownedEnd'];
     if (!ends || (Array.isArray(ends) && ends.length < 2)) {
       ends = assocElem['memberEnd'] || ends;
@@ -256,7 +430,6 @@ export class XmiClientParser {
     let tMult = '';
     let aggregation = 'none';
 
-    // Determinar extremos src/dst
     const end0 = listToUse[0];
     const end1 = listToUse[1];
 
@@ -293,7 +466,7 @@ export class XmiClientParser {
       return null;
     }
 
-    let type: any = 'association';
+    let type: UmlConnection['type'] = 'association';
     if (aggregation === 'composite') type = 'composition';
     else if (aggregation === 'shared') type = 'aggregation';
 
@@ -319,7 +492,11 @@ export class XmiClientParser {
     };
   }
 
-  private static parseGeneralizations(classElem: any, nodeMap: Map<string, any>, connLineStyleMap?: Map<string, UmlLineStyle>): UmlConnection[] {
+  private static parseGeneralizations(
+    classElem: any,
+    nodeMap: Map<string, UmlClassNode>,
+    connLineStyleMap?: Map<string, UmlLineStyle>,
+  ): UmlConnection[] {
     const conns: UmlConnection[] = [];
     const sourceId = classElem['@_xmi:id'] || classElem['@_id'];
     if (!sourceId || !nodeMap.has(sourceId)) return conns;
@@ -350,7 +527,11 @@ export class XmiClientParser {
     return conns;
   }
 
-  private static extractEaConnectors(xmiRoot: any, nodeMap: Map<string, any>, connLineStyleMap?: Map<string, UmlLineStyle>): UmlConnection[] {
+  private static extractEaConnectors(
+    xmiRoot: any,
+    nodeMap: Map<string, UmlClassNode>,
+    connLineStyleMap?: Map<string, UmlLineStyle>,
+  ): UmlConnection[] {
     const conns: UmlConnection[] = [];
     const ext = xmiRoot['xmi:Extension'] || xmiRoot['Extension'];
     if (!ext) return conns;
@@ -376,14 +557,22 @@ export class XmiClientParser {
       const eaProps = c['properties'] || {};
       const eaType = eaProps['@_ea_type'] || 'Association';
 
-      let type: any = 'association';
+      let type: UmlConnection['type'] = 'association';
       if (eaType === 'Generalization') type = 'generalization';
-      else if (eaType === 'Realisation') type = 'realization';
-      else if (eaType === 'Dependency') type = 'dependency';
+      else if (eaType === 'Realisation' || eaType === 'Realization') type = 'realization';
+      else if (eaType === 'Dependency' || eaType === 'NoteLink') type = 'dependency';
+
+      const srcType = src['type'] || {};
+      const tgtType = tgt['type'] || {};
+      if (srcType['@_aggregation'] === 'composite' || tgtType['@_aggregation'] === 'composite') {
+        type = 'composition';
+      } else if (srcType['@_aggregation'] === 'shared' || tgtType['@_aggregation'] === 'shared') {
+        type = 'aggregation';
+      }
 
       const labels = c['labels'] || {};
-      const sMult = labels['@_lb'] || '';
-      const tMult = labels['@_rb'] || '';
+      const sMult = labels['@_lb'] || srcType['@_multiplicity'] || '';
+      const tMult = labels['@_rb'] || tgtType['@_multiplicity'] || '';
       const name = labels['@_mb'] || undefined;
 
       const appearance = c['appearance'] || {};
@@ -398,8 +587,8 @@ export class XmiClientParser {
         targetId: `${targetId}_left`,
         type,
         name,
-        sourceMultiplicity: sMult || '1',
-        targetMultiplicity: tMult || '0..*',
+        sourceMultiplicity: sMult || (type === 'generalization' || type === 'dependency' || type === 'realization' ? '' : '1'),
+        targetMultiplicity: tMult || (type === 'generalization' || type === 'dependency' || type === 'realization' ? '' : '0..*'),
         lineStyle: style,
       });
     }
@@ -407,7 +596,12 @@ export class XmiClientParser {
     return conns;
   }
 
-  private static extractGeometry(xmiRoot: any, geometryMap: Map<string, any>, labelsMap: Map<string, any>, connLineStyleMap?: Map<string, UmlLineStyle>): void {
+  private static extractGeometry(
+    xmiRoot: any,
+    geometryMap: Map<string, any>,
+    labelsMap: Map<string, any>,
+    connLineStyleMap?: Map<string, UmlLineStyle>,
+  ): void {
     const ext = xmiRoot['xmi:Extension'] || xmiRoot['Extension'];
     if (!ext) return;
 
@@ -459,6 +653,57 @@ export class XmiClientParser {
     }
   }
 
+  private static extractEaElementMetadata(
+    xmiRoot: any,
+    metaMap: Map<string, EaElementMeta>,
+  ): void {
+    const ext = xmiRoot['xmi:Extension'] || xmiRoot['Extension'];
+    const elements = ext?.['elements']?.['element'];
+    if (!elements) return;
+
+    const list = Array.isArray(elements) ? elements : [elements];
+    for (const el of list) {
+      const idref = el?.['@_xmi:idref'] || el?.['@_xmi:id'] || el?.['@_id'];
+      if (!idref) continue;
+      const props = el?.['properties'] || {};
+      const pkAttributes = new Set<string>();
+      const attrBoundsNullMap = new Map<string, boolean>();
+      const attrTypeMap = new Map<string, string>();
+
+      const rawAttrs = el?.['attributes']?.['attribute'];
+      if (rawAttrs) {
+        const attrList = Array.isArray(rawAttrs) ? rawAttrs : [rawAttrs];
+        for (const a of attrList) {
+          const aName = a?.['@_name'];
+          if (!aName) continue;
+          const st = a?.['stereotype']?.['@_stereotype'];
+          if (st && String(st).toUpperCase() === 'PK') {
+            pkAttributes.add(aName);
+          }
+          const lower = a?.['bounds']?.['@_lower'];
+          if (lower !== undefined) {
+            attrBoundsNullMap.set(aName, String(lower) === '0');
+          }
+          const declType = a?.['properties']?.['@_type'];
+          if (declType) {
+            attrTypeMap.set(aName, declType);
+          }
+        }
+      }
+
+      metaMap.set(idref, {
+        sType: props['@_sType'],
+        xmiType: el?.['@_xmi:type'],
+        name: el?.['@_name'],
+        stereotype: props['@_stereotype'],
+        documentation: props['@_documentation'],
+        pkAttributes,
+        attrBoundsNullMap,
+        attrTypeMap,
+      });
+    }
+  }
+
   public static mapEaModeToLineStyle(mode: string | number | undefined): UmlLineStyle {
     const m = String(mode || '3');
     switch (m) {
@@ -503,10 +748,20 @@ export class XmiClientParser {
     return raw.replace(/^EAJava_/, '').replace(/^uml:/, '');
   }
 
+  private static toVisibilitySymbol(raw: string | undefined, fallback: UmlVisibility): UmlVisibility {
+    const v = (raw || '').trim().toLowerCase();
+    if (v === '+' || v === 'public') return '+';
+    if (v === '-' || v === 'private') return '-';
+    if (v === '#' || v === 'protected') return '#';
+    if (v === '~' || v === 'package') return '~';
+    return fallback;
+  }
+
   private static mapType(type: string): string {
     const lower = (type || '').toLowerCase().trim();
     if (lower === 'uuid') return 'UUID';
-    if (lower === 'string' || lower === 'text' || lower === 'varchar') return 'String';
+    if (lower === 'string' || lower === 'varchar') return 'String';
+    if (lower === 'text') return 'Text';
     if (lower === 'int' || lower === 'integer') return 'Integer';
     if (lower === 'long' || lower === 'bigint') return 'Long';
     if (lower === 'bool' || lower === 'boolean') return 'Boolean';
@@ -515,6 +770,7 @@ export class XmiClientParser {
     if (lower === 'bigdecimal' || lower === 'decimal' || lower === 'numeric') return 'BigDecimal';
     if (lower === 'localdate' || lower === 'date') return 'LocalDate';
     if (lower === 'localdatetime' || lower === 'timestamp') return 'LocalDateTime';
+    if (lower === 'enumliteral') return 'EnumLiteral';
     if (lower === 'void') return 'void';
     return type || 'String';
   }

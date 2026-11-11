@@ -38,9 +38,34 @@ export const UML_LINE_STYLES: UmlLineStyleItem[] = [
   { id: 'adaptive-curve', label: 'Orthogonal - Rounded (Curva Adaptativa)' },
 ];
 
+export type UmlVisibility = '+' | '-' | '#' | '~';
+
+export type UmlElementType =
+  | 'CLASS'
+  | 'INTERFACE'
+  | 'ENUM'
+  | 'NOTE'
+  | 'ASSOCIATION_CLASS';
+
+export interface UmlVisibilityOption {
+  symbol: UmlVisibility;
+  labelKey: string;
+  xmiWord: 'public' | 'private' | 'protected' | 'package';
+}
+
+export const UML_VISIBILITY_OPTIONS: UmlVisibilityOption[] = [
+  { symbol: '+', labelKey: 'editor.public', xmiWord: 'public' },
+  { symbol: '-', labelKey: 'editor.private', xmiWord: 'private' },
+  { symbol: '#', labelKey: 'editor.protected', xmiWord: 'protected' },
+  { symbol: '~', labelKey: 'editor.package', xmiWord: 'package' },
+];
+
 export interface UmlAttribute {
   name: string;
   type: string;
+  visibility?: UmlVisibility;
+  isPrimaryKey?: boolean;
+  isNullable?: boolean;
   orderIndex?: number;
 }
 
@@ -48,12 +73,16 @@ export interface UmlMethod {
   name: string;
   parameters: string;
   returnType: string;
+  visibility?: UmlVisibility;
   orderIndex?: number;
 }
 
 export interface UmlClassNode {
   id: string;
   name: string;
+  elementType?: UmlElementType;
+  stereotype?: string;
+  noteContent?: string;
   position: { x: number; y: number };
   width: number;
   height?: number;
@@ -88,6 +117,9 @@ export interface DiagramDto {
   nodes: {
     id: string;
     name: string;
+    elementType?: UmlElementType;
+    stereotype?: string | null;
+    noteContent?: string | null;
     positionX: number;
     positionY: number;
     width?: number;
@@ -119,6 +151,9 @@ export interface SaveDiagramAstRequest {
   nodes: {
     id: string;
     name: string;
+    elementType?: UmlElementType;
+    stereotype?: string | null;
+    noteContent?: string | null;
     positionX: number;
     positionY: number;
     width?: number;

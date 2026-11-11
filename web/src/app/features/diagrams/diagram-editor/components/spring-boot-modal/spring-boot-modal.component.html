@@ -99,6 +99,14 @@
         </div>
       }
 
+      @if (!canDownloadCode()) {
+        <div class="px-4 py-2 bg-rose-100 dark:bg-rose-950/40 border-b border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 flex items-center gap-2 font-mono text-[11px] shrink-0">
+          <ng-icon name="heroLockClosed" class="text-sm text-rose-700 dark:text-rose-400 shrink-0"></ng-icon>
+          <span class="font-bold">{{ 'codeGen.downloadRestrictedTitle' | translate }}:</span>
+          <span>{{ 'codeGen.downloadRestrictedDesc' | translate }}</span>
+        </div>
+      }
+
       <!-- 2. Parámetros de Configuración del Proyecto (Compacto) -->
       <div class="p-3 bg-[#EAEAEA] dark:bg-[#12162A] border-b border-[#C0C0C0] dark:border-[#2D3762] shrink-0 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 font-mono text-[11px]">
         <div>
@@ -370,9 +378,10 @@
           
           <button
             (click)="downloadZip()"
-            [disabled]="isDownloading() || files().length === 0 || !diagramId()"
+            [disabled]="!canDownloadCode() || isDownloading() || files().length === 0 || !diagramId()"
+            [title]="canDownloadCode() ? '' : ('codeGen.downloadRestrictedDesc' | translate)"
             class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-mono text-xs font-bold uppercase tracking-wider rounded shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-            <ng-icon name="heroArrowDownTray" class="text-sm text-emerald-200"></ng-icon>
+            <ng-icon [name]="canDownloadCode() ? 'heroArrowDownTray' : 'heroLockClosed'" class="text-sm text-emerald-200"></ng-icon>
             <span>
               {{ isDownloading() ? ('codeGen.generatingZip' | translate) : (selectedPlatform() === 'all' ? ('codeGen.downloadFullstack' | translate) : ('codeGen.downloadZip' | translate)) }}
             </span>

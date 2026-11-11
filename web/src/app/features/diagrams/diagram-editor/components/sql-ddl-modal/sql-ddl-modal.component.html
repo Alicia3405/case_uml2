@@ -1,0 +1,102 @@
+@if (isOpen()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.28)] max-w-5xl w-full flex flex-col max-h-[90vh] overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150 rounded-sm">
+
+      <!-- Header -->
+      <div class="px-4 py-3 bg-[#6B5A52] dark:bg-[#101426] text-white flex items-center justify-between gap-3 shrink-0 border-b border-transparent dark:border-[#2D3762]">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="p-1.5 rounded bg-sky-500/20 border border-sky-400/40 shrink-0">
+            <ng-icon name="heroCircleStack" class="text-base text-sky-300"></ng-icon>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-bold uppercase tracking-wider font-mono text-[12px] truncate">
+              {{ 'sqlModal.title' | translate }}
+            </h3>
+            <p class="text-[10px] text-slate-200 dark:text-slate-400 font-mono truncate">
+              {{ 'sqlModal.subtitle' | translate }}
+            </p>
+          </div>
+        </div>
+        <button
+          (click)="closeModal.emit()"
+          class="text-white/80 hover:text-white hover:bg-white/10 p-1 rounded cursor-pointer leading-none">
+          <ng-icon name="heroXMark" class="text-base"></ng-icon>
+        </button>
+      </div>
+
+      <!-- Barra de Opciones DDL -->
+      <div class="px-4 py-2.5 bg-[#EAEAEA] dark:bg-[#12162A] border-b border-[#C0C0C0] dark:border-[#2D3762] flex items-center justify-between gap-3 flex-wrap shrink-0 font-mono text-[11px]">
+        <div class="flex items-center gap-4 flex-wrap text-slate-800 dark:text-slate-200">
+          <label class="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              [ngModel]="includeForeignKeyIndexes()"
+              (ngModelChange)="includeForeignKeyIndexes.set($event)"
+              class="accent-sky-600 cursor-pointer" />
+            <span>{{ 'sqlModal.includeIndexes' | translate }}</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              [ngModel]="includeDropStatements()"
+              (ngModelChange)="includeDropStatements.set($event)"
+              class="accent-rose-600 cursor-pointer" />
+            <span>{{ 'sqlModal.includeDrops' | translate }}</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              [ngModel]="includeTransactionWrapper()"
+              (ngModelChange)="includeTransactionWrapper.set($event)"
+              class="accent-emerald-600 cursor-pointer" />
+            <span>{{ 'sqlModal.includeTx' | translate }}</span>
+          </label>
+        </div>
+
+        <span class="text-[10.5px] text-slate-500 dark:text-slate-400">
+          {{ 'sqlModal.linesCount' | translate:{ count: lineNumbers().length } }}
+        </span>
+      </div>
+
+      <!-- Visor SQL con Gutter + highlight.js -->
+      <div class="flex-1 overflow-auto font-mono text-[11.5px] leading-relaxed select-text bg-[#0D1117] text-[#E6EDF3] min-h-[340px]">
+        <div class="flex min-w-full w-fit">
+          <div class="sticky left-0 z-10 select-none py-3.5 pl-3 pr-3 text-right text-slate-500/60 border-r border-slate-800 shrink-0 font-mono text-[11.5px] bg-[#090D13]">
+            @for (num of lineNumbers(); track num) {
+              <div class="leading-relaxed">{{ num }}</div>
+            }
+          </div>
+          <div class="py-3.5 px-4 flex-1 font-mono text-[11.5px]">
+            <pre class="whitespace-pre m-0 p-0 font-mono text-[11.5px]"><code class="hljs !bg-transparent !p-0 font-mono text-[11.5px] leading-relaxed" [innerHTML]="highlightedSql()"></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="p-3 bg-white dark:bg-[#121629] border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex items-center justify-between gap-2 shrink-0">
+        <button
+          (click)="closeModal.emit()"
+          class="px-3.5 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono rounded cursor-pointer">
+          {{ 'common.close' | translate }}
+        </button>
+
+        <div class="flex items-center gap-2">
+          <button
+            (click)="copySql()"
+            class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-mono font-bold rounded flex items-center gap-1.5 border border-slate-700 cursor-pointer">
+            <ng-icon [name]="isCopied() ? 'heroCheck' : 'heroClipboardDocument'" class="text-xs text-emerald-400"></ng-icon>
+            <span>{{ isCopied() ? ('sqlModal.copiedSql' | translate) : ('sqlModal.copySql' | translate) }}</span>
+          </button>
+          <button
+            (click)="downloadSql()"
+            class="px-4 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-700 hover:from-sky-500 hover:to-indigo-600 text-white font-mono font-bold rounded shadow-md flex items-center gap-1.5 cursor-pointer">
+            <ng-icon name="heroArrowDownTray" class="text-xs"></ng-icon>
+            <span>{{ 'sqlModal.downloadSql' | translate }}</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+}
+

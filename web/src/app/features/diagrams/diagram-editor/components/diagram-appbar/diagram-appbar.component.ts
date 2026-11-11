@@ -24,6 +24,12 @@ import {
   heroCheck,
   heroPhoto,
   heroAcademicCap,
+  heroArrowUturnLeft,
+  heroArrowUturnRight,
+  heroShieldCheck,
+  heroCircleStack,
+  heroCodeBracket,
+  heroChatBubbleLeftRight,
 } from '@ng-icons/heroicons/outline';
 import { AuthService } from '../../../../../core/services/auth.service';
 import { CollaborationService } from '../../../../../core/services/collaboration.service';
@@ -59,6 +65,12 @@ import { ThemeToggleComponent } from '../../../../../core/components/theme-toggl
       heroCheck,
       heroPhoto,
       heroAcademicCap,
+      heroArrowUturnLeft,
+      heroArrowUturnRight,
+      heroShieldCheck,
+      heroCircleStack,
+      heroCodeBracket,
+      heroChatBubbleLeftRight,
     }),
   ],
   templateUrl: './diagram-appbar.component.html',
@@ -80,6 +92,12 @@ export class DiagramAppbarComponent {
   readonly isSaving = input<boolean>(false);
   readonly saveSuccessMessage = input<boolean>(false);
   readonly isReadOnly = input<boolean>(false);
+  readonly canUndo = input<boolean>(false);
+  readonly canRedo = input<boolean>(false);
+  readonly undoCount = input<number>(0);
+  readonly redoCount = input<number>(0);
+  readonly isCollabOpen = input<boolean>(false);
+  readonly unreadChatCount = input<number>(0);
 
   // Outputs
   readonly saveDiagram = output<void>();
@@ -91,6 +109,12 @@ export class DiagramAppbarComponent {
   readonly openImportJson = output<void>();
   readonly openSpringBoot = output<void>();
   readonly openProfile = output<void>();
+  readonly undoAction = output<void>();
+  readonly redoAction = output<void>();
+  readonly openAudit = output<void>();
+  readonly openSqlDdl = output<void>();
+  readonly openXmiValidator = output<void>();
+  readonly toggleCollabPanel = output<void>();
 
   // Estados de dropdowns locales
   readonly isExportDropdownOpen = signal<boolean>(false);

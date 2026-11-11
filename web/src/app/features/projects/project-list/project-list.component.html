@@ -127,10 +127,18 @@
             <div class="p-4 border-b border-[#6B5A52]/40 dark:border-[#283256] bg-white/40 dark:bg-[#101428]/30">
               <div class="flex items-start justify-between gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-1.5 mb-1">
+                  <div class="flex items-center flex-wrap gap-1.5 mb-1">
                     <span class="px-1.5 py-0.2 text-[9.5px] font-mono font-bold uppercase border border-[#6B5A52] dark:border-[#2D3762] bg-[#F2EBE6] dark:bg-[#1A203B] text-[#2A201B] dark:text-slate-200">
                       {{ project.userRole || 'COLLABORATOR' }}
                     </span>
+                    @if (project.userCanDownloadCode === false) {
+                      <span
+                        [title]="'codeGen.downloadRestrictedDesc' | translate"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.2 text-[9px] font-mono font-bold uppercase border border-amber-500/70 dark:border-amber-700 bg-amber-100/90 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                        <ng-icon name="heroLockClosed" class="text-[9.5px]"></ng-icon>
+                        <span>{{ 'projects.membersModal.downloadPermRestricted' | translate }}</span>
+                      </span>
+                    }
                     <span class="text-[10px] font-mono text-[#6B5A52] dark:text-slate-400">Java {{ project.javaVersion }} • Spring {{ project.springBootVersion }}</span>
                   </div>
                   <h3 class="text-sm font-bold text-[#2A201B] dark:text-slate-100 truncate group-hover:text-[#6B5A52] dark:group-hover:text-amber-400 transition-colors" [title]="project.name">
@@ -390,7 +398,7 @@
   <!-- MODAL: GESTIÓN DE MIEMBROS COLABORADORES -->
   @if (isMembersModalOpen() && selectedProjectForMembers()) {
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] dark:shadow-[6px_6px_0px_rgba(10,13,26,0.6)] max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
         
         <!-- Header Modal -->
         <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/30 px-5 py-3 flex items-center justify-between">
@@ -419,6 +427,7 @@
                 />
                 <select
                   formControlName="role"
+                  (change)="onInviteRoleChange()"
                   class="px-2 py-1.5 bg-[#F9F7F5] dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 text-xs font-mono cursor-pointer">
                   <option value="EDITOR">EDITOR</option>
                   <option value="VIEWER">VIEWER</option>
@@ -429,6 +438,13 @@
                   {{ 'projects.membersModal.inviteBtn' | translate }}
                 </button>
               </div>
+              <label class="inline-flex items-center gap-2 text-[11px] font-mono text-[#2A201B] dark:text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  formControlName="canDownloadCode"
+                  class="rounded border-[#6B5A52] dark:border-[#2D3762] accent-emerald-600 cursor-pointer" />
+                <span>{{ 'projects.membersModal.downloadPermLabel' | translate }}</span>
+              </label>
             </form>
           }
 
@@ -448,9 +464,21 @@
                     </div>
                   </div>
 
-                  <div class="flex items-center gap-2">
-                    <!-- Selector de Rol o Badge -->
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <!-- Selector de Rol, Permiso ZIP o Badge -->
                     @if (selectedProjectForMembers()?.userRole === 'OWNER' && member.userId !== selectedProjectForMembers()?.createdBy) {
+                      <button
+                        type="button"
+                        (click)="onToggleDownloadPermission(member)"
+                        [title]="'projects.membersModal.downloadPermToggleTooltip' | translate"
+                        [ngClass]="member.canDownloadCode !== false
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
+                          : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9.5px] font-bold cursor-pointer transition-colors">
+                        <ng-icon [name]="member.canDownloadCode !== false ? 'heroArrowDownTray' : 'heroLockClosed'" class="text-[10px]"></ng-icon>
+                        <span>{{ member.canDownloadCode !== false ? ('projects.membersModal.downloadPermAllowed' | translate) : ('projects.membersModal.downloadPermRestricted' | translate) }}</span>
+                      </button>
+
                       <select
                         [ngModel]="member.role"
                         (ngModelChange)="onRoleChange(member.userId, $event)"
@@ -467,6 +495,14 @@
                         <ng-icon name="heroTrash" class="text-xs"></ng-icon>
                       </button>
                     } @else {
+                      <span
+                        [ngClass]="member.canDownloadCode !== false
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
+                          : 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9.5px] font-bold">
+                        <ng-icon [name]="member.canDownloadCode !== false ? 'heroArrowDownTray' : 'heroLockClosed'" class="text-[10px]"></ng-icon>
+                        <span>{{ member.canDownloadCode !== false ? ('projects.membersModal.downloadPermAllowed' | translate) : ('projects.membersModal.downloadPermRestricted' | translate) }}</span>
+                      </span>
                       <span class="px-2 py-0.5 font-mono text-[10px] font-bold border border-[#6B5A52] dark:border-[#2D3762] bg-[#F2EBE6] dark:bg-[#1A203B] text-[#2A201B] dark:text-slate-200">
                         {{ member.role }}
                       </span>

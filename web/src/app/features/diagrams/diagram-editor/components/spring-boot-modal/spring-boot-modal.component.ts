@@ -30,6 +30,7 @@ import {
   heroAdjustmentsHorizontal,
   heroDevicePhoneMobile,
   heroExclamationTriangle,
+  heroLockClosed,
 } from '@ng-icons/heroicons/outline';
 import {
   CodeGeneratorService,
@@ -83,6 +84,7 @@ hljs.registerLanguage('properties', properties);
       heroAdjustmentsHorizontal,
       heroDevicePhoneMobile,
       heroExclamationTriangle,
+      heroLockClosed,
     }),
   ],
   templateUrl: './spring-boot-modal.component.html',
@@ -96,6 +98,7 @@ export class SpringBootModalComponent implements OnInit {
   readonly diagramName = input<string>('Diagrama UML');
   readonly nodes = input<UmlClassNode[]>([]);
   readonly connections = input<UmlConnection[]>([]);
+  readonly canDownloadCode = input<boolean>(true);
 
   readonly closeModal = output<void>();
 
@@ -297,6 +300,11 @@ export class SpringBootModalComponent implements OnInit {
   }
 
   downloadZip(): void {
+    if (!this.canDownloadCode()) {
+      alert('El propietario del proyecto deshabilitó la descarga de código ZIP para tu cuenta.');
+      return;
+    }
+
     const diagId = this.diagramId();
     if (!diagId) {
       alert('Debes guardar el diagrama antes de descargar el proyecto.');

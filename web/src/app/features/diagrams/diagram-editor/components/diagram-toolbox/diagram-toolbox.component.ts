@@ -12,10 +12,15 @@ import {
   heroMagnifyingGlassMinus,
   heroArrowsPointingOut,
   heroPlus,
+  heroCube,
+  heroCodeBracket,
+  heroQueueList,
+  heroChatBubbleBottomCenterText,
 } from '@ng-icons/heroicons/outline';
 import {
   UmlRelationshipType,
   UmlLineStyle,
+  UmlElementType,
   UmlRelationTypeItem,
   UmlLineStyleItem,
   UML_RELATION_TYPES,
@@ -39,6 +44,10 @@ import { TranslatePipe } from '../../../../../core/i18n';
       heroMagnifyingGlassMinus,
       heroArrowsPointingOut,
       heroPlus,
+      heroCube,
+      heroCodeBracket,
+      heroQueueList,
+      heroChatBubbleBottomCenterText,
     }),
   ],
   templateUrl: './diagram-toolbox.component.html',
@@ -53,6 +62,7 @@ export class DiagramToolboxComponent {
   readonly lineStyles = input<UmlLineStyleItem[]>(UML_LINE_STYLES);
 
   // Estados de acordeón internos
+  readonly isElementsOpen = signal<boolean>(true);
   readonly isRelationshipsOpen = signal<boolean>(true);
   readonly isLineStylesOpen = signal<boolean>(true);
 
@@ -66,6 +76,15 @@ export class DiagramToolboxComponent {
   readonly resetView = output<void>();
   readonly fitView = output<void>();
   readonly addClass = output<void>();
+  readonly addElement = output<UmlElementType>();
+
+  onAddElement(type: UmlElementType): void {
+    if (this.isReadOnly()) return;
+    this.addElement.emit(type);
+    if (type === 'CLASS') {
+      this.addClass.emit();
+    }
+  }
 
   onSelectPointer(): void {
     this.setPointerMode.emit();

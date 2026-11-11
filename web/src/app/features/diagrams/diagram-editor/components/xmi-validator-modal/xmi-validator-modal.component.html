@@ -1,0 +1,107 @@
+@if (isOpen()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.28)] max-w-5xl w-full flex flex-col max-h-[90vh] overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150 rounded-sm">
+
+      <!-- Header -->
+      <div class="px-4 py-3 bg-[#6B5A52] dark:bg-[#101426] text-white flex items-center justify-between gap-3 shrink-0 border-b border-transparent dark:border-[#2D3762]">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="p-1.5 rounded bg-violet-500/20 border border-violet-400/40 shrink-0">
+            <ng-icon name="heroCodeBracket" class="text-base text-violet-300"></ng-icon>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-bold uppercase tracking-wider font-mono text-[12px] truncate">
+              {{ 'xmiModal.title' | translate }}
+            </h3>
+            <p class="text-[10px] text-slate-200 dark:text-slate-400 font-mono truncate">
+              {{ 'xmiModal.subtitle' | translate }}
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2.5 shrink-0">
+          <span
+            [ngClass]="report().isValid ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-rose-600 border-rose-400 text-white'"
+            class="px-2.5 py-1 rounded-full font-mono font-bold text-[10.5px] border">
+            {{ report().isValid ? ('xmiModal.validBadge' | translate) : ('xmiModal.invalidBadge' | translate) }}
+          </span>
+          <button
+            (click)="closeModal.emit()"
+            class="text-white/80 hover:text-white hover:bg-white/10 p-1 rounded cursor-pointer leading-none">
+            <ng-icon name="heroXMark" class="text-base"></ng-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- Resumen + Checklist -->
+      <div class="p-3 bg-[#EAEAEA] dark:bg-[#12162A] border-b border-[#C0C0C0] dark:border-[#2D3762] shrink-0 space-y-2.5">
+        <div class="text-[11px] font-mono text-slate-700 dark:text-slate-300 font-semibold">
+          {{ 'xmiModal.elementsSummary' | translate:{
+            classes: report().totalClasses,
+            interfaces: report().totalInterfaces,
+            enums: report().totalEnums,
+            notes: report().totalNotes,
+            relations: report().totalRelations
+          } }}
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          @for (chk of report().checks; track chk.title) {
+            <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5 flex items-start gap-2">
+              @if (chk.status === 'pass') {
+                <ng-icon name="heroCheckCircle" class="text-base text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5"></ng-icon>
+              } @else if (chk.status === 'warning') {
+                <ng-icon name="heroExclamationTriangle" class="text-base text-amber-500 shrink-0 mt-0.5"></ng-icon>
+              } @else {
+                <ng-icon name="heroXCircle" class="text-base text-rose-600 shrink-0 mt-0.5"></ng-icon>
+              }
+              <div class="min-w-0">
+                <div class="font-mono font-bold text-[11px] text-slate-900 dark:text-slate-100">{{ chk.title }}</div>
+                <div class="text-[10.5px] text-slate-600 dark:text-slate-400 leading-snug">{{ chk.detail }}</div>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+
+      <!-- Visor XML / XMI -->
+      <div class="flex-1 overflow-auto font-mono text-[11.5px] leading-relaxed select-text bg-[#0D1117] text-[#E6EDF3] min-h-[300px]">
+        <div class="flex min-w-full w-fit">
+          <div class="sticky left-0 z-10 select-none py-3.5 pl-3 pr-3 text-right text-slate-500/60 border-r border-slate-800 shrink-0 font-mono text-[11.5px] bg-[#090D13]">
+            @for (num of lineNumbers(); track num) {
+              <div class="leading-relaxed">{{ num }}</div>
+            }
+          </div>
+          <div class="py-3.5 px-4 flex-1 font-mono text-[11.5px]">
+            <pre class="whitespace-pre m-0 p-0 font-mono text-[11.5px]"><code class="hljs !bg-transparent !p-0 font-mono text-[11.5px] leading-relaxed" [innerHTML]="highlightedXml()"></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="p-3 bg-white dark:bg-[#121629] border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex items-center justify-between gap-2 shrink-0">
+        <button
+          (click)="closeModal.emit()"
+          class="px-3.5 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono rounded cursor-pointer">
+          {{ 'common.close' | translate }}
+        </button>
+
+        <div class="flex items-center gap-2">
+          <button
+            (click)="copyXml()"
+            class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-mono font-bold rounded flex items-center gap-1.5 border border-slate-700 cursor-pointer">
+            <ng-icon [name]="isCopied() ? 'heroCheck' : 'heroClipboardDocument'" class="text-xs text-emerald-400"></ng-icon>
+            <span>{{ isCopied() ? ('xmiModal.copiedXml' | translate) : ('xmiModal.copyXml' | translate) }}</span>
+          </button>
+          <button
+            (click)="downloadXmi()"
+            class="px-4 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-500 hover:to-indigo-600 text-white font-mono font-bold rounded shadow-md flex items-center gap-1.5 cursor-pointer">
+            <ng-icon name="heroArrowDownTray" class="text-xs"></ng-icon>
+            <span>{{ 'xmiModal.downloadXmi' | translate }}</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+}
+

@@ -28,9 +28,12 @@ import {
   heroArrowPath,
   heroChevronDown,
   heroChevronUp,
+  heroDocumentMagnifyingGlass,
 } from '@ng-icons/heroicons/outline';
 import { AuthService } from '../../../../../core/services/auth.service';
 import { AiAssistantService, AiResponse, AiModelOption } from '../../../../../core/services/ai-assistant.service';
+import { LocalOcrVisionService } from '../../../../../core/services/local-ocr-vision.service';
+import { VoiceCommandService } from '../../../../../core/services/voice-command.service';
 import {
   UmlClassNode,
   UmlConnection,
@@ -41,8 +44,9 @@ export interface AiChatMessage {
   sender: 'user' | 'assistant';
   text: string;
   imagePreview?: string;
+  retryImageBase64?: string;
   changesSummary?: string;
-  providerUsed?: 'ollama' | 'vertex';
+  providerUsed?: 'ollama' | 'vertex' | 'local-ocr';
   modelUsed?: string;
   timestamp: Date;
   status?: 'success' | 'clarification' | 'error' | 'pending';
@@ -71,6 +75,7 @@ import { TranslatePipe } from '../../../../../core/i18n';
       heroArrowPath,
       heroChevronDown,
       heroChevronUp,
+      heroDocumentMagnifyingGlass,
     }),
   ],
   templateUrl: './ai-assistant-panel.component.html',
@@ -78,6 +83,8 @@ import { TranslatePipe } from '../../../../../core/i18n';
 export class AiAssistantPanelComponent implements OnInit, OnDestroy {
   readonly authService = inject(AuthService);
   private readonly aiService = inject(AiAssistantService);
+  readonly localOcrService = inject(LocalOcrVisionService);
+  private readonly voiceCommandService = inject(VoiceCommandService);
 
   @ViewChild('chatScrollContainer') chatScrollContainerRef?: ElementRef<HTMLDivElement>;
   @ViewChild('imageInput') imageInputRef?: ElementRef<HTMLInputElement>;
@@ -85,6 +92,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
 
   // Inputs
   readonly isOpen = input<boolean>(false);
+  readonly isReadOnly = input<boolean>(false);
   readonly diagramId = input<string | null>(null);
   readonly roomCode = input<string | null>(null);
   readonly currentNodes = input<UmlClassNode[]>([]);
@@ -230,11 +238,14 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     const promptText = this.aiPrompt().trim();
     const imageBase64 = this.attachedImageBase64();
 
-    if ((!promptText && !imageBase64) || this.isAiProcessing()) {
+    if (this.isReadOnly() || (!promptText && !imageBase64) || this.isAiProcessing()) {
       return;
     }
 
     const userMessageText = promptText || (imageBase64 ? 'Digitalizar diagrama desde imagen adjunta' : '');
+    const sentImage = imageBase64;
+    const mimeMatch = sentImage?.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+    const mimeType = mimeMatch?.[1] || 'image/jpeg';
 
     this.aiChatMessages.update((msgs) => [
       ...msgs,
@@ -243,7 +254,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
         sender: 'user',
         text: userMessageText,
         timestamp: new Date(),
-        imagePreview: imageBase64 || undefined,
+        imagePreview: sentImage || undefined,
       },
     ]);
 
@@ -255,11 +266,11 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     const provider = this.selectedProvider();
     const model = this.selectedModelId();
 
-    if (imageBase64) {
+    if (sentImage) {
       this.aiService
         .sendVisionPrompt(
-          imageBase64,
-          'image/jpeg',
+          sentImage,
+          mimeType,
           promptText || 'Analiza este boceto/diagrama y digitalízalo como entidades UML completas.',
           dId,
           rCode,
@@ -269,8 +280,8 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
           { provider: 'vertex', model: 'gemini-2.5-flash' },
         )
         .subscribe({
-          next: (res) => this.handleAiResponse(res, '📸 Reconocimiento de Boceto / Imagen'),
-          error: (err) => this.handleAiError(err),
+          next: (res) => this.handleAiResponse(res, '📸 Reconocimiento de Boceto / Imagen', sentImage),
+          error: (err) => this.handleAiError(err, sentImage),
         });
     } else {
       this.aiService
@@ -294,7 +305,87 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     this.attachedImageName.set(null);
   }
 
-  private handleAiResponse(res: AiResponse, sourceTag: string): void {
+  async runLocalOcrAnalysis(imageOverride?: string): Promise<void> {
+    if (this.isReadOnly() || this.isAiProcessing() || this.localOcrService.isProcessing()) {
+      return;
+    }
+
+    const targetImage = imageOverride || this.attachedImageBase64();
+    if (!targetImage) return;
+
+    this.aiChatMessages.update((msgs) => [
+      ...msgs,
+      {
+        id: 'msg-ocr-u-' + Date.now(),
+        sender: 'user',
+        text: imageOverride
+          ? 'Reintentar digitalización offline con Tesseract OCR 2D'
+          : 'Digitalizar diagrama offline con Tesseract OCR 2D',
+        timestamp: new Date(),
+        imagePreview: imageOverride ? undefined : targetImage,
+      },
+    ]);
+
+    if (!imageOverride) {
+      this.aiPrompt.set('');
+      this.attachedImageBase64.set(null);
+      this.attachedImageName.set(null);
+    }
+
+    this.isAiProcessing.set(true);
+    this.scrollToBottom();
+
+    const result = await this.localOcrService.parseDiagramImageOffline(targetImage);
+    this.isAiProcessing.set(false);
+
+    if (result.success && result.nodes.length > 0) {
+      const summary = `OCR Offline 2D detectó ${result.nodes.length} clase(s) y ${result.connections.length} relación(es) en ${result.processingMs} ms.`;
+      this.aiChatMessages.update((msgs) => [
+        ...msgs,
+        {
+          id: 'msg-ocr-res-' + Date.now(),
+          sender: 'assistant',
+          text:
+            `Digitalización local completada sin internet (${result.nodes.map((n) => n.name).join(', ')}).` +
+            (result.connections.length === 0
+              ? '\nNota: Si algunas líneas conectoras no pudieron inferirse desde la imagen, puedes unirlas manualmente o con comandos de voz.'
+              : ''),
+          changesSummary: summary,
+          status: 'success',
+          providerUsed: 'local-ocr',
+          modelUsed: result.modelUsed,
+          timestamp: new Date(),
+        },
+      ]);
+
+      this.applyMutation.emit({
+        nodes: result.nodes,
+        connections: result.connections,
+        summary,
+        rawResponse: result,
+      });
+    } else {
+      const snippet = result.rawTextExtracted
+        ? `\n\nTexto detectado: "${result.rawTextExtracted.slice(0, 220)}${result.rawTextExtracted.length > 220 ? '...' : ''}"`
+        : '';
+      this.aiChatMessages.update((msgs) => [
+        ...msgs,
+        {
+          id: 'msg-ocr-err-' + Date.now(),
+          sender: 'assistant',
+          text: (result.errorMessage || 'No se pudieron identificar clases UML válidas en la imagen.') + snippet,
+          status: 'error',
+          providerUsed: 'local-ocr',
+          modelUsed: result.modelUsed,
+          timestamp: new Date(),
+        },
+      ]);
+    }
+
+    this.scrollToBottom();
+  }
+
+  private handleAiResponse(res: AiResponse, sourceTag: string, sentImage?: string | null): void {
     this.isAiProcessing.set(false);
 
     const summary = res.changesSummary || res.message || 'Diagrama actualizado por Copilot IA.';
@@ -315,6 +406,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
         status,
         providerUsed: res.providerUsed,
         modelUsed: res.modelUsed,
+        retryImageBase64: isError && sentImage ? sentImage : undefined,
         timestamp: new Date(),
       },
     ]);
@@ -331,7 +423,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     this.scrollToBottom();
   }
 
-  private handleAiError(err: any): void {
+  private handleAiError(err: any, sentImage?: string | null): void {
     this.isAiProcessing.set(false);
     const msg = err.error?.message || err.message || 'Error de conexión con el Asistente IA.';
 
@@ -340,7 +432,11 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
       {
         id: 'msg-err-' + Date.now(),
         sender: 'assistant',
-        text: '❌ Ocurrió un error al procesar tu solicitud: ' + msg,
+        text:
+          '❌ Ocurrió un error al procesar tu solicitud: ' +
+          msg +
+          (sentImage ? '\n\nPuedes reintentar offline usando OCR Tesseract local.' : ''),
+        retryImageBase64: sentImage || undefined,
         status: 'error',
         timestamp: new Date(),
       },
@@ -365,6 +461,10 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
       this.speechRecognition?.stop();
       this.isVoiceListening.set(false);
       return;
+    }
+
+    if (this.voiceCommandService.isListening()) {
+      this.voiceCommandService.stopListening();
     }
 
     try {

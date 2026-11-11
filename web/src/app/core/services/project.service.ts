@@ -112,6 +112,17 @@ export class ProjectService {
             };
           });
         }
+        this.projects.update((list) =>
+          list.map((p) =>
+            p.id === projectId
+              ? {
+                  ...p,
+                  memberCount: p.memberCount + 1,
+                  members: p.members ? [...p.members, newMember] : [newMember],
+                }
+              : p,
+          ),
+        );
       }),
     );
   }
@@ -129,6 +140,16 @@ export class ProjectService {
             };
           });
         }
+        this.projects.update((list) =>
+          list.map((p) =>
+            p.id === projectId && p.members
+              ? {
+                  ...p,
+                  members: p.members.map((m) => (m.userId === userId ? updatedMember : m)),
+                }
+              : p,
+          ),
+        );
       }),
     );
   }
@@ -147,6 +168,17 @@ export class ProjectService {
             };
           });
         }
+        this.projects.update((list) =>
+          list.map((p) =>
+            p.id === projectId && p.members
+              ? {
+                  ...p,
+                  memberCount: Math.max(1, p.memberCount - 1),
+                  members: p.members.filter((m) => m.userId !== userId),
+                }
+              : p,
+          ),
+        );
       }),
     );
   }

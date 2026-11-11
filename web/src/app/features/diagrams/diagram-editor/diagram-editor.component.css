@@ -38,6 +38,68 @@
   box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.45) !important;
 }
 
+/* Nodo ancla invisible para Clases Asociativas UML */
+::ng-deep f-flow .f-node.uml-node-anchor,
+::ng-deep f-flow .f-node.uml-node-anchor:hover,
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-anchor,
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-anchor:hover,
+.dark ::ng-deep f-flow .f-node.uml-node-anchor,
+.dark ::ng-deep f-flow .f-node.uml-node-anchor:hover {
+  background: transparent !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+}
+
+/* Variantes Polimórficas UML (Note, Interface, Enum, Association Class) */
+::ng-deep f-flow .f-node.uml-node-note {
+  background-color: #FFFBEB !important;
+  border: 1px solid #D97706 !important;
+  box-shadow: 4px 4px 0px rgba(180, 83, 9, 0.18) !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-note,
+.dark ::ng-deep f-flow .f-node.uml-node-note {
+  background-color: #261F0D !important;
+  border: 1px solid #B45309 !important;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5) !important;
+}
+
+::ng-deep f-flow .f-node.uml-node-interface {
+  border-color: #4F46E5 !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-interface,
+.dark ::ng-deep f-flow .f-node.uml-node-interface {
+  border-color: #6366F1 !important;
+}
+
+::ng-deep f-flow .f-node.uml-node-enum {
+  border-color: #059669 !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-enum,
+.dark ::ng-deep f-flow .f-node.uml-node-enum {
+  border-color: #10B981 !important;
+}
+
+::ng-deep f-flow .f-node.uml-node-assoc {
+  border-color: #7C3AED !important;
+}
+
+:host-context(.dark) ::ng-deep f-flow .f-node.uml-node-assoc,
+.dark ::ng-deep f-flow .f-node.uml-node-assoc {
+  border-color: #8B5CF6 !important;
+}
+
 ::ng-deep f-flow .uml-connector-point.uml-connector-inactive {
   opacity: 0 !important;
   pointer-events: none !important;

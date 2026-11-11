@@ -20,10 +20,21 @@ export class LoginComponent {
 
   readonly showPassword = signal<boolean>(false);
 
+  readonly demoAccounts = [
+    { label: 'Cesar (Owner)', email: 'cesar@uagrm.edu.bo', pass: 'Pass1234!' },
+    { label: 'Ana (Editor+ZIP)', email: 'ana@uagrm.edu.bo', pass: 'Pass1234!' },
+    { label: 'Luis (Sin ZIP)', email: 'luis@uagrm.edu.bo', pass: 'Pass1234!' },
+    { label: 'Sofía (Viewer)', email: 'sofia@uagrm.edu.bo', pass: 'Pass1234!' },
+  ];
+
   readonly loginForm: FormGroup = this.fb.group({
     email: ['', [Validators.required, Validators.email]],
     password: ['', [Validators.required, Validators.minLength(6)]],
   });
+
+  fillDemoAccount(email: string, password: string): void {
+    this.loginForm.patchValue({ email, password });
+  }
 
   togglePassword(): void {
     this.showPassword.update((val) => !val);

@@ -243,8 +243,43 @@ export class BmpExportService {
     URL.revokeObjectURL(downloadUrl);
   }
 
+  private wrapTextLines(text: string, maxChars = 28): string[] {
+    if (!text) return [];
+    const lines: string[] = [];
+    for (const rawLine of text.split(/\r?\n/)) {
+      const words = rawLine.trim().split(/\s+/);
+      if (words.length === 1 && words[0] === '') {
+        lines.push('');
+        continue;
+      }
+      let current = '';
+      for (const word of words) {
+        if (!current) {
+          current = word;
+        } else if (current.length + 1 + word.length <= maxChars) {
+          current += ' ' + word;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+    }
+    return lines;
+  }
+
   private calculateNodeHeight(node: UmlClassNode): number {
-    const headerHeight = 32;
+    const elType = (node.elementType || 'CLASS').toUpperCase();
+    if (elType === 'NOTE') {
+      const text = (node.noteContent || node.name || '').trim();
+      const lines = Math.max(2, this.wrapTextLines(text, 28).length);
+      return 40 + lines * 16 + 10;
+    }
+    const hasStereo =
+      elType === 'INTERFACE' ||
+      elType === 'ENUM' ||
+      Boolean(node.stereotype?.trim());
+    const headerHeight = hasStereo ? 44 : 30;
     const attrCount = (node.attributes || []).length;
     const attrHeight = attrCount > 0 ? (attrCount * 18 + 12) : 24;
     const methodCount = (node.methods || []).length;
@@ -435,15 +470,74 @@ export class BmpExportService {
     h: number,
   ): void {
     ctx.save();
+    const elType = (node.elementType || 'CLASS').toUpperCase();
 
     ctx.shadowColor = 'rgba(0, 0, 0, 0.15)';
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 4;
     ctx.shadowOffsetY = 4;
 
+    if (elType === 'NOTE') {
+      ctx.fillStyle = '#FEF3C7';
+      ctx.strokeStyle = '#B45309';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.shadowColor = 'transparent';
+
+      // Esquina doblada superior derecha
+      const fold = 12;
+      ctx.fillStyle = '#FDE68A';
+      ctx.beginPath();
+      ctx.moveTo(x + w - fold, y);
+      ctx.lineTo(x + w, y + fold);
+      ctx.lineTo(x + w - fold, y + fold);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = 'bold 10px monospace';
+      ctx.fillStyle = '#92400E';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`«note» ${node.name || 'Nota'}`, x + 10, y + 16);
+
+      const lines = this.wrapTextLines((node.noteContent || node.name || '').trim(), 28);
+      ctx.font = '11px sans-serif';
+      ctx.fillStyle = '#451A03';
+      let lineY = y + 36;
+      for (const line of lines) {
+        ctx.fillText(line, x + 10, lineY, w - 20);
+        lineY += 16;
+      }
+
+      ctx.restore();
+      return;
+    }
+
+    const headerBg =
+      elType === 'INTERFACE'
+        ? '#EEF2FF'
+        : elType === 'ENUM'
+          ? '#ECFDF5'
+          : elType === 'ASSOCIATION_CLASS'
+            ? '#FAF5FF'
+            : '#FFFDF9';
+    const borderStroke =
+      elType === 'INTERFACE'
+        ? '#4F46E5'
+        : elType === 'ENUM'
+          ? '#059669'
+          : elType === 'ASSOCIATION_CLASS'
+            ? '#7C3AED'
+            : '#796354';
+
     ctx.fillStyle = '#FFFDF9';
-    ctx.strokeStyle = '#796354';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = borderStroke;
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.fill();
@@ -451,39 +545,68 @@ export class BmpExportService {
 
     ctx.shadowColor = 'transparent';
 
-    const headerHeight = 30;
-    ctx.fillStyle = '#FFFDF9';
+    const stereotypeText =
+      node.stereotype?.trim()
+        ? `«${node.stereotype.trim()}»`
+        : elType === 'INTERFACE'
+          ? '«interface»'
+          : elType === 'ENUM'
+            ? '«enumeration»'
+            : '';
+    const headerHeight = stereotypeText ? 44 : 30;
+
+    ctx.fillStyle = headerBg;
     ctx.beginPath();
     ctx.rect(x, y, w, headerHeight);
     ctx.fill();
-    ctx.strokeStyle = '#796354';
+    ctx.strokeStyle = borderStroke;
     ctx.beginPath();
     ctx.moveTo(x, y + headerHeight);
     ctx.lineTo(x + w, y + headerHeight);
     ctx.stroke();
 
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillStyle = '#241C18';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, x + w / 2, y + headerHeight / 2);
+    if (stereotypeText) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#475569';
+      ctx.fillText(stereotypeText, x + w / 2, y + 13, w - 16);
+      ctx.font = elType === 'INTERFACE' ? 'italic bold 12px sans-serif' : 'bold 12px sans-serif';
+      ctx.fillStyle = '#241C18';
+      ctx.fillText(node.name, x + w / 2, y + 30, w - 16);
+    } else {
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillStyle = '#241C18';
+      ctx.fillText(node.name, x + w / 2, y + headerHeight / 2, w - 16);
+    }
 
     let currentY = y + headerHeight + 12;
-    ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
 
     const attributes = node.attributes || [];
-    for (const attr of attributes) {
-      ctx.fillStyle = '#241C18';
-      ctx.fillText(`- ${attr.name}: ${attr.type}`, x + 10, currentY);
-      currentY += 18;
+    if (attributes.length > 0) {
+      for (const attr of attributes) {
+        const vis = attr.visibility || (elType === 'ENUM' ? '+' : '-');
+        const pkTag = attr.isPrimaryKey ? ' [PK]' : '';
+        const nnTag = !attr.isPrimaryKey && attr.isNullable === false ? ' *' : '';
+        ctx.font = attr.isPrimaryKey ? 'bold 11px sans-serif' : '11px sans-serif';
+        ctx.fillStyle = attr.isPrimaryKey ? '#B45309' : '#241C18';
+        const lineText =
+          elType === 'ENUM'
+            ? `${attr.name}`
+            : `${vis} ${attr.name}: ${attr.type}${nnTag}${pkTag}`;
+        ctx.fillText(lineText, x + 10, currentY, w - 20);
+        currentY += 18;
+      }
+    } else {
+      currentY += 12;
     }
 
     const methods = node.methods || [];
     if (methods.length > 0) {
       currentY += 2;
-      ctx.strokeStyle = '#796354';
+      ctx.strokeStyle = borderStroke;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x, currentY);
@@ -491,11 +614,13 @@ export class BmpExportService {
       ctx.stroke();
 
       currentY += 12;
+      ctx.font = elType === 'INTERFACE' ? 'italic 11px sans-serif' : '11px sans-serif';
       for (const m of methods) {
         ctx.fillStyle = '#241C18';
+        const vis = m.visibility || '+';
         const params = m.parameters ? `(${m.parameters})` : '()';
         const ret = m.returnType ? `: ${m.returnType}` : ': void';
-        ctx.fillText(`+ ${m.name}${params}${ret}`, x + 10, currentY);
+        ctx.fillText(`${vis} ${m.name}${params}${ret}`, x + 10, currentY, w - 20);
         currentY += 18;
       }
     }

@@ -1,0 +1,209 @@
+@if (isOpen()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.28)] max-w-4xl w-full flex flex-col max-h-[90vh] overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150 rounded-sm">
+
+      <!-- Header -->
+      <div class="px-4 py-3 bg-[#6B5A52] dark:bg-[#101426] text-white flex items-center justify-between gap-3 shrink-0 border-b border-transparent dark:border-[#2D3762]">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="p-1.5 rounded bg-indigo-500/20 border border-indigo-400/40 shrink-0">
+            <ng-icon name="heroShieldCheck" class="text-base text-cyan-300"></ng-icon>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-bold uppercase tracking-wider font-mono text-[12px] truncate">
+              {{ 'audit.title' | translate }}
+            </h3>
+            <p class="text-[10px] text-slate-200 dark:text-slate-400 font-mono truncate">
+              {{ 'audit.subtitle' | translate }}
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2.5 shrink-0">
+          <div
+            [ngClass]="getScoreBadgeClass(report().score)"
+            class="px-2.5 py-1 rounded-full font-mono font-bold text-[11px] border shadow-xs flex items-center gap-1.5">
+            <span>{{ 'audit.scoreLabel' | translate }}:</span>
+            <span>{{ report().score }}/100</span>
+          </div>
+          <button
+            (click)="closeModal.emit()"
+            class="text-white/80 hover:text-white hover:bg-white/10 p-1 rounded cursor-pointer leading-none">
+            <ng-icon name="heroXMark" class="text-base"></ng-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- KPIs de Diagnóstico -->
+      <div class="p-3 bg-[#EAEAEA] dark:bg-[#12162A] border-b border-[#C0C0C0] dark:border-[#2D3762] grid grid-cols-2 sm:grid-cols-5 gap-2 shrink-0 font-mono">
+        <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5">
+          <div class="text-[9.5px] text-slate-500 dark:text-slate-400 uppercase">{{ 'audit.stats.classes' | translate }}</div>
+          <div class="text-sm font-bold text-slate-900 dark:text-slate-100">{{ report().stats.totalClasses }}</div>
+        </div>
+        <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5">
+          <div class="text-[9.5px] text-slate-500 dark:text-slate-400 uppercase">{{ 'audit.stats.missingPk' | translate }}</div>
+          <div class="text-sm font-bold" [ngClass]="report().stats.classesMissingPk > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'">
+            {{ report().stats.classesMissingPk }}
+          </div>
+        </div>
+        <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5">
+          <div class="text-[9.5px] text-slate-500 dark:text-slate-400 uppercase">{{ 'audit.stats.manyToMany' | translate }}</div>
+          <div class="text-sm font-bold" [ngClass]="report().stats.directManyToManys > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">
+            {{ report().stats.directManyToManys }}
+          </div>
+        </div>
+        <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5">
+          <div class="text-[9.5px] text-slate-500 dark:text-slate-400 uppercase">{{ 'audit.stats.norm1fn3fn' | translate }}</div>
+          <div class="text-sm font-bold" [ngClass]="(report().stats.multivaluedAttributes + report().stats.transitiveDependencies) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">
+            {{ report().stats.multivaluedAttributes + report().stats.transitiveDependencies }}
+          </div>
+        </div>
+        <div class="bg-white dark:bg-[#0E1225] border border-slate-300 dark:border-[#2D3762] rounded px-2.5 py-1.5">
+          <div class="text-[9.5px] text-slate-500 dark:text-slate-400 uppercase">{{ 'audit.stats.isolated' | translate }}</div>
+          <div class="text-sm font-bold text-slate-800 dark:text-slate-200">{{ report().stats.isolatedClasses }}</div>
+        </div>
+      </div>
+
+      <!-- Banners Informativos -->
+      @if (isReadOnly()) {
+        <div class="px-4 py-2 bg-amber-100 dark:bg-amber-950/50 border-b border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 font-mono text-[11px] shrink-0">
+          {{ 'audit.readOnlyNotice' | translate }}
+        </div>
+      }
+      @if (lastAppliedCount() !== null) {
+        <div class="px-4 py-2 bg-emerald-100 dark:bg-emerald-950/50 border-b border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 font-mono text-[11px] flex items-center gap-2 shrink-0">
+          <ng-icon name="heroCheckCircle" class="text-sm text-emerald-600 dark:text-emerald-400 shrink-0"></ng-icon>
+          <span>{{ 'audit.appliedBanner' | translate:{ count: lastAppliedCount() ?? 0 } }}</span>
+        </div>
+      }
+
+      <!-- Filtros por Categoría -->
+      @if (report().recommendations.length > 0) {
+        <div class="px-3 py-2 bg-white dark:bg-[#121629] border-b border-[#C0C0C0] dark:border-[#2D3762] flex items-center justify-between gap-2 flex-wrap shrink-0 font-mono text-[10.5px]">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button
+              (click)="activeCategoryFilter.set('ALL')"
+              [ngClass]="activeCategoryFilter() === 'ALL' ? 'bg-[#6B5A52] dark:bg-[#252E56] text-white font-bold' : 'bg-slate-100 dark:bg-[#1C2242] text-slate-700 dark:text-slate-300 hover:bg-slate-200'"
+              class="px-2.5 py-1 rounded cursor-pointer transition-colors">
+              {{ 'audit.filterAll' | translate }} ({{ report().recommendations.length }})
+            </button>
+            @for (cat of ['1NF', '2NF', '3NF', 'RELATION', 'TYPE', 'OPTIMIZATION']; track cat) {
+              @if (getCategoryCount($any(cat)) > 0) {
+                <button
+                  (click)="activeCategoryFilter.set($any(cat))"
+                  [ngClass]="activeCategoryFilter() === cat ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-100 dark:bg-[#1C2242] text-slate-700 dark:text-slate-300 hover:bg-slate-200'"
+                  class="px-2.5 py-1 rounded cursor-pointer transition-colors">
+                  {{ cat }} ({{ getCategoryCount($any(cat)) }})
+                </button>
+              }
+            }
+          </div>
+
+          @if (!isReadOnly()) {
+            <div class="flex items-center gap-2 text-[10.5px]">
+              <button (click)="selectAll()" class="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                {{ 'audit.selectAll' | translate }}
+              </button>
+              <span class="text-slate-400">|</span>
+              <button (click)="deselectAll()" class="text-slate-600 dark:text-slate-400 hover:underline cursor-pointer">
+                {{ 'audit.deselectAll' | translate }}
+              </button>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Lista de Hallazgos -->
+      <div class="flex-1 overflow-y-auto p-3 space-y-2">
+        @if (report().recommendations.length === 0) {
+          <div class="py-12 px-4 text-center flex flex-col items-center justify-center gap-2">
+            <div class="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950/50 border border-emerald-400/50 flex items-center justify-center">
+              <ng-icon name="heroCheckCircle" class="text-2xl text-emerald-600 dark:text-emerald-400"></ng-icon>
+            </div>
+            <h4 class="font-bold text-sm text-[#2A201B] dark:text-slate-100 font-mono">
+              {{ 'audit.allGoodTitle' | translate }}
+            </h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 max-w-md">
+              {{ 'audit.allGoodDesc' | translate }}
+            </p>
+          </div>
+        } @else {
+          @for (rec of filteredRecommendations(); track rec.id) {
+            <div
+              (click)="toggleSelection(rec.id)"
+              [ngClass]="{
+                'border-indigo-500 bg-white dark:bg-[#19203E]': isSelected(rec.id) && !isReadOnly(),
+                'border-slate-300 dark:border-[#2D3762] bg-white/80 dark:bg-[#0E1225]': !isSelected(rec.id) || isReadOnly()
+              }"
+              class="border rounded p-2.5 flex items-start gap-3 transition-colors cursor-pointer">
+
+              @if (!isReadOnly()) {
+                <input
+                  type="checkbox"
+                  [checked]="isSelected(rec.id)"
+                  (click)="$event.stopPropagation()"
+                  (change)="toggleSelection(rec.id)"
+                  class="mt-1 accent-indigo-600 cursor-pointer shrink-0" />
+              }
+
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-1.5 flex-wrap mb-1">
+                  <span
+                    [ngClass]="{
+                      'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800': rec.severity === 'CRITICAL',
+                      'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800': rec.severity === 'WARNING',
+                      'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800': rec.severity === 'INFO'
+                    }"
+                    class="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold border uppercase">
+                    {{ rec.severity }}
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800">
+                    {{ rec.category }}
+                  </span>
+                  @if (rec.targetNodeName) {
+                    <span class="px-1.5 py-0.5 rounded text-[9.5px] font-mono bg-slate-100 dark:bg-[#1C2242] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-[#2D3762]">
+                      {{ rec.targetNodeName }}
+                    </span>
+                  }
+                </div>
+                <div class="font-bold text-xs text-[#2A201B] dark:text-slate-100">
+                  {{ rec.title }}
+                </div>
+                <p class="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">
+                  {{ rec.description }}
+                </p>
+              </div>
+            </div>
+          }
+        }
+      </div>
+
+      <!-- Footer -->
+      <div class="p-3 bg-white dark:bg-[#121629] border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex items-center justify-between gap-2 shrink-0">
+        <button
+          (click)="closeModal.emit()"
+          class="px-3.5 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono rounded cursor-pointer">
+          {{ 'common.close' | translate }}
+        </button>
+
+        @if (!isReadOnly() && report().recommendations.length > 0) {
+          <div class="flex items-center gap-2">
+            <button
+              (click)="onApplySelected()"
+              [disabled]="selectedCount() === 0"
+              class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold rounded shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+              <ng-icon name="heroWrenchScrewdriver" class="text-xs"></ng-icon>
+              <span>{{ 'audit.applySelected' | translate }} ({{ selectedCount() }})</span>
+            </button>
+            <button
+              (click)="onApplyAll()"
+              class="px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-mono font-bold rounded shadow-md cursor-pointer flex items-center gap-1.5">
+              <ng-icon name="heroSparkles" class="text-xs"></ng-icon>
+              <span>{{ 'audit.applyAll' | translate }}</span>
+            </button>
+          </div>
+        }
+      </div>
+
+    </div>
+  </div>
+}

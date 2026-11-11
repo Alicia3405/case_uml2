@@ -7,7 +7,19 @@
     [isSaving]="diagramService.isSaving()"
     [saveSuccessMessage]="saveSuccessMessage()"
     [isReadOnly]="isReadOnly()"
+    [canUndo]="canUndo()"
+    [canRedo]="canRedo()"
+    [undoCount]="undoCount()"
+    [redoCount]="redoCount()"
+    [isCollabOpen]="isCollabPanelOpen()"
+    [unreadChatCount]="collaborationService.unreadChatCount()"
     (saveDiagram)="saveToBackend()"
+    (undoAction)="undo()"
+    (redoAction)="redo()"
+    (openAudit)="showAuditModal.set(true)"
+    (openSqlDdl)="showSqlModal.set(true)"
+    (openXmiValidator)="showXmiModal.set(true)"
+    (toggleCollabPanel)="toggleCollabPanel()"
     (exportBmp)="downloadBmpFile()"
     (exportXmi)="downloadXmiFile()"
     (exportJson)="downloadJsonFile()"
@@ -35,7 +47,7 @@
       (zoomOut)="zoomOut()"
       (resetView)="resetView()"
       (fitView)="fitView()"
-      (addClass)="addClass()">
+      (addElement)="addElement($event)">
     </app-diagram-toolbox>
 
     <!-- 2.2 [CONTENEDOR CENTRAL]: BARRA DE PESTAÑAS EA + CANVAS FOBLEX FLOW -->
@@ -80,7 +92,7 @@
       <!-- Botón Flotante para reabrir Copilot IA cuando está oculto -->
       @if (!isAiPanelOpen()) {
         <button
-          (click)="isAiPanelOpen.set(true)"
+          (click)="openAiPanel()"
           [title]="'toolbar.openAiTooltip' | translate"
           class="absolute top-3.5 right-3.5 z-40 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-700 text-white shadow-lg rounded-full px-3.5 py-1.5 flex items-center gap-1.5 text-xs font-mono font-bold cursor-pointer transition-all hover:scale-105">
           <ng-icon name="heroSparkles" class="text-xs text-amber-300"></ng-icon>
@@ -128,6 +140,8 @@
         fDraggable
         [fCanvasMoveTrigger]="canvasMoveTrigger"
         (fLoaded)="onFlowLoaded()"
+        (fDragStarted)="onFlowDragStarted($event)"
+        (fDragEnded)="onFlowDragEnded()"
         (fCreateConnection)="onConnectionCreated($event)"
         (fReassignConnection)="onConnectionReassigned($event)"
         class="w-full h-full block">
@@ -263,7 +277,11 @@
                 [style.minHeight.px]="node.isAnchor ? 0 : (node.height || null)"
                 [style.outline]="(!node.isAnchor && isNodeLockedByOther(node.id)) ? ('2px solid ' + (getNodeLock(node.id)?.color || '#EF4444')) : null"
                 [ngClass]="{
-                  'w-0 h-0 opacity-0 pointer-events-none absolute': node.isAnchor,
+                  'uml-node-anchor w-0 h-0 opacity-0 pointer-events-none absolute': node.isAnchor,
+                  'uml-node-note': !node.isAnchor && node.elementType === 'NOTE',
+                  'uml-node-interface': !node.isAnchor && node.elementType === 'INTERFACE',
+                  'uml-node-enum': !node.isAnchor && node.elementType === 'ENUM',
+                  'uml-node-assoc': !node.isAnchor && node.elementType === 'ASSOCIATION_CLASS',
                   'font-sans text-[#241C18] dark:text-slate-100 select-none relative group/node transition-shadow rounded-none overflow-hidden': !node.isAnchor,
                   'ring-2 ring-blue-600 shadow-[0_0_10px_rgba(37,99,235,0.35)] z-30': !node.isAnchor && selectedNodeId() === node.id,
                   'ring-2 ring-indigo-400 z-20': !node.isAnchor && isNeighborNode(node.id),
@@ -279,7 +297,7 @@
                   <div fConnector fConnectorType="source-target" [fConnectorId]="node.id" class="w-0 h-0"></div>
                 }
 
-                <!-- Contenido Nodo de Clase Estándar -->
+                <!-- Contenido Nodo Polimórfico UML -->
                 @else {
 
                   <!-- BADGE VISUAL DE EXCLUSIÓN MUTUA / BLOQUEO POR OTRO USUARIO -->
@@ -369,54 +387,126 @@
                     class="uml-connector-point absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs z-50 transition-transform hover:scale-125 cursor-crosshair">
                   </div>
 
-                  <!-- 1. CABECERA: TÍTULO DE LA CLASE UML (ESTILO ENTERPRISE ARCHITECT) -->
-                  <div
-                    (click)="onNodeSelect(node.id, $event)"
-                    [ngClass]="{
-                      'bg-blue-600 text-white border-b border-blue-700': selectedNodeId() === node.id,
-                      'bg-indigo-100 text-indigo-950 border-b border-indigo-300': isNeighborNode(node.id),
-                      'bg-[#FFFDF9] dark:bg-[#1A203E] border-b border-[#796354] dark:border-[#3B487A] text-[#241C18] dark:text-slate-100': selectedNodeId() !== node.id && !isNeighborNode(node.id)
-                    }"
-                    class="flex items-center justify-between px-2.5 py-1.5 cursor-pointer transition-colors">
-                    <span class="font-bold text-[12px] font-sans text-center w-full tracking-tight truncate flex items-center justify-center gap-1" title="Clic para resaltar relaciones / Doble clic para editar">
-                      @if (isNodeLockedByOther(node.id)) {
-                        <ng-icon name="heroLockClosed" class="text-xs text-red-600 shrink-0"></ng-icon>
-                      }
-                      {{ node.name }}
-                    </span>
-                    <button
-                      (click)="removeClass(node.id, $event)"
-                      [disabled]="isNodeLockedByOther(node.id)"
-                      title="Eliminar clase"
-                      class="opacity-0 group-hover/node:opacity-100 hover:text-red-600 text-slate-400 p-0.5 cursor-pointer transition-opacity disabled:opacity-0">
-                      <ng-icon name="heroTrash" class="text-xs"></ng-icon>
-                    </button>
-                  </div>
-
-                  <!-- 2. CUERPO: ATRIBUTOS TIPADOS ESTILO EA -->
-                  <div class="px-2.5 py-1.5 space-y-0.5 bg-[#FFFDF9] dark:bg-[#101428]/40 min-h-[28px]">
-                    @if (node.attributes && node.attributes.length > 0) {
-                      @for (attr of node.attributes; track attr.name) {
-                        <div class="flex items-center text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200">
-                          <span class="shrink-0 font-medium select-none mr-1.5 text-[#5A4537] dark:text-slate-400">-</span>
-                          <span class="truncate font-medium">{{ attr.name }}</span>
-                          <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal">: {{ attr.type }}</span>
-                        </div>
-                      }
-                    }
-                  </div>
-
-                  <!-- 3. CUERPO: MÉTODOS / OPERACIONES CON RETORNO ESTILO EA (SOLO SI TIENE MÉTODOS) -->
-                  @if (node.methods && node.methods.length > 0) {
-                    <div class="px-2.5 py-1.5 space-y-0.5 border-t border-[#796354] dark:border-[#3B487A] bg-[#FFFDF9] dark:bg-[#101428]/40">
-                      @for (m of node.methods; track m.name) {
-                        <div class="flex items-center text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200">
-                          <span class="shrink-0 font-medium select-none mr-1.5 text-[#5A4537] dark:text-slate-400">+</span>
-                          <span class="truncate font-medium">{{ m.name }}({{ m.parameters || '' }})</span>
-                          <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal">: {{ m.returnType || 'void' }}</span>
-                        </div>
-                      }
+                  <!-- ELEMENTO NOTE / COMENTARIO UML -->
+                  @if (node.elementType === 'NOTE') {
+                    <div
+                      (click)="onNodeSelect(node.id, $event)"
+                      class="relative bg-amber-100/95 dark:bg-[#352A10] border-b border-amber-400/70 dark:border-amber-700/70 px-2.5 py-1.5 flex items-center justify-between gap-1 cursor-pointer">
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <ng-icon name="heroChatBubbleBottomCenterText" class="text-xs text-amber-700 dark:text-amber-300 shrink-0"></ng-icon>
+                        <span class="font-mono text-[9.5px] font-bold uppercase text-amber-800 dark:text-amber-300 shrink-0">«note»</span>
+                        <span class="font-bold text-[11px] text-amber-950 dark:text-amber-100 truncate">{{ node.name }}</span>
+                      </div>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button
+                          (click)="removeClass(node.id, $event)"
+                          [disabled]="isNodeLockedByOther(node.id)"
+                          title="Eliminar nota"
+                          class="opacity-0 group-hover/node:opacity-100 hover:text-red-600 text-amber-700 dark:text-amber-400 p-0.5 cursor-pointer transition-opacity disabled:opacity-0">
+                          <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+                        </button>
+                        <span class="w-3 h-3 bg-amber-200 dark:bg-amber-800 border-l border-b border-amber-500/60 dark:border-amber-600/60 inline-block -mr-2.5 -mt-1.5"></span>
+                      </div>
                     </div>
+                    <div class="px-2.5 py-2 bg-amber-50/95 dark:bg-[#261F0D] text-[11px] text-amber-950 dark:text-amber-100 whitespace-pre-wrap break-words leading-relaxed min-h-[42px]">
+                      {{ node.noteContent || node.name }}
+                    </div>
+                  } @else {
+                    <!-- 1. CABECERA: CLASE / INTERFAZ / ENUMERACIÓN / ASOCIATIVA -->
+                    <div
+                      (click)="onNodeSelect(node.id, $event)"
+                      [ngClass]="{
+                        'bg-blue-600 text-white border-b border-blue-700': selectedNodeId() === node.id,
+                        'bg-indigo-100 text-indigo-950 border-b border-indigo-300': isNeighborNode(node.id),
+                        'bg-indigo-50/90 dark:bg-indigo-950/70 border-b border-indigo-500/80 dark:border-indigo-500 text-indigo-950 dark:text-indigo-100': selectedNodeId() !== node.id && !isNeighborNode(node.id) && node.elementType === 'INTERFACE',
+                        'bg-emerald-50/90 dark:bg-emerald-950/60 border-b border-emerald-600/80 dark:border-emerald-500 text-emerald-950 dark:text-emerald-100': selectedNodeId() !== node.id && !isNeighborNode(node.id) && node.elementType === 'ENUM',
+                        'bg-purple-50/90 dark:bg-purple-950/60 border-b border-purple-600/80 dark:border-purple-500 text-purple-950 dark:text-purple-100': selectedNodeId() !== node.id && !isNeighborNode(node.id) && node.elementType === 'ASSOCIATION_CLASS',
+                        'bg-[#FFFDF9] dark:bg-[#1A203E] border-b border-[#796354] dark:border-[#3B487A] text-[#241C18] dark:text-slate-100': selectedNodeId() !== node.id && !isNeighborNode(node.id) && (!node.elementType || node.elementType === 'CLASS')
+                      }"
+                      class="flex items-center justify-between px-2.5 py-1.5 cursor-pointer transition-colors">
+                      <div class="w-full min-w-0 text-center">
+                        @if (node.elementType === 'INTERFACE' || node.elementType === 'ENUM' || node.stereotype) {
+                          <div
+                            class="text-[9.5px] font-mono leading-none mb-0.5 truncate"
+                            [ngClass]="selectedNodeId() === node.id ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'">
+                            «{{ node.stereotype || (node.elementType === 'INTERFACE' ? 'interface' : node.elementType === 'ENUM' ? 'enumeration' : '') }}»
+                          </div>
+                        }
+                        <span
+                          class="font-bold text-[12px] font-sans tracking-tight truncate flex items-center justify-center gap-1"
+                          [class.italic]="node.elementType === 'INTERFACE'"
+                          title="Clic para resaltar relaciones / Doble clic para editar">
+                          @if (isNodeLockedByOther(node.id)) {
+                            <ng-icon name="heroLockClosed" class="text-xs text-red-600 shrink-0"></ng-icon>
+                          }
+                          {{ node.name }}
+                        </span>
+                      </div>
+                      <button
+                        (click)="removeClass(node.id, $event)"
+                        [disabled]="isNodeLockedByOther(node.id)"
+                        title="Eliminar elemento"
+                        class="opacity-0 group-hover/node:opacity-100 hover:text-red-600 text-slate-400 p-0.5 cursor-pointer transition-opacity disabled:opacity-0 shrink-0">
+                        <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+                      </button>
+                    </div>
+
+                    <!-- 2. CUERPO: LITERALES (ENUM) O ATRIBUTOS TIPADOS (CLASE/INTERFAZ) -->
+                    @if (node.elementType === 'ENUM') {
+                      <div class="px-2.5 py-1.5 space-y-0.5 bg-[#FFFDF9] dark:bg-[#101428]/40 min-h-[28px]">
+                        @for (attr of node.attributes; track $index) {
+                          <div class="flex items-center gap-1.5 text-[11px] font-mono leading-snug text-emerald-900 dark:text-emerald-200">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                            <span class="truncate font-semibold">{{ attr.name }}</span>
+                          </div>
+                        }
+                      </div>
+                    } @else {
+                      <div class="px-2.5 py-1.5 space-y-0.5 bg-[#FFFDF9] dark:bg-[#101428]/40 min-h-[28px]">
+                        @for (attr of node.attributes; track $index) {
+                          <div class="flex items-center justify-between gap-1 text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200">
+                            <div class="flex items-center min-w-0">
+                              <span class="shrink-0 font-mono font-medium select-none mr-1 text-[#5A4537] dark:text-slate-400">{{ attr.visibility || '-' }}</span>
+                              @if (attr.isPrimaryKey) {
+                                <ng-icon name="heroKey" class="text-[10px] text-amber-600 dark:text-amber-400 shrink-0 mr-1"></ng-icon>
+                              }
+                              <span
+                                class="truncate"
+                                [class.font-bold]="attr.isPrimaryKey"
+                                [class.font-medium]="!attr.isPrimaryKey"
+                                [class.text-amber-800]="attr.isPrimaryKey"
+                                [class.dark:text-amber-300]="attr.isPrimaryKey">
+                                {{ attr.name }}
+                              </span>
+                              <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal shrink-0">: {{ attr.type }}</span>
+                              @if (!attr.isPrimaryKey && attr.isNullable === false) {
+                                <span class="text-rose-600 dark:text-rose-400 font-bold ml-0.5 shrink-0" title="NOT NULL">*</span>
+                              }
+                            </div>
+                            @if (attr.isPrimaryKey) {
+                              <span class="shrink-0 text-[8.5px] font-mono font-bold px-1 py-0.2 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-400/70 dark:border-amber-600/60 rounded">
+                                PK
+                              </span>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+
+                    <!-- 3. CUERPO: MÉTODOS / OPERACIONES CON VISIBILIDAD REAL -->
+                    @if (node.methods && node.methods.length > 0) {
+                      <div class="px-2.5 py-1.5 space-y-0.5 border-t border-[#796354] dark:border-[#3B487A] bg-[#FFFDF9] dark:bg-[#101428]/40">
+                        @for (m of node.methods; track $index) {
+                          <div
+                            class="flex items-center text-[11px] font-sans leading-snug text-[#241C18] dark:text-slate-200"
+                            [class.italic]="node.elementType === 'INTERFACE'">
+                            <span class="shrink-0 font-mono font-medium select-none mr-1 text-[#5A4537] dark:text-slate-400">{{ m.visibility || '+' }}</span>
+                            <span class="truncate font-medium">{{ m.name }}({{ m.parameters || '' }})</span>
+                            <span class="text-[#5A4537] dark:text-[#A5B4FC] ml-0.5 font-normal shrink-0">: {{ m.returnType || 'void' }}</span>
+                          </div>
+                        }
+                      </div>
+                    }
                   }
 
                 }
@@ -428,12 +518,27 @@
         </f-canvas>
       </f-flow>
 
+      <!-- Toast de Actualización de Permisos en Vivo -->
+      @if (permissionToast(); as toastMsg) {
+        <div class="absolute top-12 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 rounded-full bg-amber-950/90 text-amber-200 border border-amber-500/70 shadow-lg text-[11px] font-mono font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+          <ng-icon name="heroLockClosed" class="text-xs text-amber-400 shrink-0"></ng-icon>
+          <span>{{ toastMsg }}</span>
+        </div>
+      }
+
+      <!-- Cápsula Flotante de Comandos por Voz Atómicos + TTS -->
+      <app-uml-voice-dock
+        class="absolute bottom-4 left-4 z-40 pointer-events-none"
+        [isReadOnly]="isReadOnly()">
+      </app-uml-voice-dock>
+
     </div>
   </div>
 
     <!-- 2.3 [PANEL LATERAL DERECHO] COPILOT IA REFACTORIZADO EN COMPONENTE SEPARADO -->
     <app-ai-assistant-panel
       [isOpen]="isAiPanelOpen()"
+      [isReadOnly]="isReadOnly()"
       [diagramId]="currentDiagramId()"
       [roomCode]="collaborationService.activeRoomCode()"
       [currentNodes]="nodes()"
@@ -441,6 +546,17 @@
       (closePanel)="isAiPanelOpen.set(false)"
       (applyMutation)="onAiMutation($event)">
     </app-ai-assistant-panel>
+
+    <!-- 2.4 [PANEL LATERAL DERECHO] SALA COLABORATIVA: CHAT, BITÁCORA Y PERMISOS -->
+    <app-collaboration-panel
+      [isOpen]="isCollabPanelOpen()"
+      [projectId]="currentProjectId()"
+      [projectCreatedBy]="projectCreatedBy()"
+      [currentUserRole]="currentUserRole()"
+      [members]="projectMembers()"
+      (closePanel)="isCollabPanelOpen.set(false)"
+      (membersChanged)="refreshProjectPermissions()">
+    </app-collaboration-panel>
 
   </div>
 
@@ -491,19 +607,48 @@
     (close)="isProfileModalOpen.set(false)">
   </app-user-profile-modal>
 
-  <!-- 5. MODAL: EDITAR CLASE (DOBLE CLIC) -->
+  <!-- 5. MODAL: EDITAR ELEMENTO UML (DOBLE CLIC) -->
   @if (isEditNodeModalOpen() && editingNode()) {
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] max-w-lg w-full overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
+      <div class="bg-[#F2EBE6] dark:bg-[#14182E] border-[1.5px] border-[#6B5A52] dark:border-[#2D3762] shadow-[6px_6px_0px_rgba(0,0,0,0.25)] max-w-2xl w-full overflow-hidden text-xs animate-in fade-in zoom-in-95 duration-150">
         
         <div class="border-b-[1.5px] border-[#6B5A52] dark:border-[#2D3762] bg-white/40 dark:bg-[#101428]/40 px-4 py-2.5 flex items-center justify-between">
           <h3 class="font-bold text-[#2A201B] dark:text-slate-100 uppercase tracking-wide">{{ 'editor.nodeModal.title' | translate }}</h3>
-          <button (click)="closeEditNodeModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-bold text-base cursor-pointer">&times;</button>
+          <button type="button" (click)="closeEditNodeModal()" class="text-[#6B5A52] dark:text-slate-400 hover:text-[#2A201B] dark:hover:text-slate-200 font-bold text-base cursor-pointer">&times;</button>
         </div>
 
         <div class="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
           
-          <!-- Nombre de la Clase -->
+          <!-- Tipo de Elemento y Estereotipo -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.nodeModal.elementType' | translate }}</label>
+              <select
+                [ngModel]="editingNode()!.elementType || 'CLASS'"
+                (ngModelChange)="onEditingNodeTypeChange($event)"
+                class="w-full px-2.5 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 font-mono text-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500">
+                <option value="CLASS">{{ 'editor.nodeModal.elementTypes.CLASS' | translate }}</option>
+                <option value="INTERFACE">{{ 'editor.nodeModal.elementTypes.INTERFACE' | translate }}</option>
+                <option value="ENUM">{{ 'editor.nodeModal.elementTypes.ENUM' | translate }}</option>
+                <option value="NOTE">{{ 'editor.nodeModal.elementTypes.NOTE' | translate }}</option>
+                <option value="ASSOCIATION_CLASS">{{ 'editor.nodeModal.elementTypes.ASSOCIATION_CLASS' | translate }}</option>
+              </select>
+            </div>
+
+            @if (editingNode()!.elementType !== 'NOTE') {
+              <div>
+                <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.nodeModal.stereotype' | translate }}</label>
+                <input
+                  type="text"
+                  [(ngModel)]="editingNode()!.stereotype"
+                  [placeholder]="'editor.nodeModal.stereotypePlaceholder' | translate"
+                  class="w-full px-3 py-1.5 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 shadow-inner font-mono text-xs"
+                />
+              </div>
+            }
+          </div>
+
+          <!-- Nombre de la Clase / Elemento -->
           <div>
             <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.nodeModal.className' | translate }}</label>
             <input
@@ -514,104 +659,197 @@
             />
           </div>
 
-          <!-- Atributos con Tipos Estrictamente Predefinidos -->
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.attributes' | translate }}</label>
-              <button
-                (click)="addAttributeToEditingNode()"
-                class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
-                {{ 'editor.nodeModal.addAttribute' | translate }}
-              </button>
+          @if (editingNode()!.elementType === 'NOTE') {
+            <!-- Contenido de la Nota UML -->
+            <div>
+              <label class="block font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px] mb-1">{{ 'editor.nodeModal.noteContent' | translate }}</label>
+              <textarea
+                [(ngModel)]="editingNode()!.noteContent"
+                rows="5"
+                [placeholder]="'editor.nodeModal.notePlaceholder' | translate"
+                class="w-full px-3 py-2 bg-amber-50/70 dark:bg-[#1E190B] border border-amber-500/70 dark:border-amber-700 text-[#2A201B] dark:text-amber-100 placeholder-amber-700/50 dark:placeholder-amber-400/50 focus:outline-none focus:ring-2 focus:ring-amber-500 font-sans text-xs resize-y"></textarea>
             </div>
-            <div class="space-y-1.5">
-              @for (attr of editingNode()!.attributes; track $index) {
-                <div class="flex items-center gap-2">
-                  <span class="font-mono font-bold text-[#6B5A52] dark:text-slate-400 select-none text-xs">-</span>
-                  <input
-                    type="text"
-                    [(ngModel)]="attr.name"
-                    placeholder="nombre"
-                    class="flex-1 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
-                  />
-                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono">:</span>
-                  
-                  <select
-                    [(ngModel)]="attr.type"
-                    class="w-36 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
-                    @for (t of predefinedTypes; track t) {
-                      <option [value]="t">{{ t }}</option>
-                    }
-                  </select>
+          } @else if (editingNode()!.elementType === 'ENUM') {
+            <!-- Literales de Enumeración -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.enumLiterals' | translate }}</label>
+                <button
+                  type="button"
+                  (click)="addLiteralToEditingEnum()"
+                  class="px-2.5 py-0.5 bg-emerald-700 dark:bg-emerald-700 hover:bg-emerald-800 dark:hover:bg-emerald-600 text-white font-mono text-[10.5px] font-bold border border-emerald-900 dark:border-emerald-500 cursor-pointer">
+                  {{ 'editor.nodeModal.addLiteral' | translate }}
+                </button>
+              </div>
+              <div class="space-y-1.5">
+                @for (attr of editingNode()!.attributes; track $index) {
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono font-bold text-emerald-700 dark:text-emerald-400 select-none text-xs">+</span>
+                    <input
+                      type="text"
+                      [(ngModel)]="attr.name"
+                      placeholder="ACTIVO"
+                      class="flex-1 px-2.5 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-semibold text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+                    />
+                    <button
+                      type="button"
+                      (click)="removeAttributeFromEditingNode($index)"
+                      [title]="'editor.nodeModal.deleteAttribute' | translate"
+                      class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-1 font-bold text-sm cursor-pointer">
+                      &times;
+                    </button>
+                  </div>
+                }
+              </div>
+            </div>
+          } @else {
+            <!-- Atributos con Visibilidad, Tipo, PK y NN -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.attributes' | translate }}</label>
+                <button
+                  type="button"
+                  (click)="addAttributeToEditingNode()"
+                  class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
+                  {{ 'editor.nodeModal.addAttribute' | translate }}
+                </button>
+              </div>
+              <div class="space-y-1.5">
+                @for (attr of editingNode()!.attributes; track $index) {
+                  <div class="flex items-center gap-1.5">
+                    <select
+                      [(ngModel)]="attr.visibility"
+                      [title]="'editor.visibility' | translate"
+                      class="w-12 px-1 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-bold text-center text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                      @for (v of visibilityOptions; track v.symbol) {
+                        <option [value]="v.symbol" [title]="v.labelKey | translate">{{ v.symbol }}</option>
+                      }
+                    </select>
 
-                  <button
-                    (click)="removeAttributeFromEditingNode($index)"
-                    [title]="'editor.nodeModal.deleteAttribute' | translate"
-                    class="text-red-600 hover:text-red-800 p-1 font-bold text-sm cursor-pointer">
-                    &times;
-                  </button>
-                </div>
-              }
-            </div>
-          </div>
+                    <input
+                      type="text"
+                      [(ngModel)]="attr.name"
+                      placeholder="nombre"
+                      class="flex-1 min-w-0 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                    />
+                    <span class="text-[#6B5A52] dark:text-slate-400 font-mono">:</span>
 
-          <!-- Métodos con Retorno Estrictamente Predefinido -->
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.operations' | translate }}</label>
-              <button
-                (click)="addMethodToEditingNode()"
-                class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
-                {{ 'editor.nodeModal.addOperation' | translate }}
-              </button>
-            </div>
-            <div class="space-y-1.5">
-              @for (m of editingNode()!.methods; track $index) {
-                <div class="flex items-center gap-2">
-                  <span class="font-mono font-bold text-[#6B5A52] dark:text-slate-400 select-none text-xs">+</span>
-                  <input
-                    type="text"
-                    [(ngModel)]="m.name"
-                    placeholder="método"
-                    class="flex-1 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
-                  />
-                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">(</span>
-                  <input
-                    type="text"
-                    [(ngModel)]="m.parameters"
-                    placeholder="params"
-                    class="w-24 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
-                  />
-                  <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">):</span>
-                  
-                  <select
-                    [(ngModel)]="m.returnType"
-                    class="w-32 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
-                    @for (rt of predefinedReturnTypes; track rt) {
-                      <option [value]="rt">{{ rt }}</option>
-                    }
-                  </select>
+                    <select
+                      [(ngModel)]="attr.type"
+                      class="w-32 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                      @for (t of getAvailableAttrTypes(attr.type); track t) {
+                        <option [value]="t">{{ t }}</option>
+                      }
+                    </select>
 
-                  <button
-                    (click)="removeMethodFromEditingNode($index)"
-                    [title]="'editor.nodeModal.deleteOperation' | translate"
-                    class="text-red-600 hover:text-red-800 p-1 font-bold text-sm cursor-pointer">
-                    &times;
-                  </button>
-                </div>
-              }
+                    <button
+                      type="button"
+                      (click)="onToggleAttributePk(attr)"
+                      [title]="'editor.nodeModal.pkHint' | translate"
+                      [ngClass]="{
+                        'bg-amber-500 text-white border-amber-700 dark:bg-amber-500 dark:text-slate-950 dark:border-amber-300 shadow-xs': attr.isPrimaryKey,
+                        'bg-white dark:bg-[#0E1225] text-slate-500 dark:text-slate-400 border-[#6B5A52]/50 dark:border-[#2D3762] hover:bg-amber-50 dark:hover:bg-amber-900/20': !attr.isPrimaryKey
+                      }"
+                      class="px-1.5 py-1 border font-mono text-[10px] font-bold cursor-pointer transition-colors">
+                      PK
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="onToggleAttributeNullable(attr)"
+                      [disabled]="!!attr.isPrimaryKey"
+                      [title]="'editor.nodeModal.nnHint' | translate"
+                      [ngClass]="{
+                        'bg-indigo-600 text-white border-indigo-800 dark:bg-indigo-500 dark:border-indigo-300 shadow-xs': attr.isPrimaryKey || attr.isNullable === false,
+                        'bg-white dark:bg-[#0E1225] text-slate-500 dark:text-slate-400 border-[#6B5A52]/50 dark:border-[#2D3762] hover:bg-indigo-50 dark:hover:bg-indigo-900/20': !attr.isPrimaryKey && attr.isNullable !== false,
+                        'opacity-70 cursor-not-allowed': !!attr.isPrimaryKey,
+                        'cursor-pointer': !attr.isPrimaryKey
+                      }"
+                      class="px-1.5 py-1 border font-mono text-[10px] font-bold transition-colors">
+                      NN
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="removeAttributeFromEditingNode($index)"
+                      [title]="'editor.nodeModal.deleteAttribute' | translate"
+                      class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-1 font-bold text-sm cursor-pointer">
+                      &times;
+                    </button>
+                  </div>
+                }
+              </div>
             </div>
-          </div>
+
+            <!-- Métodos con Visibilidad y Retorno -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="font-bold font-mono text-[#2A201B] dark:text-slate-200 uppercase text-[11px]">{{ 'editor.nodeModal.operations' | translate }}</label>
+                <button
+                  type="button"
+                  (click)="addMethodToEditingNode()"
+                  class="px-2.5 py-0.5 bg-[#6B5A52] dark:bg-[#252E56] hover:bg-[#52443E] dark:hover:bg-[#323D70] text-white font-mono text-[10.5px] font-bold border border-[#2A201B] dark:border-[#3B487A] cursor-pointer">
+                  {{ 'editor.nodeModal.addOperation' | translate }}
+                </button>
+              </div>
+              <div class="space-y-1.5">
+                @for (m of editingNode()!.methods; track $index) {
+                  <div class="flex items-center gap-1.5">
+                    <select
+                      [(ngModel)]="m.visibility"
+                      [title]="'editor.visibility' | translate"
+                      class="w-12 px-1 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-bold text-center text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                      @for (v of visibilityOptions; track v.symbol) {
+                        <option [value]="v.symbol" [title]="v.labelKey | translate">{{ v.symbol }}</option>
+                      }
+                    </select>
+                    <input
+                      type="text"
+                      [(ngModel)]="m.name"
+                      placeholder="método"
+                      class="flex-1 min-w-0 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-medium text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                    />
+                    <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">(</span>
+                    <input
+                      type="text"
+                      [(ngModel)]="m.parameters"
+                      placeholder="params"
+                      class="w-24 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono text-[#2A201B] dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500"
+                    />
+                    <span class="text-[#6B5A52] dark:text-slate-400 font-mono text-xs">):</span>
+
+                    <select
+                      [(ngModel)]="m.returnType"
+                      class="w-28 px-2 py-1 bg-white dark:bg-[#0E1225] border border-[#6B5A52] dark:border-[#2D3762] text-xs font-mono font-medium text-[#2A201B] dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#6B5A52] dark:focus:ring-indigo-500 cursor-pointer">
+                      @for (rt of getAvailableReturnTypes(m.returnType); track rt) {
+                        <option [value]="rt">{{ rt }}</option>
+                      }
+                    </select>
+
+                    <button
+                      type="button"
+                      (click)="removeMethodFromEditingNode($index)"
+                      [title]="'editor.nodeModal.deleteOperation' | translate"
+                      class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-1 font-bold text-sm cursor-pointer">
+                      &times;
+                    </button>
+                  </div>
+                }
+              </div>
+            </div>
+          }
 
         </div>
 
         <div class="p-3 border-t border-[#6B5A52]/30 dark:border-[#2D3762] flex justify-end gap-2 bg-white/30 dark:bg-[#101428]/40">
           <button
+            type="button"
             (click)="closeEditNodeModal()"
             class="px-3.5 py-1.5 bg-white dark:bg-[#0E1225] hover:bg-slate-100 dark:hover:bg-[#1C2242] border border-[#6B5A52] dark:border-[#2D3762] text-[#2A201B] dark:text-slate-200 font-mono cursor-pointer">
             {{ 'common.cancel' | translate }}
           </button>
           <button
+            type="button"
             (click)="saveEditedNode()"
             class="px-4 py-1.5 bg-[#6B5A52] dark:bg-[#4F46E5] hover:bg-[#52443E] dark:hover:bg-[#4338CA] text-white font-mono font-bold uppercase border border-[#2A201B] dark:border-[#3730A3] cursor-pointer">
             {{ 'editor.nodeModal.save' | translate }}
@@ -734,8 +972,38 @@
     [diagramName]="currentDiagramName()"
     [nodes]="nodes()"
     [connections]="connections()"
+    [canDownloadCode]="currentUserCanDownloadCode()"
     (closeModal)="showSpringBootModal.set(false)">
   </app-spring-boot-modal>
+
+  <!-- 7.1 MODAL: AUDITORÍA Y NORMALIZACIÓN BD (1FN / 2FN / 3FN) -->
+  <app-uml-audit-modal
+    [isOpen]="showAuditModal()"
+    [nodes]="nodes()"
+    [connections]="connections()"
+    [isReadOnly]="isReadOnly()"
+    (closeModal)="showAuditModal.set(false)"
+    (applyFixes)="applyAuditFixes($event)">
+  </app-uml-audit-modal>
+
+  <!-- 7.2 MODAL: GENERADOR RÁPIDO SQL DDL POSTGRESQL -->
+  <app-sql-ddl-modal
+    [isOpen]="showSqlModal()"
+    [diagramName]="currentDiagramName()"
+    [nodes]="nodes()"
+    [connections]="connections()"
+    (closeModal)="showSqlModal.set(false)">
+  </app-sql-ddl-modal>
+
+  <!-- 7.3 MODAL: VISOR Y VALIDADOR OMG XMI 2.1 -->
+  <app-xmi-validator-modal
+    [isOpen]="showXmiModal()"
+    [diagramName]="currentDiagramName()"
+    [defaultLineStyle]="defaultLineStyle()"
+    [nodes]="nodes()"
+    [connections]="connections()"
+    (closeModal)="showXmiModal.set(false)">
+  </app-xmi-validator-modal>
 
   <!-- DATALISTS PARA OPCIONES PREDEFINIDAS -->
   <datalist id="multiplicity-options">

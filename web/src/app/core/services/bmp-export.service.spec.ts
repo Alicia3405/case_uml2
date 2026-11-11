@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BmpExportService } from './bmp-export.service';
 import { UmlClassNode, UmlConnection } from '../models/diagram.model';
@@ -14,7 +15,7 @@ describe('BmpExportService', () => {
   });
 
   it('debe alertar si no hay nodos válidos', () => {
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => { });
     service.exportToBmp([], [], 'test');
     expect(alertSpy).toHaveBeenCalledWith('No hay clases en el diagrama para exportar.');
     alertSpy.mockRestore();
@@ -98,7 +99,7 @@ describe('BmpExportService', () => {
     const origCreateElement = document.createElement.bind(document);
 
     vi.spyOn(window.URL, 'createObjectURL').mockReturnValue('blob:http://localhost/dummy');
-    vi.spyOn(window.URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(window.URL, 'revokeObjectURL').mockImplementation(() => { });
 
     vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       if (tag === 'canvas') {
@@ -113,6 +114,7 @@ describe('BmpExportService', () => {
           fillText: vi.fn(),
           fill: vi.fn(),
           closePath: vi.fn(),
+          rect: vi.fn(),
           roundRect: vi.fn(),
           save: vi.fn(),
           restore: vi.fn(),

@@ -29,10 +29,34 @@ export interface NodeLock {
 }
 
 export interface ChatMessage {
+  id?: string;
   userId: string;
   userName: string;
   message: string;
+  color?: string;
   timestamp: string;
+}
+
+export type ActivityCategory = 'uml' | 'ai' | 'voice' | 'permission' | 'system';
+
+export interface ActivityLog {
+  id: string;
+  userId: string;
+  userName: string;
+  action: string;
+  detail?: string;
+  category: ActivityCategory;
+  color?: string;
+  timestamp: string;
+}
+
+export interface ProjectPermissionsUpdatedEvent {
+  projectId: string;
+  userId: string;
+  role?: string;
+  canDownloadCode?: boolean;
+  removed?: boolean;
+  timestamp?: string;
 }
 
 @Injectable({
@@ -51,11 +75,17 @@ export class CollaborationService {
   readonly remoteCursors = signal<RemoteCursor[]>([]);
   readonly activeNodeLocks = signal<Map<string, NodeLock>>(new Map());
   readonly chatMessages = signal<ChatMessage[]>([]);
+  readonly activityLogs = signal<ActivityLog[]>([]);
+  readonly unreadChatCount = signal<number>(0);
+  readonly isChatPanelVisible = signal<boolean>(false);
 
   // Observables para cambios remotos
   readonly remoteNodeDrag$ = new Subject<{ nodeId: string; position: { x: number; y: number }; userId: string }>();
   readonly remoteDiagramSync$ = new Subject<{ nodes: UmlClassNode[]; connections: UmlConnection[]; userId: string; action: string }>();
   readonly nodeLockRejected$ = new Subject<{ nodeId: string; lockedBy: NodeLock }>();
+  readonly projectPermissionsUpdated$ = new Subject<ProjectPermissionsUpdatedEvent>();
+
+  private readonly MAX_CLIENT_HISTORY = 100;
 
   // Control de frecuencia de cursores
   private lastCursorSent = 0;
@@ -188,11 +218,54 @@ export class CollaborationService {
     });
 
     this.socket.on('chat_message_received', (msg: ChatMessage) => {
-      this.chatMessages.update((list) => [...list, msg]);
+      if (!msg || !msg.message) return;
+      if (msg.id && this.chatMessages().some((m) => m.id === msg.id)) {
+        return;
+      }
+      this.chatMessages.update((list) => {
+        if (msg.id && list.some((m) => m.id === msg.id)) {
+          return list;
+        }
+        const next = [...list, msg];
+        return next.length > this.MAX_CLIENT_HISTORY
+          ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
+          : next;
+      });
+      const currentUserId = this.getCurrentUser()?.id;
+      if (!this.isChatPanelVisible() && msg.userId !== currentUserId) {
+        this.unreadChatCount.update((c) => c + 1);
+      }
+    });
+
+    this.socket.on('activity_logged', (entry: ActivityLog) => {
+      if (!entry || !entry.action) return;
+      this.activityLogs.update((list) => {
+        if (entry.id && list.some((a) => a.id === entry.id)) {
+          return list;
+        }
+        const next = [...list, entry];
+        return next.length > this.MAX_CLIENT_HISTORY
+          ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
+          : next;
+      });
+    });
+
+    this.socket.on('project_permissions_updated', (event: ProjectPermissionsUpdatedEvent) => {
+      if (event && event.projectId && event.userId) {
+        this.projectPermissionsUpdated$.next(event);
+      }
     });
   }
 
   joinRoom(diagramId: string, customRoomCode?: string): void {
+    const previousId = this.currentDiagramId();
+    if (previousId && previousId !== diagramId) {
+      this.chatMessages.set([]);
+      this.activityLogs.set([]);
+      this.unreadChatCount.set(0);
+      this.remoteCursors.set([]);
+      this.activeNodeLocks.set(new Map());
+    }
     this.currentDiagramId.set(diagramId);
     this.connect();
 
@@ -218,7 +291,14 @@ export class CollaborationService {
         userName,
         color: assignedColor,
       },
-      (res: { success: boolean; session: any; participants?: Collaborator[]; activeLocks?: NodeLock[] }) => {
+      (res: {
+        success: boolean;
+        session: any;
+        participants?: Collaborator[];
+        activeLocks?: NodeLock[];
+        recentChatMessages?: ChatMessage[];
+        recentActivityLogs?: ActivityLog[];
+      }) => {
         if (res && res.success && res.session) {
           this.activeRoomCode.set(res.session.roomCode);
           if (res.participants) {
@@ -230,6 +310,12 @@ export class CollaborationService {
               map.set(lock.nodeId, lock);
             }
             this.activeNodeLocks.set(map);
+          }
+          if (res.recentChatMessages) {
+            this.chatMessages.set(res.recentChatMessages);
+          }
+          if (res.recentActivityLogs) {
+            this.activityLogs.set(res.recentActivityLogs);
           }
         }
       },
@@ -251,6 +337,9 @@ export class CollaborationService {
     this.remoteCursors.set([]);
     this.collaborators.set([]);
     this.activeNodeLocks.set(new Map());
+    this.chatMessages.set([]);
+    this.activityLogs.set([]);
+    this.unreadChatCount.set(0);
   }
 
   requestNodeLock(nodeId: string): void {
@@ -356,18 +445,93 @@ export class CollaborationService {
     });
   }
 
+  setChatPanelVisible(visible: boolean): void {
+    this.isChatPanelVisible.set(visible);
+    if (visible) {
+      this.unreadChatCount.set(0);
+    }
+  }
+
+  markChatAsRead(): void {
+    this.unreadChatCount.set(0);
+  }
+
   sendChatMessage(message: string): void {
+    const clean = message.trim();
+    if (!clean) return;
+
     const user = this.getCurrentUser();
     const diagramId = this.currentDiagramId();
     const roomCode = this.activeRoomCode();
-    if (!this.socket || !diagramId || !message.trim()) return;
+    if (!this.socket || !this.isConnected() || !diagramId) {
+      this.chatMessages.update((list) => {
+        const next = [
+          ...list,
+          {
+            id: `local_chat_${Date.now()}`,
+            userId: user?.id || 'local',
+            userName: user?.fullName || user?.email || 'Usuario',
+            message: clean,
+            color: this.myColor(),
+            timestamp: new Date().toISOString(),
+          },
+        ];
+        return next.length > this.MAX_CLIENT_HISTORY
+          ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
+          : next;
+      });
+      return;
+    }
 
     this.socket.emit('chat_message', {
       diagramId,
       roomCode,
       userId: user?.id || 'anon',
-      userName: user?.fullName || 'Usuario',
-      message: message.trim(),
+      userName: user?.fullName || user?.email || 'Usuario',
+      message: clean,
+      color: this.myColor(),
+    });
+  }
+
+  sendActivityLog(action: string, detail?: string, category: ActivityCategory = 'uml'): void {
+    const cleanAction = action.trim();
+    if (!cleanAction) return;
+
+    const user = this.getCurrentUser();
+    const diagramId = this.currentDiagramId();
+    const roomCode = this.activeRoomCode();
+    const userId = user?.id || 'local';
+    const userName = user?.fullName || user?.email || 'Usuario';
+
+    if (!this.socket || !this.isConnected() || !diagramId) {
+      const localEntry: ActivityLog = {
+        id: `local_act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        userId,
+        userName,
+        action: cleanAction,
+        detail,
+        category,
+        color: this.myColor(),
+        timestamp: new Date().toISOString(),
+      };
+      this.activityLogs.update((list) => {
+        const next = [...list, localEntry];
+        return next.length > this.MAX_CLIENT_HISTORY
+          ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
+          : next;
+      });
+      return;
+    }
+
+    this.socket.emit('activity_log', {
+      diagramId,
+      roomCode,
+      userId,
+      userName,
+      action: cleanAction,
+      detail,
+      category,
+      color: this.myColor(),
     });
   }
 

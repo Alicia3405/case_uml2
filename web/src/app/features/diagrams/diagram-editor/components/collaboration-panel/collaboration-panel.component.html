@@ -1,0 +1,361 @@
+@if (isOpen()) {
+  <aside class="w-[375px] bg-[#EFEFEF] dark:bg-[#121629] border-l border-[#B8B8B8] dark:border-[#283256] flex flex-col shrink-0 text-xs text-slate-800 dark:text-slate-200 shadow-2xl z-20 animate-in slide-in-from-right duration-150 h-full">
+
+    <!-- Cabecera Panel Colaboración -->
+    <div class="bg-gradient-to-b from-[#EAEAEA] to-[#DCDCDC] dark:from-[#1E2442] dark:to-[#161B33] border-b border-[#C0C0C0] dark:border-[#283256] shrink-0">
+      <div class="px-3.5 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-400/70 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+            <ng-icon name="heroUserGroup" class="text-sm"></ng-icon>
+          </div>
+          <div class="min-w-0">
+            <div class="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate flex items-center gap-1.5">
+              <span>{{ 'collabPanel.title' | translate }}</span>
+              @if (collaborationService.activeRoomCode(); as rCode) {
+                <button
+                  type="button"
+                  (click)="copyRoomCode()"
+                  class="px-1.5 py-0.2 rounded bg-emerald-700/90 hover:bg-emerald-600 text-white text-[9.5px] font-mono flex items-center gap-1 cursor-pointer">
+                  <ng-icon [name]="roomCodeCopied() ? 'heroCheck' : 'heroClipboardDocument'" class="text-[10px]"></ng-icon>
+                  <span>{{ roomCodeCopied() ? ('common.copied' | translate) : rCode }}</span>
+                </button>
+              }
+            </div>
+            <span class="text-[9.5px] text-slate-500 dark:text-slate-400 font-mono truncate block">
+              {{ collaborationService.isConnected() ? ('collabPanel.roomLabel' | translate) : ('collabPanel.offlineMode' | translate) }}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          (click)="closePanel.emit()"
+          [title]="'collabPanel.closeTooltip' | translate"
+          class="text-slate-500 hover:text-slate-900 hover:bg-slate-300 dark:text-slate-400 dark:hover:text-white dark:hover:bg-[#252E56] p-1.5 rounded cursor-pointer transition-colors">
+          <ng-icon name="heroXMark" class="text-sm"></ng-icon>
+        </button>
+      </div>
+
+      <!-- Tabs: Chat / Bitácora / Equipo -->
+      <div class="px-2 pb-1.5 flex items-center gap-1 font-mono text-[10.5px]">
+        <button
+          type="button"
+          (click)="setTab('chat')"
+          [ngClass]="activeTab() === 'chat'
+            ? 'bg-white dark:bg-[#0D1124] text-indigo-700 dark:text-cyan-300 font-bold border-slate-300 dark:border-[#3B487A] shadow-xs'
+            : 'text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-[#1E2442] border-transparent'"
+          class="flex-1 py-1.5 px-2 rounded border flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+          <ng-icon name="heroChatBubbleLeftRight" class="text-xs"></ng-icon>
+          <span>{{ 'collabPanel.tabChat' | translate }}</span>
+          @if (collaborationService.unreadChatCount() > 0 && activeTab() !== 'chat') {
+            <span class="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[9px] font-bold">
+              {{ collaborationService.unreadChatCount() }}
+            </span>
+          }
+        </button>
+
+        <button
+          type="button"
+          (click)="setTab('audit')"
+          [ngClass]="activeTab() === 'audit'
+            ? 'bg-white dark:bg-[#0D1124] text-indigo-700 dark:text-cyan-300 font-bold border-slate-300 dark:border-[#3B487A] shadow-xs'
+            : 'text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-[#1E2442] border-transparent'"
+          class="flex-1 py-1.5 px-2 rounded border flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+          <ng-icon name="heroClipboardDocumentList" class="text-xs"></ng-icon>
+          <span>{{ 'collabPanel.tabAudit' | translate }}</span>
+          @if (collaborationService.activityLogs().length > 0) {
+            <span class="px-1 py-0.2 rounded bg-slate-200 dark:bg-[#1E2442] text-[9px]">
+              {{ collaborationService.activityLogs().length }}
+            </span>
+          }
+        </button>
+
+        <button
+          type="button"
+          (click)="setTab('team')"
+          [ngClass]="activeTab() === 'team'
+            ? 'bg-white dark:bg-[#0D1124] text-indigo-700 dark:text-cyan-300 font-bold border-slate-300 dark:border-[#3B487A] shadow-xs'
+            : 'text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-[#1E2442] border-transparent'"
+          class="flex-1 py-1.5 px-2 rounded border flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+          <ng-icon name="heroUserGroup" class="text-xs"></ng-icon>
+          <span>{{ 'collabPanel.tabTeam' | translate }}</span>
+          <span class="px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[9px]">
+            {{ members().length || collaborationService.collaborators().length }}
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB 1: CHAT EN SALA EN VIVO -->
+    @if (activeTab() === 'chat') {
+      <div #chatScrollEl class="flex-1 p-3 overflow-y-auto space-y-2.5 bg-[#F4F4F6] dark:bg-[#0D1124] min-h-0">
+        @if (collaborationService.chatMessages().length === 0) {
+          <div class="h-full flex flex-col items-center justify-center text-center px-4 text-slate-400 dark:text-slate-500 font-mono text-[11px] space-y-2">
+            <ng-icon name="heroChatBubbleLeftRight" class="text-3xl opacity-40"></ng-icon>
+            <p>{{ 'collabPanel.chatEmpty' | translate }}</p>
+          </div>
+        } @else {
+          @for (msg of collaborationService.chatMessages(); track (msg.id || $index)) {
+            @if (isOwnChatMessage(msg.userId)) {
+              <div class="flex flex-col items-end gap-0.5">
+                <div class="max-w-[85%] px-2.5 py-2 rounded-xl rounded-tr-xs bg-indigo-600 dark:bg-indigo-700 text-white text-[11.5px] shadow-xs break-words">
+                  {{ msg.message }}
+                </div>
+                <span class="text-[9px] font-mono text-slate-400 dark:text-slate-500 pr-1">
+                  Tú • {{ msg.timestamp | date:'HH:mm:ss' }}
+                </span>
+              </div>
+            } @else {
+              <div class="flex items-start gap-2">
+                <div
+                  class="w-6 h-6 rounded-full text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5 shadow-xs"
+                  [style.backgroundColor]="msg.color || '#0EA5E9'">
+                  {{ (msg.userName || 'C').charAt(0).toUpperCase() }}
+                </div>
+                <div class="max-w-[85%] space-y-0.5">
+                  <div class="text-[9.5px] font-mono font-bold text-slate-600 dark:text-slate-300">
+                    {{ msg.userName }}
+                  </div>
+                  <div class="px-2.5 py-1.5 rounded-xl rounded-tl-xs bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#2D3762] text-slate-800 dark:text-slate-100 text-[11.5px] shadow-xs break-words">
+                    {{ msg.message }}
+                  </div>
+                  <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500">
+                    {{ msg.timestamp | date:'HH:mm:ss' }}
+                  </div>
+                </div>
+              </div>
+            }
+          }
+        }
+      </div>
+
+      <!-- Input Chat -->
+      <div class="p-2.5 bg-white dark:bg-[#121629] border-t border-[#C0C0C0] dark:border-[#283256] flex items-center gap-2 shrink-0">
+        <input
+          type="text"
+          [ngModel]="chatDraft()"
+          (ngModelChange)="chatDraft.set($event)"
+          (keydown.enter)="onSendChat()"
+          [placeholder]="'collabPanel.chatPlaceholder' | translate"
+          class="flex-1 min-w-0 px-2.5 py-1.5 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+        <button
+          type="button"
+          (click)="onSendChat()"
+          [disabled]="!chatDraft().trim()"
+          [title]="'collabPanel.send' | translate"
+          class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-mono text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-35 disabled:cursor-not-allowed">
+          <ng-icon name="heroPaperAirplane" class="text-xs"></ng-icon>
+        </button>
+      </div>
+    }
+
+    <!-- TAB 2: BITÁCORA EN VIVO -->
+    @if (activeTab() === 'audit') {
+      <div class="px-2.5 py-1.5 bg-white dark:bg-[#151A30] border-b border-slate-200 dark:border-[#283256] flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0 font-mono text-[9.5px]">
+        @for (cat of ['all', 'uml', 'voice', 'ai', 'permission']; track cat) {
+          <button
+            type="button"
+            (click)="auditFilter.set($any(cat))"
+            [ngClass]="auditFilter() === cat
+              ? 'bg-indigo-600 text-white font-bold'
+              : 'bg-slate-100 dark:bg-[#1E2442] text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#252E56]'"
+            class="px-2 py-0.5 rounded uppercase cursor-pointer transition-colors shrink-0">
+            {{ cat === 'all' ? 'Todos' : cat }}
+          </button>
+        }
+      </div>
+
+      <div class="flex-1 p-2.5 overflow-y-auto space-y-2 bg-[#F4F4F6] dark:bg-[#0D1124] min-h-0">
+        @if (filteredActivityLogs().length === 0) {
+          <div class="h-full flex flex-col items-center justify-center text-center px-4 text-slate-400 dark:text-slate-500 font-mono text-[11px] space-y-2">
+            <ng-icon name="heroClipboardDocumentList" class="text-3xl opacity-40"></ng-icon>
+            <p>{{ 'collabPanel.auditEmpty' | translate }}</p>
+          </div>
+        } @else {
+          @for (entry of filteredActivityLogs(); track entry.id) {
+            <div class="p-2 bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] rounded shadow-2xs space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span
+                    class="w-2 h-2 rounded-full shrink-0"
+                    [style.backgroundColor]="entry.color || '#6366F1'"></span>
+                  <span class="font-bold text-[11px] text-slate-900 dark:text-slate-100 truncate">{{ entry.userName }}</span>
+                </div>
+                <span class="px-1.5 py-0.2 rounded border font-mono text-[8.5px] uppercase font-bold shrink-0" [ngClass]="getCategoryBadgeClass(entry.category)">
+                  {{ entry.category }}
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-800 dark:text-slate-200 font-medium leading-snug">{{ entry.action }}</p>
+              @if (entry.detail) {
+                <p class="text-[10px] font-mono text-slate-500 dark:text-slate-400 break-words">{{ entry.detail }}</p>
+              }
+              <div class="text-[9px] font-mono text-slate-400 dark:text-slate-500 text-right">
+                {{ entry.timestamp | date:'HH:mm:ss' }}
+              </div>
+            </div>
+          }
+        }
+      </div>
+    }
+
+    <!-- TAB 3: EQUIPO Y PERMISOS GRANULARES -->
+    @if (activeTab() === 'team') {
+      <div class="flex-1 p-3 overflow-y-auto space-y-4 bg-[#F4F4F6] dark:bg-[#0D1124] min-h-0">
+
+        <!-- Conectados en vivo en la sala -->
+        <div class="p-2.5 bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] rounded space-y-2">
+          <div class="flex items-center justify-between font-mono text-[10px] uppercase font-bold text-slate-600 dark:text-slate-300">
+            <span>{{ 'collabPanel.connectedNow' | translate }}</span>
+            <span class="text-emerald-600 dark:text-emerald-400">{{ collaborationService.collaborators().length }}</span>
+          </div>
+          @if (collaborationService.collaborators().length === 0) {
+            <p class="text-[10.5px] font-mono text-slate-400 dark:text-slate-500">Solo tú en esta sesión.</p>
+          } @else {
+            <div class="flex flex-wrap gap-1.5">
+              @for (collab of collaborationService.collaborators(); track collab.userId) {
+                <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#1C2242] border border-slate-200 dark:border-[#2D3762] text-[10.5px]">
+                  <span class="w-2 h-2 rounded-full animate-pulse" [style.backgroundColor]="collab.color"></span>
+                  <span class="font-medium text-slate-800 dark:text-slate-200 max-w-[120px] truncate">{{ collab.userName }}</span>
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Invitación rápida (Solo OWNER) -->
+        @if (isOwner() && projectId()) {
+          <div class="p-2.5 bg-white dark:bg-[#151A30] border border-indigo-200 dark:border-[#3B487A] rounded space-y-2">
+            <h4 class="font-mono text-[10px] font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-300 flex items-center gap-1">
+              <ng-icon name="heroPlus" class="text-xs"></ng-icon>
+              <span>{{ 'projects.membersModal.inviteTitle' | translate }}</span>
+            </h4>
+
+            <input
+              type="email"
+              [ngModel]="inviteEmail()"
+              (ngModelChange)="inviteEmail.set($event)"
+              [placeholder]="'collabPanel.invitePlaceholder' | translate"
+              class="w-full px-2.5 py-1.5 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+
+            <div class="flex items-center gap-2">
+              <select
+                [ngModel]="inviteRole()"
+                (ngModelChange)="onInviteRoleChange($event)"
+                class="px-2 py-1 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-[11px] font-mono cursor-pointer">
+                <option value="EDITOR">EDITOR</option>
+                <option value="VIEWER">VIEWER</option>
+              </select>
+
+              <label class="flex items-center gap-1.5 text-[10.5px] font-mono text-slate-700 dark:text-slate-300 cursor-pointer flex-1 min-w-0">
+                <input
+                  type="checkbox"
+                  [ngModel]="inviteCanDownload()"
+                  (ngModelChange)="inviteCanDownload.set($event)"
+                  class="rounded accent-emerald-600 cursor-pointer" />
+                <span class="truncate">{{ 'collabPanel.canDownloadLabel' | translate }}</span>
+              </label>
+
+              <button
+                type="button"
+                (click)="onInviteMember()"
+                [disabled]="isSubmittingMember() || !inviteEmail().trim()"
+                class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[11px] font-bold rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
+                {{ 'projects.membersModal.inviteBtn' | translate }}
+              </button>
+            </div>
+
+            @if (memberError()) {
+              <p class="text-[10.5px] font-mono text-rose-600 dark:text-rose-400">{{ memberError() }}</p>
+            }
+            @if (memberSuccess()) {
+              <p class="text-[10.5px] font-mono text-emerald-700 dark:text-emerald-400">{{ memberSuccess() }}</p>
+            }
+          </div>
+        } @else if (!isOwner()) {
+          <div class="px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded text-[10.5px] font-mono text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+            <ng-icon name="heroShieldCheck" class="text-sm shrink-0"></ng-icon>
+            <span>{{ 'collabPanel.ownerOnlyNote' | translate }}</span>
+          </div>
+        }
+
+        <!-- Miembros persistidos con control de Roles y Descarga ZIP -->
+        <div class="space-y-1.5">
+          <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+            {{ 'collabPanel.projectMembers' | translate }} ({{ members().length }})
+          </div>
+
+          @for (member of members(); track member.userId) {
+            <div class="p-2 bg-white dark:bg-[#151A30] border border-slate-200 dark:border-[#283256] rounded space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <div class="w-6 h-6 rounded-full bg-slate-700 dark:bg-[#252E56] text-white font-bold text-[10px] flex items-center justify-center shrink-0">
+                    {{ member.fullName.charAt(0).toUpperCase() }}
+                  </div>
+                  <div class="min-w-0">
+                    <p class="font-bold text-[11px] text-slate-900 dark:text-slate-100 truncate">
+                      {{ member.fullName }}
+                      @if (member.userId === projectCreatedBy()) {
+                        <span class="ml-1 text-[9px] font-mono text-amber-600 dark:text-amber-400">(Creador)</span>
+                      }
+                    </p>
+                    <p class="text-[9.5px] font-mono text-slate-500 dark:text-slate-400 truncate">{{ member.email }}</p>
+                  </div>
+                </div>
+
+                @if (isOwner() && member.userId !== projectCreatedBy()) {
+                  <button
+                    type="button"
+                    (click)="onRemoveMember(member)"
+                    [title]="'projects.membersModal.removeTooltip' | translate"
+                    class="text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 p-1 cursor-pointer shrink-0">
+                    <ng-icon name="heroTrash" class="text-xs"></ng-icon>
+                  </button>
+                }
+              </div>
+
+              <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-[#222B4D]">
+                @if (isOwner() && member.userId !== projectCreatedBy()) {
+                  <select
+                    [ngModel]="member.role"
+                    (ngModelChange)="onRoleChange(member, $event)"
+                    class="px-1.5 py-0.5 bg-[#F9F7F5] dark:bg-[#0D1124] border border-slate-300 dark:border-[#2D3762] rounded text-[10px] font-mono cursor-pointer">
+                    <option value="OWNER">OWNER</option>
+                    <option value="EDITOR">EDITOR</option>
+                    <option value="VIEWER">VIEWER</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    (click)="onToggleDownloadPermission(member)"
+                    [title]="'projects.membersModal.downloadPermToggleTooltip' | translate"
+                    [ngClass]="member.canDownloadCode !== false
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
+                      : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'"
+                    class="px-2 py-0.5 rounded border font-mono text-[9.5px] font-bold flex items-center gap-1 cursor-pointer transition-colors">
+                    <ng-icon [name]="member.canDownloadCode !== false ? 'heroArrowDownTray' : 'heroLockClosed'" class="text-[10px]"></ng-icon>
+                    <span>{{ member.canDownloadCode !== false ? ('projects.membersModal.downloadPermAllowed' | translate) : ('projects.membersModal.downloadPermRestricted' | translate) }}</span>
+                  </button>
+                } @else {
+                  <span class="px-2 py-0.5 rounded border border-slate-300 dark:border-[#2D3762] bg-slate-100 dark:bg-[#1C2242] font-mono text-[9.5px] font-bold">
+                    {{ member.role }}
+                  </span>
+                  <span
+                    [ngClass]="member.canDownloadCode !== false
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
+                      : 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'"
+                    class="px-2 py-0.5 rounded border font-mono text-[9.5px] font-bold flex items-center gap-1">
+                    <ng-icon [name]="member.canDownloadCode !== false ? 'heroArrowDownTray' : 'heroLockClosed'" class="text-[10px]"></ng-icon>
+                    <span>{{ member.canDownloadCode !== false ? ('projects.membersModal.downloadPermAllowed' | translate) : ('projects.membersModal.downloadPermRestricted' | translate) }}</span>
+                  </span>
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+      </div>
+    }
+
+  </aside>
+}
+

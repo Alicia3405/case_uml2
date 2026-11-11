@@ -21,12 +21,14 @@ import {
   heroCheck,
   heroArrowTopRightOnSquare,
   heroAcademicCap,
+  heroArrowDownTray,
+  heroLockClosed,
 } from '@ng-icons/heroicons/outline';
 
 import { ProjectService } from '../../../core/services/project.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { UserGuideService } from '../../../core/services/user-guide.service';
-import { Project, ProjectRole } from '../../../core/models/project.model';
+import { Project, ProjectMember, ProjectRole } from '../../../core/models/project.model';
 import { UserProfileModalComponent } from '../../diagrams/diagram-editor/components/user-profile-modal/user-profile-modal.component';
 import { TranslatePipe, LanguageSelectorComponent } from '../../../core/i18n';
 import { ThemeToggleComponent } from '../../../core/components/theme-toggle/theme-toggle.component';
@@ -63,6 +65,8 @@ import { ThemeToggleComponent } from '../../../core/components/theme-toggle/them
       heroCheck,
       heroArrowTopRightOnSquare,
       heroAcademicCap,
+      heroArrowDownTray,
+      heroLockClosed,
     }),
   ],
   templateUrl: './project-list.component.html',
@@ -112,6 +116,7 @@ export class ProjectListComponent implements OnInit {
   readonly addMemberForm: FormGroup = this.fb.group({
     email: ['', [Validators.required, Validators.email]],
     role: ['EDITOR', [Validators.required]],
+    canDownloadCode: [true],
   });
 
   readonly projects = computed(() => this.projectService.projects());
@@ -209,8 +214,17 @@ export class ProjectListComponent implements OnInit {
   openMembersModal(project: Project, event?: MouseEvent): void {
     if (event) event.stopPropagation();
     this.selectedProjectForMembers.set(project);
-    this.addMemberForm.reset({ email: '', role: 'EDITOR' });
+    this.addMemberForm.reset({ email: '', role: 'EDITOR', canDownloadCode: true });
     this.isMembersModalOpen.set(true);
+    this.projectService.getProject(project.id).subscribe({
+      next: (fresh) => this.selectedProjectForMembers.set(fresh),
+      error: () => {},
+    });
+  }
+
+  onInviteRoleChange(): void {
+    const role = this.addMemberForm.get('role')?.value as ProjectRole;
+    this.addMemberForm.patchValue({ canDownloadCode: role !== 'VIEWER' });
   }
 
   closeMembersModal(): void {
@@ -227,7 +241,7 @@ export class ProjectListComponent implements OnInit {
 
     this.projectService.addMember(project.id, this.addMemberForm.value).subscribe({
       next: () => {
-        this.addMemberForm.reset({ email: '', role: 'EDITOR' });
+        this.addMemberForm.reset({ email: '', role: 'EDITOR', canDownloadCode: true });
         this.projectService.getProject(project.id).subscribe((p) => {
           this.selectedProjectForMembers.set(p);
         });
@@ -261,6 +275,22 @@ export class ProjectListComponent implements OnInit {
         });
       },
     });
+  }
+
+  onToggleDownloadPermission(member: ProjectMember): void {
+    const project = this.selectedProjectForMembers();
+    if (!project) return;
+
+    const nextPermission = member.canDownloadCode === false;
+    this.projectService
+      .updateMemberRole(project.id, member.userId, { canDownloadCode: nextPermission })
+      .subscribe({
+        next: () => {
+          this.projectService.getProject(project.id).subscribe((p) => {
+            this.selectedProjectForMembers.set(p);
+          });
+        },
+      });
   }
 
   onDeleteProject(project: Project, event: MouseEvent): void {

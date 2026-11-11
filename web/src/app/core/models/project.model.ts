@@ -6,6 +6,7 @@ export interface ProjectMember {
   fullName: string;
   email: string;
   role: ProjectRole;
+  canDownloadCode?: boolean;
   joinedAt: string;
 }
 
@@ -19,6 +20,7 @@ export interface Project {
   createdBy: string;
   creatorName: string;
   userRole?: ProjectRole;
+  userCanDownloadCode?: boolean;
   memberCount: number;
   diagramCount: number;
   createdAt: string;
@@ -44,8 +46,10 @@ export interface UpdateProjectRequest {
 export interface AddMemberRequest {
   email: string;
   role?: ProjectRole;
+  canDownloadCode?: boolean;
 }
 
 export interface UpdateMemberRoleRequest {
-  role: ProjectRole;
+  role?: ProjectRole;
+  canDownloadCode?: boolean;
 }

@@ -64,6 +64,67 @@
         </div>
       }
 
+      <!-- Deshacer / Rehacer (Oculto para Espectador) -->
+      @if (!isReadOnly()) {
+        <div class="flex items-center rounded border border-[#3972AF] dark:border-[#283256] overflow-hidden bg-[#163D6C] dark:bg-[#101426] shadow-xs">
+          <button
+            (click)="undoAction.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+            [disabled]="!canUndo()"
+            [title]="('appbar.undoTooltip' | translate) + (undoCount() > 0 ? ' (' + undoCount() + ')' : '')"
+            class="px-2 py-1 hover:bg-[#1E4F8A] dark:hover:bg-[#1C2242] text-sky-100 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1 transition-colors border-r border-[#3972AF]/60 dark:border-[#283256]">
+            <ng-icon name="heroArrowUturnLeft" class="text-xs"></ng-icon>
+          </button>
+          <button
+            (click)="redoAction.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+            [disabled]="!canRedo()"
+            [title]="('appbar.redoTooltip' | translate) + (redoCount() > 0 ? ' (' + redoCount() + ')' : '')"
+            class="px-2 py-1 hover:bg-[#1E4F8A] dark:hover:bg-[#1C2242] text-sky-100 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1 transition-colors">
+            <ng-icon name="heroArrowUturnRight" class="text-xs"></ng-icon>
+          </button>
+        </div>
+      }
+
+      <!-- Herramientas CASE en Vivo: Auditoría BD, SQL DDL y Validador XMI -->
+      <div class="flex items-center gap-1">
+        <button
+          (click)="openAudit.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+          [title]="'appbar.auditTooltip' | translate"
+          class="bg-[#163D6C] hover:bg-indigo-700/80 dark:bg-[#101426] dark:hover:bg-indigo-900/50 text-cyan-200 border border-[#3972AF] dark:border-[#283256] text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+          <ng-icon name="heroShieldCheck" class="text-xs text-cyan-300 shrink-0"></ng-icon>
+          <span class="hidden xl:inline">{{ 'appbar.auditBtn' | translate }}</span>
+        </button>
+        <button
+          (click)="openSqlDdl.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+          [title]="'appbar.sqlTooltip' | translate"
+          class="bg-[#163D6C] hover:bg-sky-700/80 dark:bg-[#101426] dark:hover:bg-sky-900/50 text-sky-200 border border-[#3972AF] dark:border-[#283256] text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+          <ng-icon name="heroCircleStack" class="text-xs text-sky-300 shrink-0"></ng-icon>
+          <span class="hidden lg:inline">{{ 'appbar.sqlBtn' | translate }}</span>
+        </button>
+        <button
+          (click)="openXmiValidator.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+          [title]="'appbar.xmiTooltip' | translate"
+          class="bg-[#163D6C] hover:bg-violet-700/80 dark:bg-[#101426] dark:hover:bg-violet-900/50 text-violet-200 border border-[#3972AF] dark:border-[#283256] text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+          <ng-icon name="heroCodeBracket" class="text-xs text-violet-300 shrink-0"></ng-icon>
+          <span class="hidden lg:inline">{{ 'appbar.xmiBtn' | translate }}</span>
+        </button>
+
+        <button
+          (click)="toggleCollabPanel.emit(); isExportDropdownOpen.set(false); isImportDropdownOpen.set(false)"
+          [title]="'appbar.collabTooltip' | translate"
+          [ngClass]="isCollabOpen()
+            ? 'bg-emerald-700 text-white border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+            : 'bg-[#163D6C] hover:bg-emerald-700/80 dark:bg-[#101426] dark:hover:bg-emerald-900/50 text-emerald-200 border-[#3972AF] dark:border-[#283256]'"
+          class="relative border text-[11px] font-mono px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-colors">
+          <ng-icon name="heroChatBubbleLeftRight" class="text-xs text-emerald-300 shrink-0"></ng-icon>
+          <span class="hidden lg:inline">{{ 'appbar.collabBtn' | translate }}</span>
+          @if (unreadChatCount() > 0) {
+            <span class="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[9px] font-bold leading-tight animate-pulse">
+              {{ unreadChatCount() }}
+            </span>
+          }
+        </button>
+      </div>
+
       <!-- Botón Guardar en Base de Datos (Oculto o Deshabilitado para VIEWER) -->
       @if (diagramId() && !isReadOnly()) {
         <button

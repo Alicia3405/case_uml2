@@ -11,11 +11,13 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   FFlowModule,
   FCreateConnectionEvent,
   FReassignConnectionEvent,
+  FDragStartedEvent,
   FCanvasComponent,
   FZoomDirective,
   FCanvasChangeEvent,
@@ -56,6 +58,12 @@ import {
   heroBars3,
   heroBars3CenterLeft,
   heroChevronLeft,
+  heroRectangleStack,
+  heroHome,
+  heroKey,
+  heroCodeBracket,
+  heroQueueList,
+  heroChatBubbleBottomCenterText,
 } from '@ng-icons/heroicons/outline';
 
 import { AuthService } from '../../../core/services/auth.service';
@@ -65,10 +73,15 @@ import { CollaborationService, NodeLock } from '../../../core/services/collabora
 import { AiAssistantService } from '../../../core/services/ai-assistant.service';
 import { XmiService } from '../../../core/services/xmi.service';
 import { XmiClientParser } from '../../../core/services/xmi-client-parser';
+import { XmiClientSerializer } from '../../../core/services/xmi-client-serializer';
 import { BmpExportService } from '../../../core/services/bmp-export.service';
+import { VoiceCommandService, ParsedVoiceCommand } from '../../../core/services/voice-command.service';
+import { ProjectMember } from '../../../core/models/project.model';
 import {
   UmlRelationshipType,
   UmlLineStyle,
+  UmlVisibility,
+  UmlElementType,
   UmlAttribute,
   UmlMethod,
   UmlClassNode,
@@ -76,6 +89,7 @@ import {
   SaveDiagramAstRequest,
   UML_RELATION_TYPES,
   UML_LINE_STYLES,
+  UML_VISIBILITY_OPTIONS,
 } from '../../../core/models/diagram.model';
 
 import { DiagramAppbarComponent } from './components/diagram-appbar/diagram-appbar.component';
@@ -83,6 +97,11 @@ import { DiagramToolboxComponent } from './components/diagram-toolbox/diagram-to
 import { AiAssistantPanelComponent } from './components/ai-assistant-panel/ai-assistant-panel.component';
 import { UserProfileModalComponent } from './components/user-profile-modal/user-profile-modal.component';
 import { SpringBootModalComponent } from './components/spring-boot-modal/spring-boot-modal.component';
+import { UmlAuditModalComponent } from './components/uml-audit-modal/uml-audit-modal.component';
+import { SqlDdlModalComponent } from './components/sql-ddl-modal/sql-ddl-modal.component';
+import { XmiValidatorModalComponent } from './components/xmi-validator-modal/xmi-validator-modal.component';
+import { UmlVoiceDockComponent } from './components/uml-voice-dock/uml-voice-dock.component';
+import { CollaborationPanelComponent } from './components/collaboration-panel/collaboration-panel.component';
 import { TranslatePipe } from '../../../core/i18n';
 
 export interface UmlDiagramProject {
@@ -92,6 +111,12 @@ export interface UmlDiagramProject {
   defaultLineStyle: UmlLineStyle;
   nodes: UmlClassNode[];
   connections: UmlConnection[];
+}
+
+interface DiagramSnapshot {
+  nodes: UmlClassNode[];
+  connections: UmlConnection[];
+  defaultLineStyle: UmlLineStyle;
 }
 
 @Component({
@@ -107,6 +132,11 @@ export interface UmlDiagramProject {
     AiAssistantPanelComponent,
     UserProfileModalComponent,
     SpringBootModalComponent,
+    UmlAuditModalComponent,
+    SqlDdlModalComponent,
+    XmiValidatorModalComponent,
+    UmlVoiceDockComponent,
+    CollaborationPanelComponent,
     TranslatePipe,
   ],
   providers: [
@@ -144,6 +174,12 @@ export interface UmlDiagramProject {
       heroBars3,
       heroBars3CenterLeft,
       heroChevronLeft,
+      heroRectangleStack,
+      heroHome,
+      heroKey,
+      heroCodeBracket,
+      heroQueueList,
+      heroChatBubbleBottomCenterText,
     }),
   ],
   templateUrl: './diagram-editor.component.html',
@@ -156,8 +192,11 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   readonly collaborationService = inject(CollaborationService);
   readonly aiAssistantService = inject(AiAssistantService);
   readonly xmiService = inject(XmiService);
+  readonly xmiClientSerializer = inject(XmiClientSerializer);
   readonly bmpExportService = inject(BmpExportService);
+  readonly voiceCommandService = inject(VoiceCommandService);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   @ViewChild(FCanvasComponent) canvas?: FCanvasComponent;
   @ViewChild(FZoomDirective) fZoom?: FZoomDirective;
@@ -177,8 +216,12 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Rol del usuario actual en el proyecto
+  // Rol y permisos granulares del usuario actual en el proyecto
   currentUserRole = signal<string>('EDITOR');
+  currentUserCanDownloadCode = signal<boolean>(true);
+  projectMembers = signal<ProjectMember[]>([]);
+  projectCreatedBy = signal<string | null>(null);
+  permissionToast = signal<string | null>(null);
   readonly isReadOnly = computed(() => this.currentUserRole() === 'VIEWER');
 
   // Modo Seleccionar / Mover o Crear Relación
@@ -202,6 +245,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   // Paneles laterales
   isToolboxOpen = signal<boolean>(true);
   isAiPanelOpen = signal<boolean>(true);
+  isCollabPanelOpen = signal<boolean>(false);
   isExportDropdownOpen = signal<boolean>(false);
   isImportDropdownOpen = signal<boolean>(false);
 
@@ -223,8 +267,9 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   // Lista de relaciones (reutilizadas en modal de conexión)
   readonly relationTypes = UML_RELATION_TYPES;
 
-  // Estilos de línea Enterprise Architect
+  // Estilos de línea Enterprise Architect y Visibilidad UML
   readonly lineStyles = UML_LINE_STYLES;
+  readonly visibilityOptions = UML_VISIBILITY_OPTIONS;
 
   // Modales de edición
   isEditNodeModalOpen = signal<boolean>(false);
@@ -237,97 +282,155 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   jsonContent = signal<string>('');
   jsonModalMode = signal<'import' | 'export'>('export');
 
-  // Modal Perfil
+  // Modal Perfil y Modales CASE Bloque 1
   isProfileModalOpen = signal<boolean>(false);
-
-  // Modal Spring Boot
   showSpringBootModal = signal<boolean>(false);
+  showAuditModal = signal<boolean>(false);
+  showSqlModal = signal<boolean>(false);
+  showXmiModal = signal<boolean>(false);
 
   // Nodos y Conexiones del Diagrama
   nodes = signal<UmlClassNode[]>([]);
   connections = signal<UmlConnection[]>([]);
 
+  // Historial Undo / Redo (AST Completo)
+  private readonly MAX_HISTORY = 40;
+  private undoStack: DiagramSnapshot[] = [];
+  private redoStack: DiagramSnapshot[] = [];
+  private pendingDragSnapshot: DiagramSnapshot | null = null;
+  private dragMovedDuringSession = false;
+  canUndo = signal<boolean>(false);
+  canRedo = signal<boolean>(false);
+  undoCount = signal<number>(0);
+  redoCount = signal<number>(0);
+
   private animationTimers: any[] = [];
+  private permissionToastTimer: any = null;
+  private readonly subs = new Subscription();
 
   ngOnInit(): void {
-    this.collaborationService.remoteNodeDrag$.subscribe((data) => {
-      this.nodes.update((list) =>
-        list.map((n) => (n.id === data.nodeId ? { ...n, position: data.position } : n)),
-      );
-      this.updateConnectionEndpoints();
-    });
-
-    this.collaborationService.remoteDiagramSync$.subscribe((data) => {
-      if (data.action === 'ai_mutation' && data.nodes) {
-        this.applyAiMutationWithAnimation(data.nodes, data.connections || []);
-      } else if (data.nodes) {
-        const cleanNodes = this.applyAiNodesMutation(data.nodes);
-        this.nodes.set(cleanNodes);
-        const cleanConns = this.sanitizeClientConnections(data.connections || [], cleanNodes);
-        this.connections.set(cleanConns);
+    this.subs.add(
+      this.collaborationService.remoteNodeDrag$.subscribe((data) => {
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === data.nodeId ? { ...n, position: data.position } : n)),
+        );
         this.updateConnectionEndpoints();
-        setTimeout(() => this.updateConnectionEndpoints(), 60);
-      }
-    });
+      }),
+    );
 
-    this.collaborationService.nodeLockRejected$.subscribe((data) => {
-      if (this.editingNode()?.id === data.nodeId) {
-        this.isEditNodeModalOpen.set(false);
-        this.editingNode.set(null);
-        alert(`🔒 La tabla está siendo editada por ${data.lockedBy.userName}. Por favor espera.`);
-      }
-    });
+    this.subs.add(
+      this.collaborationService.remoteDiagramSync$.subscribe((data) => {
+        if (data.action === 'ai_mutation' && data.nodes) {
+          this.applyAiMutationWithAnimation(data.nodes, data.connections || []);
+        } else if (data.nodes) {
+          const cleanNodes = this.applyAiNodesMutation(data.nodes);
+          this.nodes.set(cleanNodes);
+          const cleanConns = this.sanitizeClientConnections(data.connections || [], cleanNodes);
+          this.connections.set(cleanConns);
+          this.updateConnectionEndpoints();
+          setTimeout(() => this.updateConnectionEndpoints(), 60);
+        }
+      }),
+    );
 
-    this.route.queryParams.subscribe((params) => {
-      const diagramId = params['diagramId'];
-      const projectId = params['projectId'];
-      const projectName = params['projectName'];
+    this.subs.add(
+      this.collaborationService.nodeLockRejected$.subscribe((data) => {
+        if (this.editingNode()?.id === data.nodeId) {
+          this.isEditNodeModalOpen.set(false);
+          this.editingNode.set(null);
+          alert(`🔒 La tabla está siendo editada por ${data.lockedBy.userName}. Por favor espera.`);
+        }
+      }),
+    );
 
-      if (projectId) {
-        this.currentProjectId.set(projectId);
-        this.projectService.getProject(projectId).subscribe({
-          next: (project) => {
-            const user = this.authService.currentUser();
-            if (user && project) {
-              if (project.userRole) {
-                this.currentUserRole.set(project.userRole);
-              } else if (project.createdBy === user.id) {
-                this.currentUserRole.set('OWNER');
-              } else if (project.members) {
-                const myMember = project.members.find((m: any) => m.userId === user.id);
-                if (myMember) {
-                  this.currentUserRole.set(myMember.role);
-                }
+    this.subs.add(
+      this.collaborationService.projectPermissionsUpdated$.subscribe((event) => {
+        const pid = this.currentProjectId();
+        if (!pid || event.projectId !== pid) return;
+
+        const currentUserId = this.authService.currentUser()?.id;
+        if (currentUserId && event.userId === currentUserId) {
+          if (event.removed) {
+            this.collaborationService.leaveRoom();
+            alert('Has sido removido de este proyecto por el propietario.');
+            this.router.navigate(['/projects']);
+            return;
+          }
+
+          if (event.role) {
+            this.currentUserRole.set(event.role);
+            if (event.role === 'VIEWER') {
+              this.setPointerMode();
+              this.closeEditNodeModal();
+              this.closeEditConnModal();
+              if (this.voiceCommandService.isListening()) {
+                this.voiceCommandService.stopListening();
               }
             }
-          },
-          error: () => {},
-        });
-      }
-
-      if (projectName) {
-        this.currentDiagramName.set(projectName);
-      }
-
-      if (diagramId) {
-        this.currentDiagramId.set(diagramId);
-        this.loadDiagramFromBackend(diagramId);
-      } else if (projectId) {
-        this.diagramService.loadDiagramsByProject(projectId).subscribe((diagrams) => {
-          if (diagrams && diagrams.length > 0) {
-            const first = diagrams[0];
-            this.currentDiagramId.set(first.id);
-            this.currentDiagramName.set(first.name);
-            this.loadDiagramFromBackend(first.id);
           }
-        });
-      }
-    });
+
+          if (event.canDownloadCode !== undefined) {
+            this.currentUserCanDownloadCode.set(event.canDownloadCode);
+          }
+
+          this.showPermissionToast(
+            `Tus permisos fueron actualizados → Rol: ${this.currentUserRole()} • ZIP: ${this.currentUserCanDownloadCode() ? 'Permitido' : 'Restringido'}`,
+          );
+        }
+
+        this.refreshProjectPermissions(pid);
+      }),
+    );
+
+    this.subs.add(
+      this.voiceCommandService.commandDetected$.subscribe((cmd) => {
+        this.executeVoiceCommand(cmd);
+      }),
+    );
+
+    this.subs.add(
+      this.route.queryParams.subscribe((params) => {
+        const diagramId = params['diagramId'];
+        const projectId = params['projectId'];
+        const projectName = params['projectName'];
+
+        if (projectId) {
+          this.currentProjectId.set(projectId);
+          this.refreshProjectPermissions(projectId);
+        }
+
+        if (projectName) {
+          this.currentDiagramName.set(projectName);
+        }
+
+        if (diagramId) {
+          this.currentDiagramId.set(diagramId);
+          this.loadDiagramFromBackend(diagramId);
+        } else if (projectId) {
+          this.diagramService.loadDiagramsByProject(projectId).subscribe((diagrams) => {
+            if (diagrams && diagrams.length > 0) {
+              const first = diagrams[0];
+              this.currentDiagramId.set(first.id);
+              this.currentDiagramName.set(first.name);
+              this.loadDiagramFromBackend(first.id);
+            }
+          });
+        }
+      }),
+    );
 
     this.updateConnectionEndpoints();
   }
 
   ngOnDestroy(): void {
+    this.subs.unsubscribe();
+    if (this.voiceCommandService.isListening()) {
+      this.voiceCommandService.stopListening();
+    }
+    if (this.permissionToastTimer) {
+      clearTimeout(this.permissionToastTimer);
+      this.permissionToastTimer = null;
+    }
     if (this.editingNode()) {
       this.collaborationService.releaseNodeLock(this.editingNode()!.id);
     }
@@ -336,56 +439,226 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.collaborationService.leaveRoom();
   }
 
+  refreshProjectPermissions(explicitProjectId?: string | null): void {
+    const projectId = explicitProjectId ?? this.currentProjectId();
+    if (!projectId) return;
+
+    this.projectService.getProject(projectId).subscribe({
+      next: (project) => {
+        const user = this.authService.currentUser();
+        this.projectCreatedBy.set(project.createdBy || null);
+        this.projectMembers.set(project.members || []);
+
+        if (user && project) {
+          let resolvedRole = project.userRole;
+          if (!resolvedRole) {
+            if (project.createdBy === user.id) {
+              resolvedRole = 'OWNER';
+            } else {
+              const myMember = project.members?.find((m) => m.userId === user.id);
+              if (myMember) {
+                resolvedRole = myMember.role;
+              }
+            }
+          }
+          if (resolvedRole) {
+            this.currentUserRole.set(resolvedRole);
+          }
+
+          if (project.userCanDownloadCode !== undefined) {
+            this.currentUserCanDownloadCode.set(project.userCanDownloadCode);
+          } else if (project.createdBy === user.id || resolvedRole === 'OWNER') {
+            this.currentUserCanDownloadCode.set(true);
+          } else {
+            const myMember = project.members?.find((m) => m.userId === user.id);
+            if (myMember && myMember.canDownloadCode !== undefined) {
+              this.currentUserCanDownloadCode.set(myMember.canDownloadCode);
+            }
+          }
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  private showPermissionToast(msg: string): void {
+    this.permissionToast.set(msg);
+    if (this.permissionToastTimer) {
+      clearTimeout(this.permissionToastTimer);
+    }
+    this.permissionToastTimer = setTimeout(() => {
+      this.permissionToast.set(null);
+      this.permissionToastTimer = null;
+    }, 4500);
+  }
+
+  toggleCollabPanel(): void {
+    const next = !this.isCollabPanelOpen();
+    this.isCollabPanelOpen.set(next);
+    if (next && typeof window !== 'undefined' && window.innerWidth < 1500) {
+      this.isAiPanelOpen.set(false);
+    }
+  }
+
+  openAiPanel(): void {
+    this.isAiPanelOpen.set(true);
+    if (typeof window !== 'undefined' && window.innerWidth < 1500) {
+      this.isCollabPanelOpen.set(false);
+    }
+  }
+
+  private createSnapshot(): DiagramSnapshot {
+    return {
+      nodes: JSON.parse(JSON.stringify(this.nodes())),
+      connections: JSON.parse(JSON.stringify(this.connections())),
+      defaultLineStyle: this.defaultLineStyle(),
+    };
+  }
+
+  private applySnapshot(snapshot: DiagramSnapshot): void {
+    this.nodes.set(JSON.parse(JSON.stringify(snapshot.nodes)));
+    this.connections.set(JSON.parse(JSON.stringify(snapshot.connections)));
+    this.defaultLineStyle.set(this.normalizeLineStyle(snapshot.defaultLineStyle));
+
+    const selId = this.selectedNodeId();
+    if (selId && !this.nodes().some((n) => n.id === selId)) {
+      this.selectedNodeId.set(null);
+    }
+    this.setPointerMode();
+    this.markAsUnsaved();
+    this.updateConnectionEndpoints();
+    setTimeout(() => this.updateConnectionEndpoints(), 40);
+  }
+
+  private syncHistorySignals(): void {
+    this.canUndo.set(this.undoStack.length > 0);
+    this.canRedo.set(this.redoStack.length > 0);
+    this.undoCount.set(this.undoStack.length);
+    this.redoCount.set(this.redoStack.length);
+  }
+
+  pushUndoSnapshot(): void {
+    if (this.isReadOnly()) return;
+    this.undoStack.push(this.createSnapshot());
+    if (this.undoStack.length > this.MAX_HISTORY) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+    this.syncHistorySignals();
+  }
+
+  clearHistory(): void {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.pendingDragSnapshot = null;
+    this.dragMovedDuringSession = false;
+    this.syncHistorySignals();
+  }
+
+  undo(): void {
+    if (this.isReadOnly() || this.undoStack.length === 0) return;
+    const prev = this.undoStack.pop()!;
+    this.redoStack.push(this.createSnapshot());
+    this.applySnapshot(prev);
+    this.syncHistorySignals();
+    this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'undo');
+  }
+
+  redo(): void {
+    if (this.isReadOnly() || this.redoStack.length === 0) return;
+    const next = this.redoStack.pop()!;
+    this.undoStack.push(this.createSnapshot());
+    if (this.undoStack.length > this.MAX_HISTORY) {
+      this.undoStack.shift();
+    }
+    this.applySnapshot(next);
+    this.syncHistorySignals();
+    this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'redo');
+  }
+
+  onFlowDragStarted(event: FDragStartedEvent): void {
+    if (this.isReadOnly()) return;
+    if (event.kind === 'drag-node' || event.fEventType === 'move-node') {
+      this.pendingDragSnapshot = this.createSnapshot();
+      this.dragMovedDuringSession = false;
+    }
+  }
+
+  onFlowDragEnded(): void {
+    if (this.pendingDragSnapshot && this.dragMovedDuringSession && !this.isReadOnly()) {
+      this.undoStack.push(this.pendingDragSnapshot);
+      if (this.undoStack.length > this.MAX_HISTORY) {
+        this.undoStack.shift();
+      }
+      this.redoStack = [];
+      this.syncHistorySignals();
+    }
+    this.pendingDragSnapshot = null;
+    this.dragMovedDuringSession = false;
+  }
+
   loadDiagramFromBackend(diagramId: string): void {
     this.diagramService.loadDiagram(diagramId).subscribe((diagram) => {
       this.currentDiagramName.set(diagram.name);
-      if (diagram.defaultLineStyle) {
-        this.defaultLineStyle.set(diagram.defaultLineStyle as UmlLineStyle);
-      }
+      this.defaultLineStyle.set(this.normalizeLineStyle(diagram.defaultLineStyle));
 
-      if (diagram.nodes && diagram.nodes.length > 0) {
-        this.nodes.set(
-          diagram.nodes.map((n) => ({
+      const rawNodes = diagram.nodes || [];
+      const customTypeNames = rawNodes
+        .filter((n) => !n.isAnchor && n.name)
+        .map((n) => n.name.trim());
+
+      this.nodes.set(
+        rawNodes.map((n) => {
+          const elementType = this.normalizeElementType(n.elementType);
+          return {
             id: n.id,
             name: n.name,
+            elementType,
+            stereotype: n.stereotype || undefined,
+            noteContent: n.noteContent ?? undefined,
             position: { x: n.positionX, y: n.positionY },
             width: n.width || 220,
             height: n.height || undefined,
             isAnchor: n.isAnchor,
             assocMainConnId: n.assocMainConnId || undefined,
-            attributes: (n.attributes || []).map((a) => ({
+            attributes: (n.attributes || []).map((a, idx) => ({
               name: a.name,
-              type: this.normalizeDataType(a.type),
+              type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
+              visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
+              isPrimaryKey: Boolean(a.isPrimaryKey),
+              isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
+              orderIndex: a.orderIndex ?? idx,
             })),
-            methods: (n.methods || []).map((m) => ({
+            methods: (n.methods || []).map((m, idx) => ({
               name: m.name,
-              parameters: m.parameters,
-              returnType: this.normalizeReturnType(m.returnType),
+              parameters: m.parameters || '',
+              returnType: this.normalizeReturnType(m.returnType, customTypeNames),
+              visibility: this.normalizeVisibility(m.visibility, '+'),
+              orderIndex: m.orderIndex ?? idx,
             })),
-          })),
-        );
-      }
+          };
+        }),
+      );
 
-      if (diagram.connections && diagram.connections.length > 0) {
-        this.connections.set(
-          diagram.connections.map((c) => ({
-            id: c.id,
-            sourceNodeId: c.sourceNodeId || undefined,
-            targetNodeId: c.targetNodeId || undefined,
-            sourceId: c.sourceId,
-            targetId: c.targetId,
-            type: c.type as UmlRelationshipType,
-            lineStyle: (c.lineStyle as UmlLineStyle) || 'segment',
-            name: c.name || undefined,
-            sourceMultiplicity: c.sourceMultiplicity || '',
-            targetMultiplicity: c.targetMultiplicity || '',
-            assocAnchorNodeId: c.assocAnchorNodeId || undefined,
-          })),
-        );
-      }
+      this.connections.set(
+        (diagram.connections || []).map((c) => ({
+          id: c.id,
+          sourceNodeId: c.sourceNodeId || undefined,
+          targetNodeId: c.targetNodeId || undefined,
+          sourceId: c.sourceId,
+          targetId: c.targetId,
+          type: c.type as UmlRelationshipType,
+          lineStyle: this.normalizeLineStyle(c.lineStyle),
+          name: c.name || undefined,
+          sourceMultiplicity: c.sourceMultiplicity || '',
+          targetMultiplicity: c.targetMultiplicity || '',
+          assocAnchorNodeId: c.assocAnchorNodeId || undefined,
+        })),
+      );
 
       this.collaborationService.joinRoom(diagramId);
 
+      this.clearHistory();
       this.hasUnsavedChanges.set(false);
       setTimeout(() => {
         this.updateConnectionEndpoints();
@@ -393,16 +666,65 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     });
   }
 
-  normalizeDataType(type: string): string {
-    if (!type) return 'String';
-    const found = this.predefinedTypes.find((t) => t.toLowerCase() === type.trim().toLowerCase());
-    return found || 'String';
+  normalizeElementType(type: unknown): UmlElementType {
+    const t = String(type || 'CLASS').trim().toUpperCase();
+    if (t === 'INTERFACE' || t === 'ENUM' || t === 'NOTE' || t === 'ASSOCIATION_CLASS') {
+      return t;
+    }
+    return 'CLASS';
   }
 
-  normalizeReturnType(type: string): string {
-    if (!type) return 'void';
-    const found = this.predefinedReturnTypes.find((rt) => rt.toLowerCase() === type.trim().toLowerCase());
-    return found || 'void';
+  normalizeLineStyle(style: unknown): UmlLineStyle {
+    const s = String(style || 'segment').trim();
+    if (s === 'segment' || s === 'straight' || s === 'bezier' || s === 'adaptive-curve') {
+      return s;
+    }
+    return 'segment';
+  }
+
+  normalizeVisibility(visibility: unknown, fallback: UmlVisibility = '-'): UmlVisibility {
+    const v = String(visibility || '').trim().toLowerCase();
+    if (v === '+' || v === 'public') return '+';
+    if (v === '-' || v === 'private') return '-';
+    if (v === '#' || v === 'protected') return '#';
+    if (v === '~' || v === 'package') return '~';
+    return fallback;
+  }
+
+  normalizeDataType(type: string, customTypeNames: string[] = []): string {
+    if (!type || !type.trim()) return 'String';
+    const trimmed = type.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower === 'enumliteral') return 'EnumLiteral';
+
+    const predefined = this.predefinedTypes.find((t) => t.toLowerCase() === lower);
+    if (predefined) return predefined;
+
+    if (lower === 'varchar' || lower === 'char' || lower === 'nvarchar') return 'String';
+    if (lower === 'int' || lower === 'smallint' || lower === 'serial') return 'Integer';
+    if (lower === 'bigint' || lower === 'int8' || lower === 'bigserial') return 'Long';
+    if (lower === 'bool') return 'Boolean';
+    if (lower === 'decimal' || lower === 'numeric') return 'BigDecimal';
+    if (lower === 'timestamp' || lower === 'datetime') return 'LocalDateTime';
+
+    const custom = customTypeNames.find((ct) => ct.toLowerCase() === lower);
+    if (custom) return custom;
+
+    return trimmed;
+  }
+
+  normalizeReturnType(type: string, customTypeNames: string[] = []): string {
+    if (!type || !type.trim()) return 'void';
+    const trimmed = type.trim();
+    const lower = trimmed.toLowerCase();
+
+    const predefined = this.predefinedReturnTypes.find((rt) => rt.toLowerCase() === lower);
+    if (predefined) return predefined;
+
+    const custom = customTypeNames.find((ct) => ct.toLowerCase() === lower);
+    if (custom) return custom;
+
+    return trimmed;
   }
 
   getNodeLock(nodeId: string): NodeLock | undefined {
@@ -415,6 +737,19 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     return !!lock && lock.userId !== currentUserId;
   }
 
+  private hasAnyModalOpen(): boolean {
+    return (
+      this.isEditNodeModalOpen() ||
+      this.isEditConnModalOpen() ||
+      this.showJsonModal() ||
+      this.showSpringBootModal() ||
+      this.isProfileModalOpen() ||
+      this.showAuditModal() ||
+      this.showSqlModal() ||
+      this.showXmiModal()
+    );
+  }
+
   @HostListener('window:beforeunload', ['$event'])
   onBeforeUnload(event: BeforeUnloadEvent): void {
     if (this.hasUnsavedChanges()) {
@@ -425,6 +760,15 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent): void {
+    const key = event.key.toLowerCase();
+    const activeEl = document.activeElement as HTMLElement | null;
+    const activeTag = (activeEl?.tagName || '').toLowerCase();
+    const isTyping =
+      activeTag === 'input' ||
+      activeTag === 'textarea' ||
+      activeTag === 'select' ||
+      Boolean(activeEl?.isContentEditable);
+
     if (event.key === 'Escape') {
       this.selectedNodeId.set(null);
       this.setPointerMode();
@@ -432,21 +776,43 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       this.closeEditConnModal();
       this.showJsonModal.set(false);
       this.showSpringBootModal.set(false);
+      this.showAuditModal.set(false);
+      this.showSqlModal.set(false);
+      this.showXmiModal.set(false);
+      this.isProfileModalOpen.set(false);
       this.isExportDropdownOpen.set(false);
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    } else if ((event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey) {
+      if (!isTyping && !this.hasAnyModalOpen() && !this.isReadOnly()) {
+        event.preventDefault();
+        this.undo();
+      }
+    } else if ((event.ctrlKey || event.metaKey) && (key === 'y' || (key === 'z' && event.shiftKey))) {
+      if (!isTyping && !this.hasAnyModalOpen() && !this.isReadOnly()) {
+        event.preventDefault();
+        this.redo();
+      }
+    } else if ((event.ctrlKey || event.metaKey) && key === 's') {
       event.preventDefault();
       if (!this.isReadOnly()) {
         this.saveToBackend();
       }
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+    } else if ((event.ctrlKey || event.metaKey) && key === 'b') {
       event.preventDefault();
       this.isToolboxOpen.set(!this.isToolboxOpen());
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'i') {
+    } else if ((event.ctrlKey || event.metaKey) && key === 'i') {
       event.preventDefault();
-      this.isAiPanelOpen.set(!this.isAiPanelOpen());
+      if (this.isAiPanelOpen()) {
+        this.isAiPanelOpen.set(false);
+      } else {
+        this.openAiPanel();
+      }
+    } else if ((event.ctrlKey || event.metaKey) && key === 'm') {
+      if (!isTyping && !this.hasAnyModalOpen() && !this.isReadOnly()) {
+        event.preventDefault();
+        this.voiceCommandService.toggleListening();
+      }
     } else if (event.key === 'Delete' && this.selectedNodeId() && !this.isReadOnly()) {
-      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
-      if (activeTag !== 'input' && activeTag !== 'textarea') {
+      if (!isTyping && !this.hasAnyModalOpen()) {
         event.preventDefault();
         this.removeClass(this.selectedNodeId()!);
       }
@@ -464,18 +830,41 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
     const payload: SaveDiagramAstRequest = {
       defaultLineStyle: this.defaultLineStyle(),
-      nodes: this.nodes().map((n) => ({
-        id: n.id,
-        name: n.isAnchor ? (n.name || 'Anchor') : n.name,
-        positionX: n.position.x,
-        positionY: n.position.y,
-        width: n.width,
-        height: n.height,
-        isAnchor: n.isAnchor,
-        assocMainConnId: n.assocMainConnId,
-        attributes: n.attributes,
-        methods: n.methods,
-      })),
+      nodes: this.nodes().map((n) => {
+        const elementType = this.normalizeElementType(n.elementType);
+        return {
+          id: n.id,
+          name: n.isAnchor
+            ? (n.name || 'Anchor')
+            : elementType === 'NOTE'
+              ? (n.name || 'Nota')
+              : n.name,
+          elementType,
+          stereotype: n.stereotype ?? null,
+          noteContent: n.noteContent ?? null,
+          positionX: n.position.x,
+          positionY: n.position.y,
+          width: n.width ?? 220,
+          height: n.height ?? null,
+          isAnchor: Boolean(n.isAnchor),
+          assocMainConnId: n.assocMainConnId ?? null,
+          attributes: (n.attributes || []).map((a, idx) => ({
+            name: a.name,
+            type: elementType === 'ENUM' ? 'EnumLiteral' : (a.type || 'String'),
+            visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
+            isPrimaryKey: Boolean(a.isPrimaryKey),
+            isNullable: a.isNullable ?? !a.isPrimaryKey,
+            orderIndex: idx,
+          })),
+          methods: (n.methods || []).map((m, idx) => ({
+            name: m.name,
+            parameters: m.parameters || '',
+            returnType: m.returnType || 'void',
+            visibility: this.normalizeVisibility(m.visibility, '+'),
+            orderIndex: idx,
+          })),
+        };
+      }),
       connections: this.connections().map((c) => {
         const baseSourceId = c.sourceNodeId || c.sourceId.replace(/_(top|bottom|left|right)$/, '');
         const baseTargetId = c.targetNodeId || c.targetId.replace(/_(top|bottom|left|right)$/, '');
@@ -501,6 +890,11 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         this.saveSuccessMessage.set(true);
         setTimeout(() => this.saveSuccessMessage.set(false), 2500);
         this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'save');
+        this.collaborationService.sendActivityLog(
+          'Guardó el diagrama en la base de datos',
+          `${this.nodes().filter((n) => !n.isAnchor).length} elementos`,
+          'uml',
+        );
       },
     });
   }
@@ -523,11 +917,18 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   }
 
   setDefaultLineStyle(style: UmlLineStyle): void {
+    if (this.isReadOnly() || this.defaultLineStyle() === style) return;
+    this.pushUndoSnapshot();
     this.defaultLineStyle.set(style);
+    this.markAsUnsaved();
+    this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'line_style');
   }
 
   onNodePositionChange(node: UmlClassNode, newPosition: { x: number; y: number }): void {
     if (this.isReadOnly() || this.isNodeLockedByOther(node.id)) return;
+    if (node.position.x !== newPosition.x || node.position.y !== newPosition.y) {
+      this.dragMovedDuringSession = true;
+    }
     node.position = newPosition;
     this.markAsUnsaved();
     this.updateConnectionEndpoints();
@@ -559,11 +960,21 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   getNodeHeight(node: UmlClassNode): number {
     if (node.isAnchor) return 0;
     if (node.height && node.height > 0) return node.height;
-    const headerH = 34;
+    const elType = (node.elementType || 'CLASS').toUpperCase();
+    if (elType === 'NOTE') {
+      const content = (node.noteContent || node.name || '').trim();
+      const wrappedLines = Math.max(2, Math.ceil(content.length / 26) + (content.match(/\n/g)?.length || 0));
+      return 34 + wrappedLines * 17 + 16;
+    }
+    const hasStereo =
+      elType === 'INTERFACE' ||
+      elType === 'ENUM' ||
+      Boolean(node.stereotype?.trim());
+    const headerH = hasStereo ? 48 : 34;
     const attrCount = (node.attributes || []).length;
     const methodCount = (node.methods || []).length;
     const attrH = attrCount > 0 ? attrCount * 22 + 12 : 28;
-    const methodH = methodCount > 0 ? methodCount * 22 + 12 : 28;
+    const methodH = methodCount > 0 ? methodCount * 22 + 14 : 0;
     return headerH + attrH + methodH;
   }
 
@@ -786,6 +1197,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         return;
       }
 
+      this.pushUndoSnapshot();
       const optimal = this.getOptimalConnectorId(sourceNode, targetNode);
       const newConn: UmlConnection = {
         id: `conn_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
@@ -800,9 +1212,15 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       };
 
       this.connections.update((list) => [...list, newConn]);
+      this.markAsUnsaved();
       this.setPointerMode();
       this.updateConnectionEndpoints();
       this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'create_conn');
+      this.collaborationService.sendActivityLog(
+        `Creó relación ${activeRel}: ${sourceNode.name} → ${targetNode.name}`,
+        `${newConn.sourceMultiplicity || '-'} a ${newConn.targetMultiplicity || '-'}`,
+        'uml',
+      );
     }
   }
 
@@ -833,6 +1251,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
       return;
     }
 
+    this.pushUndoSnapshot();
     let sourceId = event.fOutputId;
     let targetId = event.fInputId;
 
@@ -860,17 +1279,30 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.updateConnectionEndpoints();
 
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'create_conn');
+    this.collaborationService.sendActivityLog(
+      `Creó relación ${relType}: ${sourceNode?.name || 'Origen'} → ${targetNode?.name || 'Destino'}`,
+      `${newConnection.sourceMultiplicity || '-'} a ${newConnection.targetMultiplicity || '-'}`,
+      'uml',
+    );
   }
 
   onConnectionReassigned(event: FReassignConnectionEvent): void {
     if (this.isReadOnly()) return;
+    const exists = this.connections().some((c) => c.id === event.connectionId);
+    if (!exists) return;
+
+    this.pushUndoSnapshot();
     this.connections.update((list) =>
       list.map((c) => {
         if (c.id === event.connectionId) {
+          const nextSourceId = event.nextSourceId || c.sourceId;
+          const nextTargetId = event.nextTargetId || c.targetId;
           return {
             ...c,
-            sourceId: event.nextSourceId || c.sourceId,
-            targetId: event.nextTargetId || c.targetId,
+            sourceNodeId: nextSourceId.replace(/_(top|bottom|left|right)$/, ''),
+            targetNodeId: nextTargetId.replace(/_(top|bottom|left|right)$/, ''),
+            sourceId: nextSourceId,
+            targetId: nextTargetId,
           };
         }
         return c;
@@ -881,7 +1313,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'reassign_conn');
   }
 
-  createAssociationClassBetween(sourceNode: UmlClassNode, targetNode: UmlClassNode): void {
+  createAssociationClassBetween(sourceNode: UmlClassNode, targetNode: UmlClassNode, skipActivityLog = false): void {
+    this.pushUndoSnapshot();
     const timestamp = Date.now();
     const anchorId = `anchor_${timestamp}`;
     const assocNodeId = `node_${timestamp}_assoc`;
@@ -890,6 +1323,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const anchorNode: UmlClassNode = {
       id: anchorId,
       name: '',
+      elementType: 'CLASS',
       position: {
         x: Math.round((sourceNode.position.x + targetNode.position.x) / 2),
         y: Math.round((sourceNode.position.y + targetNode.position.y) / 2),
@@ -919,17 +1353,18 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const assocNode: UmlClassNode = {
       id: assocNodeId,
       name: assocName,
+      elementType: 'ASSOCIATION_CLASS',
       position: {
         x: anchorNode.position.x - 110,
         y: anchorNode.position.y + 120,
       },
       width: 220,
       attributes: [
-        { name: 'id', type: 'UUID' },
-        { name: 'fechaRegistro', type: 'LocalDateTime' },
+        { name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false, orderIndex: 0 },
+        { name: 'fechaRegistro', type: 'LocalDateTime', visibility: '-', isPrimaryKey: false, isNullable: false, orderIndex: 1 },
       ],
       methods: [
-        { name: 'getId', parameters: '', returnType: 'UUID' },
+        { name: 'getId', parameters: '', returnType: 'UUID', visibility: '+', orderIndex: 0 },
       ],
       assocMainConnId: mainConnId,
     };
@@ -952,31 +1387,83 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.setPointerMode();
     this.updateConnectionEndpoints();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'create_assoc_class');
+    if (!skipActivityLog) {
+      this.collaborationService.sendActivityLog(
+        `Creó clase asociativa ${assocName}`,
+        `${sourceNode.name} *─* ${targetNode.name}`,
+        'uml',
+      );
+    }
   }
 
   addClass(): void {
-    if (this.isReadOnly()) return;
-    const posX = Math.round(- (this.canvas?.transform?.position?.x || 0) + 150 + Math.random() * 80);
-    const posY = Math.round(- (this.canvas?.transform?.position?.y || 0) + 150 + Math.random() * 80);
+    this.addElement('CLASS');
+  }
 
+  addElement(elementType: UmlElementType = 'CLASS'): void {
+    if (this.isReadOnly()) return;
+    this.pushUndoSnapshot();
+
+    const scale = this.canvas?.transform?.scale || 1;
+    const rawPosX = this.canvas?.transform?.position?.x || 0;
+    const rawPosY = this.canvas?.transform?.position?.y || 0;
+    const posX = Math.round(-rawPosX / scale + 150 + Math.random() * 80);
+    const posY = Math.round(-rawPosY / scale + 150 + Math.random() * 80);
+
+    const normalizedType = this.normalizeElementType(elementType);
     const count = this.nodes().filter((n) => !n.isAnchor).length + 1;
+    const timestamp = Date.now();
+
+    let name = `Tabla_${count}`;
+    let stereotype: string | undefined;
+    let noteContent: string | undefined;
+    let attributes: UmlAttribute[] = [];
+    let methods: UmlMethod[] = [];
+
+    if (normalizedType === 'INTERFACE') {
+      name = `IServicio_${count}`;
+      stereotype = 'interface';
+      methods = [{ name: 'ejecutar', parameters: '', returnType: 'void', visibility: '+', orderIndex: 0 }];
+    } else if (normalizedType === 'ENUM') {
+      name = `Estado_${count}`;
+      stereotype = 'enumeration';
+      attributes = [
+        { name: 'ACTIVO', type: 'EnumLiteral', visibility: '+', isPrimaryKey: false, isNullable: false, orderIndex: 0 },
+        { name: 'INACTIVO', type: 'EnumLiteral', visibility: '+', isPrimaryKey: false, isNullable: false, orderIndex: 1 },
+      ];
+    } else if (normalizedType === 'NOTE') {
+      name = `Nota_${count}`;
+      noteContent = 'Regla de negocio o aclaración del modelo.';
+    }
+
     const newNode: UmlClassNode = {
-      id: `class_${Date.now()}`,
-      name: `Tabla_${count}`,
+      id: `${normalizedType.toLowerCase()}_${timestamp}`,
+      name,
+      elementType: normalizedType,
+      stereotype,
+      noteContent,
       position: { x: Math.max(50, posX), y: Math.max(50, posY) },
       width: 220,
-      attributes: [],
-      methods: [],
+      attributes,
+      methods,
     };
 
     this.nodes.update((list) => [...list, newNode]);
     this.markAsUnsaved();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'add_node');
+    this.collaborationService.sendActivityLog(
+      `Creó ${normalizedType.toLowerCase()} "${name}"`,
+      undefined,
+      'uml',
+    );
   }
 
-  removeClass(nodeId: string, event?: MouseEvent): void {
+  removeClass(nodeId: string, event?: MouseEvent, skipActivityLog = false): void {
     if (event) event.stopPropagation();
-    if (this.isReadOnly()) return;
+    if (this.isReadOnly() || this.isNodeLockedByOther(nodeId)) return;
+
+    const deletedName = this.nodes().find((n) => n.id === nodeId)?.name || nodeId;
+    this.pushUndoSnapshot();
 
     const nodesToDelete = new Set<string>([nodeId]);
     const connsToDelete = new Set<string>();
@@ -1047,6 +1534,9 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.markAsUnsaved();
     this.updateConnectionEndpoints();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'remove_node');
+    if (!skipActivityLog) {
+      this.collaborationService.sendActivityLog(`Eliminó "${deletedName}"`, undefined, 'uml');
+    }
   }
 
   openEditNodeModal(node: UmlClassNode, event?: MouseEvent): void {
@@ -1060,7 +1550,25 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     }
 
     this.collaborationService.requestNodeLock(node.id);
-    this.editingNode.set(JSON.parse(JSON.stringify(node)));
+    const clone: UmlClassNode = JSON.parse(JSON.stringify(node));
+    const elType = this.normalizeElementType(clone.elementType);
+    clone.elementType = elType;
+    clone.attributes = (clone.attributes || []).map((a, idx) => ({
+      ...a,
+      type: elType === 'ENUM' ? 'EnumLiteral' : (a.type || 'String'),
+      visibility: this.normalizeVisibility(a.visibility, elType === 'ENUM' ? '+' : '-'),
+      isPrimaryKey: Boolean(a.isPrimaryKey),
+      isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
+      orderIndex: a.orderIndex ?? idx,
+    }));
+    clone.methods = (clone.methods || []).map((m, idx) => ({
+      ...m,
+      parameters: m.parameters || '',
+      returnType: m.returnType || 'void',
+      visibility: this.normalizeVisibility(m.visibility, '+'),
+      orderIndex: m.orderIndex ?? idx,
+    }));
+    this.editingNode.set(clone);
     this.isEditNodeModalOpen.set(true);
   }
 
@@ -1076,18 +1584,158 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const edited = this.editingNode();
     if (!edited) return;
 
+    this.pushUndoSnapshot();
+    const elType = this.normalizeElementType(edited.elementType);
+    edited.elementType = elType;
+    edited.name = edited.name?.trim() || (elType === 'NOTE' ? 'Nota' : 'Clase');
+    edited.stereotype = edited.stereotype?.trim() || undefined;
+
+    if (elType === 'NOTE') {
+      edited.noteContent = edited.noteContent ?? '';
+      edited.attributes = [];
+      edited.methods = [];
+    } else {
+      edited.attributes = (edited.attributes || [])
+        .filter((a) => a.name && a.name.trim().length > 0)
+        .map((a, idx) => {
+          const isPk = elType === 'ENUM' ? false : Boolean(a.isPrimaryKey);
+          return {
+            name: a.name.trim(),
+            type: elType === 'ENUM' ? 'EnumLiteral' : (a.type || 'String'),
+            visibility: this.normalizeVisibility(a.visibility, elType === 'ENUM' ? '+' : '-'),
+            isPrimaryKey: isPk,
+            isNullable: isPk ? false : (a.isNullable ?? true),
+            orderIndex: idx,
+          };
+        });
+      edited.methods = (edited.methods || [])
+        .filter((m) => m.name && m.name.trim().length > 0)
+        .map((m, idx) => ({
+          name: m.name.trim(),
+          parameters: m.parameters || '',
+          returnType: m.returnType || 'void',
+          visibility: this.normalizeVisibility(m.visibility, '+'),
+          orderIndex: idx,
+        }));
+    }
+
     this.nodes.update((list) => list.map((n) => (n.id === edited.id ? edited : n)));
     this.markAsUnsaved();
     this.closeEditNodeModal();
     this.updateConnectionEndpoints();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'update_node');
+    this.collaborationService.sendActivityLog(
+      `Editó "${edited.name}"`,
+      `${edited.attributes.length} atrib • ${edited.methods.length} mét`,
+      'uml',
+    );
+  }
+
+  onEditingNodeTypeChange(newType: UmlElementType): void {
+    const n = this.editingNode();
+    if (!n) return;
+    const normalized = this.normalizeElementType(newType);
+    n.elementType = normalized;
+
+    if (normalized === 'INTERFACE') {
+      if (!n.stereotype || n.stereotype === 'enumeration') {
+        n.stereotype = 'interface';
+      }
+      n.attributes = n.attributes || [];
+    } else if (normalized === 'ENUM') {
+      if (!n.stereotype || n.stereotype === 'interface') {
+        n.stereotype = 'enumeration';
+      }
+      n.attributes = (n.attributes || []).map((a) => ({
+        ...a,
+        type: 'EnumLiteral',
+        visibility: '+',
+        isPrimaryKey: false,
+        isNullable: false,
+      }));
+    } else if (normalized === 'NOTE') {
+      n.stereotype = undefined;
+      n.noteContent = n.noteContent ?? n.name ?? '';
+    } else {
+      if (n.stereotype === 'interface' || n.stereotype === 'enumeration') {
+        n.stereotype = undefined;
+      }
+      n.attributes = (n.attributes || []).map((a) => ({
+        ...a,
+        type: a.type === 'EnumLiteral' ? 'String' : (a.type || 'String'),
+        visibility: a.visibility || '-',
+      }));
+    }
+  }
+
+  onToggleAttributePk(attr: UmlAttribute): void {
+    attr.isPrimaryKey = !attr.isPrimaryKey;
+    if (attr.isPrimaryKey) {
+      attr.isNullable = false;
+    }
+  }
+
+  onToggleAttributeNullable(attr: UmlAttribute): void {
+    if (attr.isPrimaryKey) {
+      attr.isNullable = false;
+      return;
+    }
+    attr.isNullable = attr.isNullable === false ? true : false;
+  }
+
+  addLiteralToEditingEnum(): void {
+    this.addAttributeToEditingNode();
+  }
+
+  getAvailableAttrTypes(currentType?: string): string[] {
+    const custom = this.nodes()
+      .filter((n) => !n.isAnchor && n.name && (n.elementType === 'ENUM' || n.elementType === 'CLASS' || n.elementType === 'INTERFACE'))
+      .map((n) => n.name.trim());
+    const set = new Set<string>(this.predefinedTypes);
+    for (const c of custom) {
+      if (c && !set.has(c)) set.add(c);
+    }
+    if (currentType && currentType.trim() && !set.has(currentType.trim())) {
+      set.add(currentType.trim());
+    }
+    return Array.from(set);
+  }
+
+  getAvailableReturnTypes(currentType?: string): string[] {
+    const custom = this.nodes()
+      .filter((n) => !n.isAnchor && n.name && n.elementType !== 'NOTE')
+      .map((n) => n.name.trim());
+    const set = new Set<string>(this.predefinedReturnTypes);
+    for (const c of custom) {
+      if (c && !set.has(c)) set.add(c);
+    }
+    if (currentType && currentType.trim() && !set.has(currentType.trim())) {
+      set.add(currentType.trim());
+    }
+    return Array.from(set);
   }
 
   addAttributeToEditingNode(): void {
     const n = this.editingNode();
     if (!n) return;
     n.attributes = n.attributes || [];
-    n.attributes.push({ name: 'nuevoCampo', type: 'String' });
+    if (n.elementType === 'ENUM') {
+      n.attributes.push({
+        name: `VALOR_${n.attributes.length + 1}`,
+        type: 'EnumLiteral',
+        visibility: '+',
+        isPrimaryKey: false,
+        isNullable: false,
+      });
+    } else {
+      n.attributes.push({
+        name: 'nuevoCampo',
+        type: 'String',
+        visibility: '-',
+        isPrimaryKey: false,
+        isNullable: true,
+      });
+    }
   }
 
   removeAttributeFromEditingNode(index: number): void {
@@ -1100,7 +1748,12 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const n = this.editingNode();
     if (!n) return;
     n.methods = n.methods || [];
-    n.methods.push({ name: 'nuevaOperacion', parameters: '', returnType: 'void' });
+    n.methods.push({
+      name: 'nuevaOperacion',
+      parameters: '',
+      returnType: 'void',
+      visibility: '+',
+    });
   }
 
   removeMethodFromEditingNode(index: number): void {
@@ -1126,17 +1779,24 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     const edited = this.editingConnection();
     if (!edited) return;
 
+    this.pushUndoSnapshot();
     this.connections.update((list) => list.map((c) => (c.id === edited.id ? edited : c)));
     this.markAsUnsaved();
     this.closeEditConnModal();
     this.updateConnectionEndpoints();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'update_conn');
+    this.collaborationService.sendActivityLog(
+      `Editó relación ${edited.type}`,
+      `${edited.sourceMultiplicity || '-'} → ${edited.targetMultiplicity || '-'}`,
+      'uml',
+    );
   }
 
   removeConnection(connId: string, event?: MouseEvent): void {
     if (event) event.stopPropagation();
     if (this.isReadOnly()) return;
 
+    this.pushUndoSnapshot();
     const conn = this.connections().find((c) => c.id === connId);
     const connsToDelete = new Set<string>([connId]);
     const nodesToDelete = new Set<string>();
@@ -1178,12 +1838,42 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.closeEditConnModal();
     this.updateConnectionEndpoints();
     this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'delete_conn');
+    this.collaborationService.sendActivityLog(
+      `Eliminó relación ${conn?.type || ''}`,
+      conn?.name || undefined,
+      'uml',
+    );
+  }
+
+  applyAuditFixes(event: { nodes: UmlClassNode[]; connections: UmlConnection[]; appliedCount: number }): void {
+    if (this.isReadOnly() || event.appliedCount <= 0) return;
+    this.pushUndoSnapshot();
+    const cleanNodes = this.applyAiNodesMutation(event.nodes);
+    this.nodes.set(cleanNodes);
+    const cleanConns = this.sanitizeClientConnections(event.connections || [], cleanNodes);
+    this.connections.set(cleanConns);
+    this.markAsUnsaved();
+    this.updateConnectionEndpoints();
+    setTimeout(() => this.updateConnectionEndpoints(), 50);
+    this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'audit_fix');
+    this.collaborationService.sendActivityLog(
+      `Aplicó ${event.appliedCount} corrección(es) de auditoría 1FN/2FN/3FN`,
+      undefined,
+      'uml',
+    );
   }
 
   onAiMutation(event: { nodes: UmlClassNode[]; connections: UmlConnection[]; summary: string }): void {
+    if (this.isReadOnly()) return;
     if (event.nodes && event.nodes.length > 0) {
+      this.pushUndoSnapshot();
       this.applyAiMutationWithAnimation(event.nodes, event.connections || []);
       this.collaborationService.sendDiagramSync(event.nodes, event.connections || [], 'ai_mutation');
+      this.collaborationService.sendActivityLog(
+        event.summary || 'Copilot IA actualizó el diagrama',
+        `${event.nodes.filter((n) => !n.isAnchor).length} elemento(s)`,
+        'ai',
+      );
     }
   }
 
@@ -1201,27 +1891,43 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   }
 
   private applyAiNodesMutation(targetNodes: any[]): UmlClassNode[] {
-    return targetNodes.map((n, i) => ({
-      id: n.id || `class_ai_${Date.now()}_${i}`,
-      name: n.name || `Clase_${i + 1}`,
-      position: {
-        x: n.position?.x ?? (n.positionX ?? (100 + (i % 3) * 260)),
-        y: n.position?.y ?? (n.positionY ?? (100 + Math.floor(i / 3) * 220)),
-      },
-      width: n.width || 220,
-      height: n.height,
-      isAnchor: n.isAnchor,
-      assocMainConnId: n.assocMainConnId,
-      attributes: (n.attributes || []).map((a: any) => ({
-        name: a.name,
-        type: this.normalizeDataType(a.type),
-      })),
-      methods: (n.methods || []).map((m: any) => ({
-        name: m.name,
-        parameters: m.parameters || '',
-        returnType: this.normalizeReturnType(m.returnType),
-      })),
-    }));
+    const customTypeNames = (targetNodes || [])
+      .filter((n: any) => !n?.isAnchor && n?.name)
+      .map((n: any) => String(n.name).trim());
+
+    return targetNodes.map((n, i) => {
+      const elementType = this.normalizeElementType(n.elementType);
+      return {
+        id: n.id || `class_ai_${Date.now()}_${i}`,
+        name: n.isAnchor ? (n.name || '') : (n.name || (elementType === 'NOTE' ? `Nota_${i + 1}` : `Clase_${i + 1}`)),
+        elementType,
+        stereotype: n.stereotype || (elementType === 'INTERFACE' ? 'interface' : elementType === 'ENUM' ? 'enumeration' : undefined),
+        noteContent: n.noteContent ?? undefined,
+        position: {
+          x: n.position?.x ?? (n.positionX ?? (100 + (i % 3) * 260)),
+          y: n.position?.y ?? (n.positionY ?? (100 + Math.floor(i / 3) * 220)),
+        },
+        width: n.width || 220,
+        height: n.height,
+        isAnchor: n.isAnchor,
+        assocMainConnId: n.assocMainConnId,
+        attributes: (n.attributes || []).map((a: any, idx: number) => ({
+          name: a.name,
+          type: elementType === 'ENUM' ? 'EnumLiteral' : this.normalizeDataType(a.type, customTypeNames),
+          visibility: this.normalizeVisibility(a.visibility, elementType === 'ENUM' ? '+' : '-'),
+          isPrimaryKey: Boolean(a.isPrimaryKey),
+          isNullable: a.isNullable !== undefined ? Boolean(a.isNullable) : !a.isPrimaryKey,
+          orderIndex: a.orderIndex ?? idx,
+        })),
+        methods: (n.methods || []).map((m: any, idx: number) => ({
+          name: m.name,
+          parameters: m.parameters || '',
+          returnType: this.normalizeReturnType(m.returnType, customTypeNames),
+          visibility: this.normalizeVisibility(m.visibility, '+'),
+          orderIndex: m.orderIndex ?? idx,
+        })),
+      };
+    });
   }
 
   private sanitizeClientConnections(conns: any[], validNodes: UmlClassNode[]): UmlConnection[] {
@@ -1239,7 +1945,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         sourceId: c.sourceId || `${c.sourceNodeId}_right`,
         targetId: c.targetId || `${c.targetNodeId}_left`,
         type: (c.type as UmlRelationshipType) || 'association',
-        lineStyle: (c.lineStyle as UmlLineStyle) || this.defaultLineStyle(),
+        lineStyle: this.normalizeLineStyle(c.lineStyle || this.defaultLineStyle()),
         name: c.name || undefined,
         sourceMultiplicity: c.sourceMultiplicity || '',
         targetMultiplicity: c.targetMultiplicity || '',
@@ -1265,72 +1971,87 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
   async downloadXmiFile(): Promise<void> {
     const diagId = this.currentDiagramId();
-    if (!diagId) {
-      alert('Debes guardar el diagrama antes de exportar XMI.');
+    if (diagId && !this.hasUnsavedChanges()) {
+      this.xmiService.exportDiagramXml(diagId).subscribe({
+        next: async (xmiContent: string) => {
+          await this.saveXmiContentToDisk(xmiContent);
+        },
+        error: async () => {
+          const fallbackXml = this.xmiClientSerializer.serialize(
+            this.nodes(),
+            this.connections(),
+            this.currentDiagramName(),
+            this.defaultLineStyle(),
+          );
+          await this.saveXmiContentToDisk(fallbackXml);
+        },
+      });
       return;
     }
 
-    this.xmiService.exportDiagramXml(diagId).subscribe({
-      next: async (xmiContent: string) => {
-        const rawName = this.currentDiagramName() || 'sistema_ventas';
-        const cleanName = rawName
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .replace(/[^a-z0-9_-]/g, '_')
-          .replace(/_+/g, '_');
-        const filename = `${cleanName}_ea.xmi`;
+    const clientXml = this.xmiClientSerializer.serialize(
+      this.nodes(),
+      this.connections(),
+      this.currentDiagramName(),
+      this.defaultLineStyle(),
+    );
+    await this.saveXmiContentToDisk(clientXml);
+  }
 
-        // 1. Intentar con File System Access API nativo (Abre el diálogo 'Guardar como' en Windows)
-        if ('showSaveFilePicker' in window) {
-          try {
-            const handle = await (window as any).showSaveFilePicker({
-              suggestedName: filename,
-              types: [
-                {
-                  description: 'Enterprise Architect XMI (*.xmi)',
-                  accept: {
-                    'application/vnd.sparx.xmi': ['.xmi'],
-                    'application/xml': ['.xmi', '.xml'],
-                    'text/xml': ['.xmi', '.xml'],
-                  },
-                },
-              ],
-            });
-            const writable = await handle.createWritable();
-            await writable.write(xmiContent);
-            await writable.close();
-            return;
-          } catch (err: any) {
-            if (err.name === 'AbortError') {
-              return; // Usuario canceló el diálogo
-            }
-            console.warn('showSaveFilePicker fallo, usando descarga alternativa', err);
-          }
+  private async saveXmiContentToDisk(xmiContent: string): Promise<void> {
+    const rawName = this.currentDiagramName() || 'sistema_ventas';
+    const cleanName = rawName
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9_-]/g, '_')
+      .replace(/_+/g, '_');
+    const filename = `${cleanName || 'diagrama'}_ea.xmi`;
+
+    // 1. Intentar con File System Access API nativo (Abre el diálogo 'Guardar como' en Windows)
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: filename,
+          types: [
+            {
+              description: 'Enterprise Architect XMI (*.xmi)',
+              accept: {
+                'application/vnd.sparx.xmi': ['.xmi'],
+                'application/xml': ['.xmi', '.xml'],
+                'text/xml': ['.xmi', '.xml'],
+              },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(xmiContent);
+        await writable.close();
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          return; // Usuario canceló el diálogo
         }
+        console.warn('showSaveFilePicker fallo, usando descarga alternativa', err);
+      }
+    }
 
-        // 2. Fallback infalible mediante Data URI
-        const blob = new Blob([xmiContent], { type: 'application/vnd.sparx.xmi;charset=utf-8' });
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          const a = document.createElement('a');
-          a.style.display = 'none';
-          a.href = dataUrl;
-          a.setAttribute('download', filename);
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-          }, 1000);
-        };
-        reader.readAsDataURL(blob);
-      },
-      error: (err) => {
-        console.error('Error al exportar XMI:', err);
-        alert('Error al descargar el archivo XMI');
-      },
-    });
+    // 2. Fallback infalible mediante Data URI
+    const blob = new Blob([xmiContent], { type: 'application/vnd.sparx.xmi;charset=utf-8' });
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = dataUrl;
+      a.setAttribute('download', filename);
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+      }, 1000);
+    };
+    reader.readAsDataURL(blob);
   }
 
   downloadJsonFile(): void {
@@ -1391,28 +2112,23 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     try {
       const project = JSON.parse(this.jsonContent()) as UmlDiagramProject;
       if (project.nodes && project.connections) {
-        this.nodes.set(
-          project.nodes.map((n) => ({
-            ...n,
-            width: n.width || 220,
-            attributes: (n.attributes || []).map((a) => ({
-              name: a.name,
-              type: this.normalizeDataType(a.type),
-            })),
-            methods: (n.methods || []).map((m) => ({
-              name: m.name,
-              parameters: m.parameters,
-              returnType: this.normalizeReturnType(m.returnType),
-            })),
-          })),
-        );
-        this.connections.set(project.connections);
+        this.pushUndoSnapshot();
+        const cleanNodes = this.applyAiNodesMutation(project.nodes);
+        this.nodes.set(cleanNodes);
+        const cleanConns = this.sanitizeClientConnections(project.connections, cleanNodes);
+        this.connections.set(cleanConns);
         if (project.defaultLineStyle) {
-          this.defaultLineStyle.set(project.defaultLineStyle);
+          this.defaultLineStyle.set(this.normalizeLineStyle(project.defaultLineStyle));
         }
+        this.markAsUnsaved();
         this.updateConnectionEndpoints();
         this.showJsonModal.set(false);
         this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'apply_json');
+        this.collaborationService.sendActivityLog(
+          'Importó diagrama desde JSON',
+          `${cleanNodes.filter((n) => !n.isAnchor).length} clases`,
+          'uml',
+        );
       } else {
         alert('Estructura JSON inválida: faltan nodos o conexiones.');
       }
@@ -1445,22 +2161,11 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           try {
             const ast = XmiClientParser.parse(content);
             if (ast.nodes && ast.nodes.length > 0) {
-              this.nodes.set(
-                ast.nodes.map((n: any) => ({
-                  ...n,
-                  width: n.width || 220,
-                  attributes: (n.attributes || []).map((a: any) => ({
-                    name: a.name,
-                    type: this.normalizeDataType(a.type),
-                  })),
-                  methods: (n.methods || []).map((m: any) => ({
-                    name: m.name,
-                    parameters: m.parameters || '',
-                    returnType: this.normalizeReturnType(m.returnType),
-                  })),
-                })),
-              );
-              this.connections.set(ast.connections || []);
+              this.pushUndoSnapshot();
+              const cleanNodes = this.applyAiNodesMutation(ast.nodes);
+              this.nodes.set(cleanNodes);
+              const cleanConns = this.sanitizeClientConnections(ast.connections || [], cleanNodes);
+              this.connections.set(cleanConns);
               if (ast.name) {
                 this.currentDiagramName.set(ast.name);
               }
@@ -1471,6 +2176,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
                 this.fitView();
               }, 100);
               this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'import_xmi');
+              this.collaborationService.sendActivityLog('Importó diagrama desde XMI', file.name, 'uml');
             } else {
               alert('El archivo XMI no contiene clases UML legibles.');
             }
@@ -1482,24 +2188,13 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
         } else {
           const project = JSON.parse(content) as UmlDiagramProject;
           if (project.nodes && project.connections) {
-            this.nodes.set(
-              project.nodes.map((n) => ({
-                ...n,
-                width: n.width || 220,
-                attributes: (n.attributes || []).map((a) => ({
-                  name: a.name,
-                  type: this.normalizeDataType(a.type),
-                })),
-                methods: (n.methods || []).map((m) => ({
-                  name: m.name,
-                  parameters: m.parameters,
-                  returnType: this.normalizeReturnType(m.returnType),
-                })),
-              })),
-            );
-            this.connections.set(project.connections);
+            this.pushUndoSnapshot();
+            const cleanNodes = this.applyAiNodesMutation(project.nodes);
+            this.nodes.set(cleanNodes);
+            const cleanConns = this.sanitizeClientConnections(project.connections, cleanNodes);
+            this.connections.set(cleanConns);
             if (project.defaultLineStyle) {
-              this.defaultLineStyle.set(project.defaultLineStyle);
+              this.defaultLineStyle.set(this.normalizeLineStyle(project.defaultLineStyle));
             }
             this.markAsUnsaved();
             this.updateConnectionEndpoints();
@@ -1508,6 +2203,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
               this.fitView();
             }, 100);
             this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'import_json');
+            this.collaborationService.sendActivityLog('Importó archivo JSON AST', file.name, 'uml');
           } else {
             alert('El archivo JSON no contiene un diagrama válido.');
           }
@@ -1555,5 +2251,540 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
   fitView(): void {
     this.canvas?.fitToScreen();
+  }
+
+  // -------------------------------------------------------------
+  // EJECUCIÓN DE COMANDOS DE VOZ ATÓMICOS + SINCRONIZACIÓN WS
+  // -------------------------------------------------------------
+  private findNodeByVoiceName(rawName?: string): UmlClassNode | undefined {
+    const target = (rawName || '').trim();
+    if (!target) return undefined;
+    const normalize = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '');
+
+    const nonAnchors = this.nodes().filter((n) => !n.isAnchor);
+    const exact = nonAnchors.find((n) => n.name.trim().toLowerCase() === target.toLowerCase());
+    if (exact) return exact;
+
+    const normTarget = normalize(target);
+    return nonAnchors.find((n) => normalize(n.name) === normTarget);
+  }
+
+  private computeVoiceNodePosition(): { x: number; y: number } {
+    const scale = this.canvas?.transform?.scale || 1;
+    const rawPosX = this.canvas?.transform?.position?.x || 0;
+    const rawPosY = this.canvas?.transform?.position?.y || 0;
+    const nonAnchorCount = this.nodes().filter((n) => !n.isAnchor).length;
+    const col = nonAnchorCount % 4;
+    const row = Math.floor(nonAnchorCount / 4);
+    const posX = Math.round(-rawPosX / scale + 80 + col * 265);
+    const posY = Math.round(-rawPosY / scale + 80 + row * 210);
+    return { x: Math.max(40, posX), y: Math.max(40, posY) };
+  }
+
+  private getCustomTypeNames(): string[] {
+    return this.nodes()
+      .filter((n) => !n.isAnchor && n.name && n.elementType !== 'NOTE')
+      .map((n) => n.name.trim());
+  }
+
+  executeVoiceCommand(cmd: ParsedVoiceCommand): void {
+    if (!cmd || cmd.type === 'UNKNOWN') return;
+
+    const readOnlyAllowed =
+      cmd.type === 'AUDIT_MODEL' ||
+      cmd.type === 'GENERATE_SQL' ||
+      cmd.type === 'VALIDATE_XMI' ||
+      cmd.type === 'ZOOM_IN' ||
+      cmd.type === 'ZOOM_OUT' ||
+      cmd.type === 'RESET_VIEW';
+
+    if (!readOnlyAllowed && this.isReadOnly()) {
+      this.voiceCommandService.speak('Modo espectador activo. No tienes permiso para editar el diagrama.');
+      return;
+    }
+
+    const customTypeNames = this.getCustomTypeNames();
+
+    switch (cmd.type) {
+      case 'UNDO': {
+        if (this.undoStack.length === 0) {
+          this.voiceCommandService.speak('Nada que deshacer.');
+          return;
+        }
+        this.undo();
+        this.voiceCommandService.speak('Acción deshecha.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'REDO': {
+        if (this.redoStack.length === 0) {
+          this.voiceCommandService.speak('Nada que rehacer.');
+          return;
+        }
+        this.redo();
+        this.voiceCommandService.speak('Acción rehecha.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'AUDIT_MODEL': {
+        this.showAuditModal.set(true);
+        this.voiceCommandService.speak('Abriendo auditoría de normalización.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'GENERATE_SQL': {
+        this.showSqlModal.set(true);
+        this.voiceCommandService.speak('Abriendo generador SQL DDL.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'VALIDATE_XMI': {
+        this.showXmiModal.set(true);
+        this.voiceCommandService.speak('Abriendo validador OMG XMI.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'ZOOM_IN': {
+        this.zoomIn();
+        this.voiceCommandService.speak('Zoom acercado.');
+        return;
+      }
+
+      case 'ZOOM_OUT': {
+        this.zoomOut();
+        this.voiceCommandService.speak('Zoom alejado.');
+        return;
+      }
+
+      case 'RESET_VIEW': {
+        this.resetView();
+        this.voiceCommandService.speak('Vista restablecida.');
+        return;
+      }
+
+      case 'CLEAR_CANVAS': {
+        if (this.nodes().length === 0 && this.connections().length === 0) {
+          this.voiceCommandService.speak('El lienzo ya está vacío.');
+          return;
+        }
+        if (this.nodes().some((n) => this.isNodeLockedByOther(n.id))) {
+          this.voiceCommandService.speak('No se puede limpiar porque hay clases bloqueadas por otro colaborador.');
+          return;
+        }
+        this.pushUndoSnapshot();
+        this.nodes.set([]);
+        this.connections.set([]);
+        this.selectedNodeId.set(null);
+        this.setPointerMode();
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync([], [], 'clear_canvas');
+        this.voiceCommandService.speak('Lienzo limpiado.');
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'CREATE_CLASS': {
+        const className = cmd.payload.className?.trim() || 'NuevaClase';
+        const existing = this.findNodeByVoiceName(className);
+        if (existing) {
+          this.selectedNodeId.set(existing.id);
+          this.voiceCommandService.speak(`La clase ${existing.name} ya existe en el diagrama.`);
+          return;
+        }
+
+        const inlineAttrs: UmlAttribute[] = (cmd.payload.inlineAttributes || []).map((a, idx) => ({
+          name: a.name,
+          type: this.normalizeDataType(a.type, customTypeNames),
+          visibility: a.visibility || '-',
+          isPrimaryKey: Boolean(a.isPrimaryKey),
+          isNullable: a.isPrimaryKey ? false : Boolean(a.isNullable),
+          orderIndex: idx,
+        }));
+
+        const newNode: UmlClassNode = {
+          id: `class_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: className,
+          elementType: 'CLASS',
+          position: this.computeVoiceNodePosition(),
+          width: 220,
+          attributes: inlineAttrs,
+          methods: [],
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) => [...list, newNode]);
+        this.selectedNodeId.set(newNode.id);
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_create_class');
+        this.voiceCommandService.speak(
+          inlineAttrs.length > 0
+            ? `Clase ${className} creada con ${inlineAttrs.length} atributos.`
+            : `Clase ${className} creada.`,
+        );
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'CREATE_INTERFACE': {
+        const ifaceName = cmd.payload.className?.trim() || 'IServicio';
+        const existing = this.findNodeByVoiceName(ifaceName);
+        if (existing) {
+          this.selectedNodeId.set(existing.id);
+          this.voiceCommandService.speak(`El elemento ${existing.name} ya existe en el diagrama.`);
+          return;
+        }
+
+        const newNode: UmlClassNode = {
+          id: `interface_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: ifaceName,
+          elementType: 'INTERFACE',
+          stereotype: 'interface',
+          position: this.computeVoiceNodePosition(),
+          width: 220,
+          attributes: [],
+          methods: [{ name: 'ejecutar', parameters: '', returnType: 'void', visibility: '+', orderIndex: 0 }],
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) => [...list, newNode]);
+        this.selectedNodeId.set(newNode.id);
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_create_interface');
+        this.voiceCommandService.speak(`Interfaz ${ifaceName} creada.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'CREATE_ENUM': {
+        const enumName = cmd.payload.className?.trim() || 'NuevoEnum';
+        const existing = this.findNodeByVoiceName(enumName);
+        if (existing) {
+          this.selectedNodeId.set(existing.id);
+          this.voiceCommandService.speak(`El elemento ${existing.name} ya existe en el diagrama.`);
+          return;
+        }
+
+        const rawLiterals =
+          cmd.payload.enumLiterals && cmd.payload.enumLiterals.length > 0
+            ? cmd.payload.enumLiterals
+            : ['ACTIVO', 'INACTIVO'];
+
+        const newNode: UmlClassNode = {
+          id: `enum_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: enumName,
+          elementType: 'ENUM',
+          stereotype: 'enumeration',
+          position: this.computeVoiceNodePosition(),
+          width: 220,
+          attributes: rawLiterals.map((lit, idx) => ({
+            name: lit,
+            type: 'EnumLiteral',
+            visibility: '+',
+            isPrimaryKey: false,
+            isNullable: false,
+            orderIndex: idx,
+          })),
+          methods: [],
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) => [...list, newNode]);
+        this.selectedNodeId.set(newNode.id);
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_create_enum');
+        this.voiceCommandService.speak(`Enumeración ${enumName} creada.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'CREATE_NOTE': {
+        const noteContent = cmd.payload.noteContent?.trim() || 'Nota UML';
+        const noteCount = this.nodes().filter((n) => !n.isAnchor && n.elementType === 'NOTE').length + 1;
+        const noteName = cmd.payload.noteTitle?.trim() || `Nota_${noteCount}`;
+
+        const newNode: UmlClassNode = {
+          id: `note_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: noteName,
+          elementType: 'NOTE',
+          noteContent,
+          position: this.computeVoiceNodePosition(),
+          width: 220,
+          attributes: [],
+          methods: [],
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) => [...list, newNode]);
+        this.selectedNodeId.set(newNode.id);
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_create_note');
+        this.voiceCommandService.speak(`Nota ${noteName} agregada.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'ADD_ATTRIBUTE': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré la clase ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (target.elementType === 'NOTE') {
+          this.voiceCommandService.speak('Las notas UML no admiten atributos.');
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          const lock = this.getNodeLock(target.id);
+          this.voiceCommandService.speak(`La clase ${target.name} está bloqueada por ${lock?.userName || 'otro usuario'}.`);
+          return;
+        }
+
+        const rawAttrName = cmd.payload.attributeName?.trim() || 'campo';
+        const attrName = target.elementType === 'ENUM' ? rawAttrName.toUpperCase() : rawAttrName;
+        const existingAttrs = target.attributes || [];
+        if (existingAttrs.some((a) => a.name.toLowerCase() === attrName.toLowerCase())) {
+          this.voiceCommandService.speak(`El atributo ${attrName} ya existe en ${target.name}.`);
+          return;
+        }
+
+        const isEnum = target.elementType === 'ENUM';
+        const isPk = isEnum ? false : Boolean(cmd.payload.isPrimaryKey);
+        const newAttr: UmlAttribute = {
+          name: attrName,
+          type: isEnum ? 'EnumLiteral' : this.normalizeDataType(cmd.payload.attributeType || 'String', customTypeNames),
+          visibility: isEnum ? '+' : (cmd.payload.visibility || '-'),
+          isPrimaryKey: isPk,
+          isNullable: isEnum || isPk ? false : (cmd.payload.isNullable ?? true),
+          orderIndex: existingAttrs.length,
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === target.id ? { ...n, attributes: [...(n.attributes || []), newAttr] } : n)),
+        );
+        this.markAsUnsaved();
+        this.updateConnectionEndpoints();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_add_attr');
+        this.voiceCommandService.speak(`Atributo ${attrName} agregado a ${target.name}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'ADD_METHOD': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré la clase ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (target.elementType === 'NOTE' || target.elementType === 'ENUM') {
+          this.voiceCommandService.speak('Solo clases e interfaces admiten métodos.');
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          const lock = this.getNodeLock(target.id);
+          this.voiceCommandService.speak(`La clase ${target.name} está bloqueada por ${lock?.userName || 'otro usuario'}.`);
+          return;
+        }
+
+        const methodName = cmd.payload.methodName?.trim() || 'operacion';
+        const existingMethods = target.methods || [];
+        if (existingMethods.some((m) => m.name.toLowerCase() === methodName.toLowerCase())) {
+          this.voiceCommandService.speak(`El método ${methodName} ya existe en ${target.name}.`);
+          return;
+        }
+
+        const returnType = this.normalizeReturnType(cmd.payload.returnType || 'void', customTypeNames);
+        const newMethod: UmlMethod = {
+          name: methodName,
+          parameters: '',
+          returnType,
+          visibility: cmd.payload.visibility || '+',
+          orderIndex: existingMethods.length,
+        };
+
+        this.pushUndoSnapshot();
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === target.id ? { ...n, methods: [...(n.methods || []), newMethod] } : n)),
+        );
+        this.markAsUnsaved();
+        this.updateConnectionEndpoints();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_add_method');
+        this.voiceCommandService.speak(`Método ${methodName} agregado a ${target.name}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'DELETE_ATTRIBUTE': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré la clase ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          this.voiceCommandService.speak(`La clase ${target.name} está bloqueada por otro colaborador.`);
+          return;
+        }
+
+        const attrName = (cmd.payload.attributeName || '').trim().toLowerCase();
+        const remaining = (target.attributes || []).filter((a) => a.name.toLowerCase() !== attrName);
+        if (remaining.length === (target.attributes || []).length) {
+          this.voiceCommandService.speak(`No encontré el atributo ${cmd.payload.attributeName} en ${target.name}.`);
+          return;
+        }
+
+        const reindexed = remaining.map((a, idx) => ({ ...a, orderIndex: idx }));
+        this.pushUndoSnapshot();
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === target.id ? { ...n, attributes: reindexed } : n)),
+        );
+        this.markAsUnsaved();
+        this.updateConnectionEndpoints();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_delete_attr');
+        this.voiceCommandService.speak(`Atributo ${cmd.payload.attributeName} eliminado de ${target.name}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'DELETE_METHOD': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré la clase ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          this.voiceCommandService.speak(`La clase ${target.name} está bloqueada por otro colaborador.`);
+          return;
+        }
+
+        const methodName = (cmd.payload.methodName || '').trim().toLowerCase();
+        const remaining = (target.methods || []).filter((m) => m.name.toLowerCase() !== methodName);
+        if (remaining.length === (target.methods || []).length) {
+          this.voiceCommandService.speak(`No encontré el método ${cmd.payload.methodName} en ${target.name}.`);
+          return;
+        }
+
+        const reindexed = remaining.map((m, idx) => ({ ...m, orderIndex: idx }));
+        this.pushUndoSnapshot();
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === target.id ? { ...n, methods: reindexed } : n)),
+        );
+        this.markAsUnsaved();
+        this.updateConnectionEndpoints();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_delete_method');
+        this.voiceCommandService.speak(`Método ${cmd.payload.methodName} eliminado de ${target.name}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'CONNECT_CLASSES': {
+        const sourceNode = this.findNodeByVoiceName(cmd.payload.sourceClass);
+        const targetNode = this.findNodeByVoiceName(cmd.payload.targetClass);
+        if (!sourceNode) {
+          this.voiceCommandService.speak(`No encontré la clase origen ${cmd.payload.sourceClass || ''}.`);
+          return;
+        }
+        if (!targetNode) {
+          this.voiceCommandService.speak(`No encontré la clase destino ${cmd.payload.targetClass || ''}.`);
+          return;
+        }
+        if (sourceNode.id === targetNode.id) {
+          this.voiceCommandService.speak('No se puede conectar una clase consigo misma.');
+          return;
+        }
+        if (this.isNodeLockedByOther(sourceNode.id) || this.isNodeLockedByOther(targetNode.id)) {
+          this.voiceCommandService.speak('Una de las clases está bloqueada por otro colaborador.');
+          return;
+        }
+
+        const relType = cmd.payload.relationType || 'association';
+        if (relType === 'association_class') {
+          this.createAssociationClassBetween(sourceNode, targetNode, true);
+          this.voiceCommandService.speak(`Clase asociativa creada entre ${sourceNode.name} y ${targetNode.name}.`);
+          this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+          return;
+        }
+
+        this.pushUndoSnapshot();
+        const optimal = this.getOptimalConnectorId(sourceNode, targetNode);
+        const newConn: UmlConnection = {
+          id: `conn_voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          sourceNodeId: sourceNode.id,
+          targetNodeId: targetNode.id,
+          sourceId: optimal.sourceId,
+          targetId: optimal.targetId,
+          type: relType,
+          lineStyle: this.defaultLineStyle(),
+          sourceMultiplicity: cmd.payload.sourceMultiplicity ?? '',
+          targetMultiplicity: cmd.payload.targetMultiplicity ?? '',
+          name: cmd.payload.relationLabel || undefined,
+        };
+
+        this.connections.update((list) => [...list, newConn]);
+        this.markAsUnsaved();
+        this.updateConnectionEndpoints();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_connect');
+        this.voiceCommandService.speak(`Relación ${relType} creada entre ${sourceNode.name} y ${targetNode.name}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'RENAME_CLASS': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré la clase ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          this.voiceCommandService.speak(`La clase ${target.name} está bloqueada por otro colaborador.`);
+          return;
+        }
+
+        const nextName = cmd.payload.newClassName?.trim();
+        if (!nextName) return;
+
+        const conflict = this.findNodeByVoiceName(nextName);
+        if (conflict && conflict.id !== target.id) {
+          this.voiceCommandService.speak(`Ya existe otro elemento llamado ${conflict.name}.`);
+          return;
+        }
+
+        const oldName = target.name;
+        this.pushUndoSnapshot();
+        this.nodes.update((list) =>
+          list.map((n) => (n.id === target.id ? { ...n, name: nextName } : n)),
+        );
+        this.markAsUnsaved();
+        this.collaborationService.sendDiagramSync(this.nodes(), this.connections(), 'voice_rename');
+        this.voiceCommandService.speak(`${oldName} renombrado a ${nextName}.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+
+      case 'DELETE_CLASS': {
+        const target = this.findNodeByVoiceName(cmd.payload.className);
+        if (!target) {
+          this.voiceCommandService.speak(`No encontré el elemento ${cmd.payload.className || ''}.`);
+          return;
+        }
+        if (this.isNodeLockedByOther(target.id)) {
+          this.voiceCommandService.speak(`${target.name} está bloqueado por otro colaborador.`);
+          return;
+        }
+        this.removeClass(target.id, undefined, true);
+        this.voiceCommandService.speak(`${target.name} eliminado.`);
+        this.collaborationService.sendActivityLog(cmd.description, cmd.rawTranscript, 'voice');
+        return;
+      }
+    }
   }
 }

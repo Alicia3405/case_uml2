@@ -105,6 +105,24 @@
 
         </form>
 
+        <!-- Accesos rápidos para pruebas multiusuario WebSocket (4 roles seed) -->
+        <div class="mt-5 pt-4 border-t border-[#6B5A52]/25 dark:border-[#283256]">
+          <p class="text-[10px] font-mono font-bold uppercase tracking-wider text-[#6B5A52] dark:text-slate-400 mb-2">
+            Demo Colaborativa (Pass: Pass1234!)
+          </p>
+          <div class="grid grid-cols-2 gap-1.5">
+            @for (demo of demoAccounts; track demo.email) {
+              <button
+                type="button"
+                (click)="fillDemoAccount(demo.email, demo.pass)"
+                class="text-left px-2 py-1.5 text-[10px] font-mono bg-white/80 dark:bg-[#0E1225] border border-[#6B5A52]/40 dark:border-[#2D3762] hover:border-[#6B5A52] dark:hover:border-indigo-400 text-[#2A201B] dark:text-slate-200 transition-colors cursor-pointer truncate">
+                <span class="font-bold block truncate">{{ demo.label }}</span>
+                <span class="text-[9px] text-[#6B5A52] dark:text-slate-400 block truncate">{{ demo.email }}</span>
+              </button>
+            }
+          </div>
+        </div>
+
         <!-- Enlace a Registro -->
         <div class="mt-6 pt-4 border-t border-[#6B5A52]/30 dark:border-[#283256] text-center">
           <p class="text-xs text-[#6B5A52] dark:text-slate-400">

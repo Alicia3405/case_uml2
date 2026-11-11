@@ -59,4 +59,22 @@ describe('DiagramToolboxComponent', () => {
     component.closeToolbox.emit();
     expect(closed).toBe(true);
   });
+
+  it('should emit addElement with CLASS, INTERFACE, ENUM and NOTE types', () => {
+    const emittedTypes: string[] = [];
+    let addClassCalled = false;
+
+    component.addElement.subscribe((t) => emittedTypes.push(t));
+    component.addClass.subscribe(() => {
+      addClassCalled = true;
+    });
+
+    component.onAddElement('CLASS');
+    component.onAddElement('INTERFACE');
+    component.onAddElement('ENUM');
+    component.onAddElement('NOTE');
+
+    expect(emittedTypes).toEqual(['CLASS', 'INTERFACE', 'ENUM', 'NOTE']);
+    expect(addClassCalled).toBe(true);
+  });
 });
