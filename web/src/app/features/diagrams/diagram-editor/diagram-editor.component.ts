@@ -106,7 +106,10 @@ import {
   UML_VISIBILITY_OPTIONS,
 } from '../../../core/models/diagram.model';
 
-import { DiagramAppbarComponent } from './components/diagram-appbar/diagram-appbar.component';
+import {
+  DiagramAppbarComponent,
+  AutosaveState,
+} from './components/diagram-appbar/diagram-appbar.component';
 import { DiagramToolboxComponent } from './components/diagram-toolbox/diagram-toolbox.component';
 import { AiAssistantPanelComponent } from './components/ai-assistant-panel/ai-assistant-panel.component';
 import { UserProfileModalComponent } from './components/user-profile-modal/user-profile-modal.component';
@@ -131,6 +134,18 @@ interface DiagramSnapshot {
   nodes: UmlClassNode[];
   connections: UmlConnection[];
   defaultLineStyle: UmlLineStyle;
+}
+
+interface LocalDiagramDraft {
+  version: number;
+  diagramId: string | null;
+  name: string;
+  defaultLineStyle: UmlLineStyle;
+  nodes: UmlClassNode[];
+  connections: UmlConnection[];
+  savedAtMs: number;
+  knownServerMs?: number;
+  pendingSync: boolean;
 }
 
 @Component({
@@ -227,12 +242,113 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   currentDiagramName = signal<string>('Diagrama UML');
   saveSuccessMessage = signal<boolean>(false);
   hasUnsavedChanges = signal<boolean>(false);
+  autosaveState = signal<AutosaveState>('idle');
   zoomLevel = signal<number>(100);
 
-  markAsUnsaved(): void {
-    if (!this.isReadOnly()) {
-      this.hasUnsavedChanges.set(true);
+  private readonly LOCAL_DRAFT_PREFIX = 'uml_studio_draft_';
+  private readonly PROJECT_LAST_DIAGRAM_PREFIX = 'uml_project_last_diagram_';
+  private localEditRevision = 0;
+  private currentServerVersionMs = 0;
+  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private getDraftStorageKey(diagramId?: string | null): string {
+    return `${this.LOCAL_DRAFT_PREFIX}${diagramId || 'local_workspace'}`;
+  }
+
+  private persistLocalDraft(pendingSync: boolean): void {
+    try {
+      const diagramId = this.currentDiagramId();
+      const draft: LocalDiagramDraft = {
+        version: 1,
+        diagramId,
+        name: this.currentDiagramName(),
+        defaultLineStyle: this.defaultLineStyle(),
+        nodes: this.nodes(),
+        connections: this.connections(),
+        savedAtMs: Date.now(),
+        knownServerMs: this.currentServerVersionMs || undefined,
+        pendingSync,
+      };
+      localStorage.setItem(this.getDraftStorageKey(diagramId), JSON.stringify(draft));
+    } catch {
+      // Ignorar si el almacenamiento local está lleno o bloqueado por el navegador
     }
+  }
+
+  private readLocalDraft(diagramId?: string | null): LocalDiagramDraft | null {
+    try {
+      const raw = localStorage.getItem(this.getDraftStorageKey(diagramId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as LocalDiagramDraft;
+      if (!parsed || !Array.isArray(parsed.nodes)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private restoreFromDraft(draft: LocalDiagramDraft): void {
+    if (draft.name) {
+      this.currentDiagramName.set(draft.name);
+    }
+    this.defaultLineStyle.set(this.normalizeLineStyle(draft.defaultLineStyle));
+    const cleanNodes = this.applyAiNodesMutation(draft.nodes || []);
+    this.nodes.set(cleanNodes);
+    const cleanConns = this.sanitizeClientConnections(draft.connections || [], cleanNodes);
+    this.connections.set(cleanConns);
+    this.updateConnectionEndpoints();
+    setTimeout(() => this.updateConnectionEndpoints(), 60);
+  }
+
+  private restoreStandaloneDraftIfPresent(): void {
+    const draft = this.readLocalDraft(null);
+    if (!draft) {
+      this.autosaveState.set('local');
+      return;
+    }
+    this.restoreFromDraft(draft);
+    this.clearHistory();
+    this.hasUnsavedChanges.set(false);
+    this.autosaveState.set('local');
+    if ((draft.nodes || []).length > 0 || (draft.connections || []).length > 0) {
+      this.showPermissionToast('💾 Diagrama local restaurado automáticamente desde caché.');
+    }
+  }
+
+  private scheduleAutosave(delayMs = 1200): void {
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    if (this.isReadOnly() || !this.currentDiagramId()) return;
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      this.autosaveState.set('local');
+      return;
+    }
+
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = null;
+      this.saveToBackend(true);
+    }, delayMs);
+  }
+
+  markAsUnsaved(): void {
+    if (this.isReadOnly()) return;
+    this.localEditRevision += 1;
+    this.hasUnsavedChanges.set(true);
+    this.persistLocalDraft(true);
+
+    const diagramId = this.currentDiagramId();
+    if (!diagramId) {
+      this.autosaveState.set('local');
+      return;
+    }
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    this.autosaveState.set(isOffline ? 'local' : 'pending');
+    this.scheduleAutosave(1200);
   }
 
   // Rol y permisos granulares del usuario actual en el proyecto
@@ -362,6 +478,7 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           list.map((n) => (n.id === data.nodeId ? { ...n, position: data.position } : n)),
         );
         this.updateConnectionEndpoints();
+        this.persistLocalDraft(this.hasUnsavedChanges());
       }),
     );
 
@@ -371,7 +488,8 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           this.aiAnnotations.set(data.aiAnnotations);
         }
         if (data.action === 'ai_mutation' && data.nodes) {
-          this.applyAiMutationWithAnimation(data.nodes, data.connections || []);
+          this.applyAiMutationWithAnimation(data.nodes, data.connections || [], false);
+          this.persistLocalDraft(this.hasUnsavedChanges());
         } else if (data.nodes) {
           const cleanNodes = this.applyAiNodesMutation(data.nodes);
           this.nodes.set(cleanNodes);
@@ -379,9 +497,21 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           this.connections.set(cleanConns);
           this.updateConnectionEndpoints();
           setTimeout(() => this.updateConnectionEndpoints(), 60);
+
           if (data.action === 'snapshot_restore') {
+            if (this.autosaveTimer) {
+              clearTimeout(this.autosaveTimer);
+              this.autosaveTimer = null;
+            }
             this.hasUnsavedChanges.set(false);
+            this.autosaveState.set(this.currentDiagramId() ? 'saved' : 'local');
+            this.persistLocalDraft(false);
             this.showPermissionToast('♻️ Un colaborador restauró un checkpoint del diagrama.');
+          } else if (data.action === 'save' && !this.hasUnsavedChanges()) {
+            this.autosaveState.set(this.currentDiagramId() ? 'saved' : 'local');
+            this.persistLocalDraft(false);
+          } else {
+            this.persistLocalDraft(this.hasUnsavedChanges());
           }
         }
       }),
@@ -480,7 +610,12 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
     this.subs.add(
       this.route.queryParams.subscribe((params) => {
-        const diagramId = params['diagramId'];
+        if (this.autosaveTimer) {
+          clearTimeout(this.autosaveTimer);
+          this.autosaveTimer = null;
+        }
+
+        const diagramId = params['diagramId'] || this.route.snapshot?.params?.['id'];
         const projectId = params['projectId'];
         const projectName = params['projectName'];
 
@@ -495,6 +630,13 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
         if (diagramId) {
           this.currentDiagramId.set(diagramId);
+          if (projectId) {
+            try {
+              localStorage.setItem(`${this.PROJECT_LAST_DIAGRAM_PREFIX}${projectId}`, diagramId);
+            } catch {
+              // noop
+            }
+          }
           this.loadDiagramFromBackend(diagramId);
         } else if (projectId) {
           this.diagramService.loadDiagramsByProject(projectId).subscribe({
@@ -503,11 +645,64 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
                 const first = diagrams[0];
                 this.currentDiagramId.set(first.id);
                 this.currentDiagramName.set(first.name);
+                try {
+                  localStorage.setItem(`${this.PROJECT_LAST_DIAGRAM_PREFIX}${projectId}`, first.id);
+                } catch {
+                  // noop
+                }
                 this.loadDiagramFromBackend(first.id);
+              } else {
+                const fallbackName = projectName || 'Diagrama Principal';
+                this.diagramService.createDiagram(projectId, fallbackName).subscribe({
+                  next: (created) => {
+                    this.currentDiagramId.set(created.id);
+                    this.currentDiagramName.set(created.name);
+                    try {
+                      localStorage.setItem(`${this.PROJECT_LAST_DIAGRAM_PREFIX}${projectId}`, created.id);
+                    } catch {
+                      // noop
+                    }
+                    this.loadDiagramFromBackend(created.id);
+                  },
+                  error: (createErr) => this.handleProjectAccessError(createErr),
+                });
               }
             },
-            error: (err) => this.handleProjectAccessError(err),
+            error: (err) => {
+              const isNetworkOrServer = !err?.status || err.status === 0 || err.status >= 500;
+              if (isNetworkOrServer) {
+                let cachedDiagramId: string | null = null;
+                try {
+                  cachedDiagramId = localStorage.getItem(
+                    `${this.PROJECT_LAST_DIAGRAM_PREFIX}${projectId}`,
+                  );
+                } catch {
+                  cachedDiagramId = null;
+                }
+                const draft = cachedDiagramId ? this.readLocalDraft(cachedDiagramId) : null;
+                if (draft && cachedDiagramId) {
+                  this.currentDiagramId.set(cachedDiagramId);
+                  this.restoreFromDraft(draft);
+                  this.clearHistory();
+                  this.hasUnsavedChanges.set(Boolean(draft.pendingSync));
+                  this.autosaveState.set('local');
+                  this.showPermissionToast(
+                    '📡 Sin conexión: diagrama restaurado desde la caché local.',
+                  );
+                  return;
+                }
+              }
+              this.handleProjectAccessError(err);
+            },
           });
+        } else {
+          if (this.collaborationService.currentDiagramId()) {
+            this.collaborationService.leaveRoom();
+            this.collaborationService.currentDiagramId.set(null);
+          }
+          this.currentDiagramId.set(null);
+          this.currentProjectId.set(null);
+          this.restoreStandaloneDraftIfPresent();
         }
       }),
     );
@@ -525,6 +720,10 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     if (this.permissionToastTimer) {
       clearTimeout(this.permissionToastTimer);
       this.permissionToastTimer = null;
+    }
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
     }
     if (this.accessRedirectTimer) {
       clearTimeout(this.accessRedirectTimer);
@@ -721,12 +920,36 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
   loadDiagramFromBackend(diagramId: string): void {
     this.diagramService.loadDiagram(diagramId).subscribe({
       next: (diagram) => {
+        const serverMs = Date.parse(diagram.lastModifiedAt || diagram.updatedAt || '') || 0;
+        this.currentServerVersionMs = serverMs;
+
         this.applyLoadedDiagramDto(diagram);
         this.collaborationService.joinRoom(diagramId);
 
         this.clearHistory();
-        this.hasUnsavedChanges.set(false);
         this.focusedAnnotationNodeId.set(null);
+
+        const draft = this.readLocalDraft(diagramId);
+        const hasUnsyncedDraft = Boolean(
+          draft &&
+            draft.pendingSync &&
+            (!serverMs || !draft.knownServerMs
+              ? draft.savedAtMs > serverMs
+              : draft.knownServerMs >= serverMs || draft.savedAtMs > serverMs),
+        );
+
+        if (hasUnsyncedDraft && draft && !this.isReadOnly()) {
+          this.restoreFromDraft(draft);
+          this.localEditRevision += 1;
+          this.hasUnsavedChanges.set(true);
+          this.autosaveState.set('pending');
+          this.scheduleAutosave(500);
+          this.showPermissionToast('💾 Recuperados cambios locales recientes; sincronizando...');
+        } else {
+          this.hasUnsavedChanges.set(false);
+          this.autosaveState.set('saved');
+          this.persistLocalDraft(false);
+        }
 
         // Cargar resumen multi-sesión ("lo que pasó desde tu última visita") sin bloquear el canvas
         this.collaborationService.getResumeBundle(diagramId).subscribe({
@@ -745,7 +968,21 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
           this.updateConnectionEndpoints();
         }, 50);
       },
-      error: (err) => this.handleProjectAccessError(err),
+      error: (err) => {
+        const isNetworkOrServer = !err?.status || err.status === 0 || err.status >= 500;
+        if (isNetworkOrServer) {
+          const draft = this.readLocalDraft(diagramId);
+          if (draft) {
+            this.restoreFromDraft(draft);
+            this.clearHistory();
+            this.hasUnsavedChanges.set(Boolean(draft.pendingSync));
+            this.autosaveState.set('local');
+            this.showPermissionToast('📡 Sin conexión: diagrama cargado desde caché local.');
+            return;
+          }
+        }
+        this.handleProjectAccessError(err);
+      },
     });
   }
 
@@ -900,9 +1137,16 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     );
   }
 
+  @HostListener('window:online')
+  onWindowOnline(): void {
+    if (this.currentDiagramId() && this.hasUnsavedChanges() && !this.isReadOnly()) {
+      this.saveToBackend(true);
+    }
+  }
+
   @HostListener('window:beforeunload', ['$event'])
   onBeforeUnload(event: BeforeUnloadEvent): void {
-    if (this.hasUnsavedChanges()) {
+    if (this.hasUnsavedChanges() && Boolean(this.currentDiagramId())) {
       event.preventDefault();
       event.returnValue = '';
     }
@@ -1029,24 +1273,49 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     };
   }
 
-  saveToBackend(): void {
+  saveToBackend(isAuto = false): void {
     if (this.isReadOnly()) return;
+
+    if (!isAuto && this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
 
     const diagramId = this.currentDiagramId();
     if (!diagramId) {
-      this.openExportModal();
+      this.persistLocalDraft(false);
+      this.hasUnsavedChanges.set(false);
+      this.autosaveState.set('local');
+      if (!isAuto) {
+        this.saveSuccessMessage.set(true);
+        setTimeout(() => this.saveSuccessMessage.set(false), 2000);
+        this.showPermissionToast('💾 Diagrama respaldado automáticamente en caché local.');
+      }
       return;
     }
 
+    if (isAuto) {
+      if (!this.hasUnsavedChanges()) return;
+      if (this.diagramService.isSaving()) {
+        this.scheduleAutosave(800);
+        return;
+      }
+    }
+
+    const revAtStart = this.localEditRevision;
     const payload = this.buildSaveAstPayload();
+    this.autosaveState.set('saving');
 
     this.diagramService.saveAst(diagramId, payload).subscribe({
       next: (savedDiagram) => {
-        this.hasUnsavedChanges.set(false);
+        const nextServerMs =
+          Date.parse(savedDiagram?.lastModifiedAt || savedDiagram?.updatedAt || '') || Date.now();
+        this.currentServerVersionMs = nextServerMs;
+
         if (savedDiagram?.aiAnnotations) {
           this.aiAnnotations.set(savedDiagram.aiAnnotations);
         }
-        if (savedDiagram?.nodes?.length) {
+        if (savedDiagram?.nodes?.length && !this.pendingDragSnapshot) {
           const savedMap = new Map(savedDiagram.nodes.map((sn) => [sn.id, sn]));
           this.nodes.update((list) =>
             list.map((n) => {
@@ -1064,23 +1333,42 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
             }),
           );
         }
-        this.saveSuccessMessage.set(true);
-        setTimeout(() => this.saveSuccessMessage.set(false), 2500);
-        this.collaborationService.sendDiagramSync(
-          this.nodes(),
-          this.connections(),
-          'save',
-          this.aiAnnotations(),
-        );
-        this.collaborationService.sendActivityLog(
-          'Guardó el diagrama en la base de datos',
-          `${this.nodes().filter((n) => !n.isAnchor).length} elementos`,
-          'uml',
-        );
+
+        if (this.localEditRevision === revAtStart) {
+          this.hasUnsavedChanges.set(false);
+          this.autosaveState.set('saved');
+          this.persistLocalDraft(false);
+        } else {
+          this.hasUnsavedChanges.set(true);
+          this.autosaveState.set('pending');
+          this.persistLocalDraft(true);
+          this.scheduleAutosave(800);
+        }
+
+        if (!isAuto) {
+          this.saveSuccessMessage.set(true);
+          setTimeout(() => this.saveSuccessMessage.set(false), 2500);
+          this.collaborationService.sendDiagramSync(
+            this.nodes(),
+            this.connections(),
+            'save',
+            this.aiAnnotations(),
+          );
+          this.collaborationService.sendActivityLog(
+            'Guardó el diagrama en la base de datos',
+            `${this.nodes().filter((n) => !n.isAnchor).length} elementos`,
+            'uml',
+          );
+        }
       },
       error: (err) => {
-        const msg = err?.error?.message || err?.message || 'No se pudo guardar el diagrama';
-        this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+        this.autosaveState.set(isOffline ? 'local' : 'error');
+        this.persistLocalDraft(true);
+        if (!isAuto) {
+          const msg = err?.error?.message || err?.message || 'No se pudo guardar el diagrama';
+          this.showPermissionToast(`⚠️ ${Array.isArray(msg) ? msg.join(', ') : msg}`);
+        }
       },
     });
   }
@@ -2096,12 +2384,18 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     this.showWhiteboardNotesPanel.set(true);
   }
 
-  private applyAiMutationWithAnimation(targetNodes: UmlClassNode[], targetConns: UmlConnection[]): void {
+  private applyAiMutationWithAnimation(
+    targetNodes: UmlClassNode[],
+    targetConns: UmlConnection[],
+    markUnsaved = true,
+  ): void {
     const cleanNodes = this.applyAiNodesMutation(targetNodes);
     this.nodes.set(cleanNodes);
     const cleanConns = this.sanitizeClientConnections(targetConns, cleanNodes);
     this.connections.set(cleanConns);
-    this.markAsUnsaved();
+    if (markUnsaved) {
+      this.markAsUnsaved();
+    }
     this.updateConnectionEndpoints();
     setTimeout(() => {
       this.updateConnectionEndpoints();
@@ -3168,6 +3462,10 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
     }
     this.collaborationService.sendChatMessage(
       '@IA resume los avances recientes entre sesiones, quién modificó qué clases y sugiere cómo continuar hoy',
+      {
+        currentNodes: this.nodes(),
+        currentConnections: this.connections(),
+      },
     );
   }
 
@@ -3201,8 +3499,12 @@ export class DiagramEditorComponent implements OnInit, OnDestroy {
 
     if (this.hasUnsavedChanges()) {
       this.diagramService.saveAst(diagramId, this.buildSaveAstPayload()).subscribe({
-        next: () => {
+        next: (savedDiagram) => {
+          this.currentServerVersionMs =
+            Date.parse(savedDiagram?.lastModifiedAt || savedDiagram?.updatedAt || '') || Date.now();
           this.hasUnsavedChanges.set(false);
+          this.autosaveState.set('saved');
+          this.persistLocalDraft(false);
           this.collaborationService.sendDiagramSync(
             this.nodes(),
             this.connections(),

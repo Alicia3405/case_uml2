@@ -42,6 +42,41 @@ export class UserRepository {
     return toPlainEntities<User>(docs);
   }
 
+  async searchActiveUsers(
+    query: string,
+    excludeUserId?: string,
+    limit = 8,
+  ): Promise<Array<{ id: string; fullName: string; email: string }>> {
+    const cleanQuery = (query || '').trim();
+    const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 15);
+    const filter: Record<string, any> = {
+      isActive: { $ne: false },
+    };
+
+    if (excludeUserId) {
+      filter._id = { $ne: excludeUserId };
+    }
+
+    if (cleanQuery.length > 0) {
+      const escaped = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      filter.$or = [{ fullName: regex }, { email: regex }];
+    }
+
+    const docs = await this.userModel
+      .find(filter)
+      .select('_id fullName email')
+      .sort({ fullName: 1 })
+      .limit(safeLimit)
+      .exec();
+
+    return toPlainEntities<User>(docs).map((u) => ({
+      id: u.id,
+      fullName: u.fullName,
+      email: u.email,
+    }));
+  }
+
   async existsByEmail(email: string): Promise<boolean> {
     const normalized = (email || '').trim().toLowerCase();
     if (!normalized) return false;

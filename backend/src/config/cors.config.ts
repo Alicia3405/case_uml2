@@ -9,6 +9,7 @@ export function getAllowedCorsOrigins(): string[] {
     .filter(Boolean);
 
   const defaultOrigins = [
+    'https://kellyuml.duckdns.org',
     'https://casestudio.duckdns.org',
     'https://julioficctcr7.github.io',
     'http://localhost:4200',

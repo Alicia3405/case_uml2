@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, tap, map, catchError, throwError } from 'rxjs';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Observable, tap, map, catchError, throwError, of } from 'rxjs';
 import {
   Project,
   CreateProjectRequest,
@@ -11,6 +11,13 @@ import {
 } from '../models/project.model';
 import { ApiResponse } from '../models/auth.model';
 import { environment } from '../../../environments/environment';
+
+export interface UserSearchResult {
+  id: string;
+  fullName: string;
+  email: string;
+  alreadyMember?: boolean;
+}
 
 @Injectable({
   providedIn: 'root',
@@ -56,6 +63,20 @@ export class ProjectService {
         this.isLoading.set(false);
         return throwError(() => err);
       }),
+    );
+  }
+
+  searchUsers(query: string, projectId?: string): Observable<UserSearchResult[]> {
+    const clean = query.trim();
+    if (clean.length < 2) {
+      return of([]);
+    }
+    let params = new HttpParams().set('q', clean);
+    if (projectId) {
+      params = params.set('projectId', projectId);
+    }
+    return this.http.get<ApiResponse<UserSearchResult[]> | UserSearchResult[]>(`${this.apiUrl}/users/search`, { params }).pipe(
+      map((res: any) => (res && typeof res === 'object' && 'data' in res ? res.data : res) || []),
     );
   }
 

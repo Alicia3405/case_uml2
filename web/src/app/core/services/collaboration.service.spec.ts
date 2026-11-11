@@ -365,5 +365,28 @@ describe('CollaborationService', () => {
         aiAnnotations: sampleAnnotations,
       }),
     );
+
+    service.appendLocalChatMessage({
+      userId: 'ai-copilot',
+      userName: '✨ Copilot IA',
+      senderType: 'ai',
+      aiMode: 'ADVISE',
+      message: 'Respuesta IA local',
+    });
+    expect(service.chatMessages().some((m) => m.message === 'Respuesta IA local')).toBe(true);
+
+    socketState.handlers.get('connect')?.();
+    service.sendChatMessage('@IA revisa Producto', {
+      currentNodes: [{ id: 'n1', name: 'Producto', position: { x: 0, y: 0 }, width: 220, attributes: [], methods: [] }],
+      currentConnections: [],
+    });
+    expect(socketState.emitMock).toHaveBeenCalledWith(
+      'chat_message',
+      expect.objectContaining({
+        diagramId: DIAG_1_ID,
+        message: '@IA revisa Producto',
+        currentNodes: [expect.objectContaining({ name: 'Producto' })],
+      }),
+    );
   });
 });

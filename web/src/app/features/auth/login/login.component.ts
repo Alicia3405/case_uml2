@@ -48,7 +48,7 @@ export class LoginComponent {
 
     this.authService.login(this.loginForm.value).subscribe({
       next: () => {
-        this.router.navigate(['/diagram']);
+        this.router.navigate(['/projects']);
       },
     });
   }

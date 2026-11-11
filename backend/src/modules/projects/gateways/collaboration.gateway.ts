@@ -745,6 +745,8 @@ export class CollaborationGateway
       userName: string;
       message: string;
       color?: string;
+      currentNodes?: any[];
+      currentConnections?: any[];
     },
   ): Promise<void> {
     const cleanMessage = data.message?.trim();
@@ -795,49 +797,55 @@ export class CollaborationGateway
         cleanMessage.replace(/(?:^|\s)@(?:ia|copilot)[:,]?\s*/gi, ' ').trim() ||
         'Revisa el diagrama actual y aporta observaciones para el equipo.';
       try {
-        const diagram = this.diagramRepository
+        const hasClientNodes = Array.isArray(data.currentNodes);
+        const hasClientConns = Array.isArray(data.currentConnections);
+        const diagram = (!hasClientNodes || !hasClientConns) && this.diagramRepository
           ? await this.diagramRepository.findById(data.diagramId)
           : null;
-        const currentNodes = (diagram?.nodes || []).map((n) => ({
-          id: n.id,
-          name: n.name,
-          elementType: n.elementType,
-          stereotype: n.stereotype,
-          noteContent: n.noteContent,
-          position: { x: Number(n.positionX) || 0, y: Number(n.positionY) || 0 },
-          width: n.width,
-          height: n.height ?? undefined,
-          isAnchor: n.isAnchor,
-          assocMainConnId: n.assocMainConnId ?? undefined,
-          createdByName: n.createdByName ?? null,
-          lastModifiedByName: n.lastModifiedByName ?? null,
-          attributes: (n.attributes || []).map((a) => ({
-            name: a.name,
-            type: a.type,
-            visibility: a.visibility,
-            isPrimaryKey: a.isPrimaryKey,
-            isNullable: a.isNullable,
-          })),
-          methods: (n.methods || []).map((m) => ({
-            name: m.name,
-            parameters: m.parameters,
-            returnType: m.returnType,
-            visibility: m.visibility,
-          })),
-        }));
-        const currentConnections = (diagram?.connections || []).map((c) => ({
-          id: c.id,
-          sourceNodeId: c.sourceNodeId,
-          targetNodeId: c.targetNodeId,
-          sourceId: c.sourceId,
-          targetId: c.targetId,
-          type: c.type,
-          lineStyle: c.lineStyle,
-          name: c.name ?? undefined,
-          sourceMultiplicity: c.sourceMultiplicity,
-          targetMultiplicity: c.targetMultiplicity,
-          assocAnchorNodeId: c.assocAnchorNodeId ?? undefined,
-        }));
+        const currentNodes = hasClientNodes
+          ? data.currentNodes!
+          : (diagram?.nodes || []).map((n) => ({
+              id: n.id,
+              name: n.name,
+              elementType: n.elementType,
+              stereotype: n.stereotype,
+              noteContent: n.noteContent,
+              position: { x: Number(n.positionX) || 0, y: Number(n.positionY) || 0 },
+              width: n.width,
+              height: n.height ?? undefined,
+              isAnchor: n.isAnchor,
+              assocMainConnId: n.assocMainConnId ?? undefined,
+              createdByName: n.createdByName ?? null,
+              lastModifiedByName: n.lastModifiedByName ?? null,
+              attributes: (n.attributes || []).map((a) => ({
+                name: a.name,
+                type: a.type,
+                visibility: a.visibility,
+                isPrimaryKey: a.isPrimaryKey,
+                isNullable: a.isNullable,
+              })),
+              methods: (n.methods || []).map((m) => ({
+                name: m.name,
+                parameters: m.parameters,
+                returnType: m.returnType,
+                visibility: m.visibility,
+              })),
+            }));
+        const currentConnections = hasClientConns
+          ? data.currentConnections!
+          : (diagram?.connections || []).map((c) => ({
+              id: c.id,
+              sourceNodeId: c.sourceNodeId,
+              targetNodeId: c.targetNodeId,
+              sourceId: c.sourceId,
+              targetId: c.targetId,
+              type: c.type,
+              lineStyle: c.lineStyle,
+              name: c.name ?? undefined,
+              sourceMultiplicity: c.sourceMultiplicity,
+              targetMultiplicity: c.targetMultiplicity,
+              assocAnchorNodeId: c.assocAnchorNodeId ?? undefined,
+            }));
 
         await this.aiAssistantService.processTextPrompt({
           prompt: cleanPrompt,

@@ -6,6 +6,8 @@
     [diagramId]="currentDiagramId()"
     [isSaving]="diagramService.isSaving()"
     [saveSuccessMessage]="saveSuccessMessage()"
+    [autosaveState]="autosaveState()"
+    [hasUnsavedChanges]="hasUnsavedChanges()"
     [isReadOnly]="isReadOnly()"
     [canUndo]="canUndo()"
     [canRedo]="canRedo()"
@@ -751,9 +753,14 @@
       [projectId]="currentProjectId()"
       [projectCreatedBy]="projectCreatedBy()"
       [currentUserRole]="currentUserRole()"
+      [isReadOnly]="isReadOnly()"
       [members]="projectMembers()"
+      [currentNodes]="nodes()"
+      [currentConnections]="connections()"
       (closePanel)="isCollabPanelOpen.set(false)"
-      (membersChanged)="refreshProjectPermissions()">
+      (membersChanged)="refreshProjectPermissions()"
+      (applyMutation)="onAiMutation($event)"
+      (annotationsCreated)="onAnnotationsCreated($event)">
     </app-collaboration-panel>
 
   </div>
@@ -761,14 +768,21 @@
   <!-- 3. [STATUSBAR INFERIOR] -->
   <footer class="bg-gradient-to-r from-slate-800 to-slate-900 text-slate-300 border-t border-slate-950 px-3 py-1 text-[11px] font-mono flex items-center justify-between z-30 shrink-0">
     <div class="flex items-center gap-3">
-      <!-- Estado WebSockets Yjs -->
+      <!-- Estado WebSockets Yjs / Modo Local -->
       <div class="flex items-center gap-1.5">
-        <span
-          class="w-2 h-2 rounded-full"
-          [ngClass]="collaborationService.isConnected() ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'"></span>
-        <span [ngClass]="collaborationService.isConnected() ? 'text-emerald-300' : 'text-red-400'">
-          {{ collaborationService.isConnected() ? ('editor.statusbar.connected' | translate) : ('editor.statusbar.disconnected' | translate) }}
-        </span>
+        @if (!currentDiagramId()) {
+          <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+          <span class="text-sky-300">
+            {{ 'editor.statusbar.localMode' | translate }}
+          </span>
+        } @else {
+          <span
+            class="w-2 h-2 rounded-full"
+            [ngClass]="collaborationService.isConnected() ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'"></span>
+          <span [ngClass]="collaborationService.isConnected() ? 'text-emerald-300' : 'text-red-400'">
+            {{ collaborationService.isConnected() ? ('editor.statusbar.connected' | translate) : ('editor.statusbar.disconnected' | translate) }}
+          </span>
+        }
       </div>
 
       <div class="h-3 w-px bg-slate-700"></div>

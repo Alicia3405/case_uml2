@@ -842,7 +842,7 @@ describe('AiAssistantService', () => {
       expect(res.models.length).toBe(3);
       expect(res.models.some(m => m.id === 'qwen2.5:3b' && m.isLocal)).toBe(true);
       expect(res.models.some(m => m.id === 'qwen2.5-coder:7b' && m.isLocal)).toBe(true);
-      expect(res.models.some(m => m.id === 'gemini-3.5-flash-lite' && !m.isLocal)).toBe(true);
+      expect(res.models.some(m => m.id === 'gemini-2.5-flash' && !m.isLocal)).toBe(true);
     });
 
     it('debe devolver solo Vertex AI si Ollama no está disponible', async () => {
@@ -852,7 +852,7 @@ describe('AiAssistantService', () => {
       const res = await service.getAvailableModels();
       expect(res.isOllamaAvailable).toBe(false);
       expect(res.models.length).toBe(1);
-      expect(res.models[0].id).toBe('gemini-3.5-flash-lite');
+      expect(res.models[0].id).toBe('gemini-2.5-flash');
       expect(res.defaultProvider).toBe('vertex');
     });
   });
@@ -1134,6 +1134,149 @@ describe('AiAssistantService', () => {
         userId,
         expect.objectContaining({ actorType: 'ai', recordEvent: false }),
       );
+    });
+
+    it('debe ejecutar mutaciones estructurales con el motor determinista offline cuando Vertex/Ollama fallan', async () => {
+      vertexAiService.generateContent.mockRejectedValue(
+        new Error('Could not load the default credentials.'),
+      );
+
+      const res1 = await service.processTextPrompt({
+        prompt: 'Agrega la clase FacturaDetalle con cantidad Integer, precio_unitario Double y subtotal Double',
+        diagramId: 'diag-offline-1',
+        currentNodes: [],
+        currentConnections: [],
+      });
+
+      expect(res1.success).toBe(true);
+      expect(res1.mutatedDiagram).toBe(true);
+      expect(res1.providerUsed).toBe('deterministic-engine');
+      expect(res1.nodes).toHaveLength(1);
+      expect(res1.nodes[0].name).toBe('FacturaDetalle');
+      expect(res1.nodes[0].attributes.map((a: any) => `${a.name}:${a.type}`)).toEqual([
+        'cantidad:Integer',
+        'precio_unitario:Double',
+        'subtotal:Double',
+      ]);
+
+      const res2 = await service.processTextPrompt({
+        prompt: 'Crea una tabla Producto con atributos id UUID, nombre String, precio Double y relacionala con Usuarios con multiplicidad *',
+        diagramId: 'diag-offline-2',
+        currentNodes: [
+          {
+            id: 'node_usr',
+            name: 'Usuario',
+            position: { x: 100, y: 80 },
+            attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+            methods: [],
+          },
+        ],
+        currentConnections: [],
+      });
+
+      expect(res2.success).toBe(true);
+      expect(res2.mutatedDiagram).toBe(true);
+      expect(res2.nodes.map((n: any) => n.name)).toContain('Producto');
+      expect(res2.nodes.map((n: any) => n.name)).toContain('Usuario');
+      expect(res2.connections).toHaveLength(1);
+      expect(res2.connections[0].sourceMultiplicity).toBe('*');
+      expect(res2.connections[0].targetMultiplicity).toBe('1');
+
+      // 3. Crear clase con paréntesis: "Crea clase Pedido (id UUID, total Double)"
+      const res3 = await service.processTextPrompt({
+        prompt: 'Crea clase Pedido (id UUID, total Double)',
+        diagramId: 'diag-offline-3',
+        currentNodes: [],
+        currentConnections: [],
+      });
+      expect(res3.success).toBe(true);
+      expect(res3.mutatedDiagram).toBe(true);
+      expect(res3.nodes[0].name).toBe('Pedido');
+      expect(res3.nodes[0].attributes.map((a: any) => `${a.name}:${a.type}`)).toEqual([
+        'id:UUID',
+        'total:Double',
+      ]);
+
+      // 4. Agregar atributo omitiendo la palabra "atributos": "Agrega email String a Usuario"
+      const res4 = await service.processTextPrompt({
+        prompt: 'Agrega email String a Usuario',
+        diagramId: 'diag-offline-4',
+        currentNodes: [
+          {
+            id: 'node_usr',
+            name: 'Usuario',
+            position: { x: 100, y: 80 },
+            attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+            methods: [],
+          },
+        ],
+        currentConnections: [],
+      });
+      expect(res4.success).toBe(true);
+      expect(res4.mutatedDiagram).toBe(true);
+      expect(res4.nodes[0].attributes.map((a: any) => a.name)).toContain('email');
+
+      // 5. Relación directa sin verbo inicial: "Composición 1 a 1..* entre Factura y FacturaDetalle"
+      expect(service.classifyIntent('Composición 1 a 1..* entre Factura y FacturaDetalle')).toBe('MUTATE');
+      const res5 = await service.processTextPrompt({
+        prompt: 'Composición 1 a 1..* entre Factura y FacturaDetalle',
+        diagramId: 'diag-offline-5',
+        currentNodes: [
+          {
+            id: 'node_fac',
+            name: 'Factura',
+            position: { x: 100, y: 80 },
+            attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+            methods: [],
+          },
+          {
+            id: 'node_det',
+            name: 'FacturaDetalle',
+            position: { x: 400, y: 80 },
+            attributes: [{ name: 'id', type: 'UUID', isPrimaryKey: true }],
+            methods: [],
+          },
+        ],
+        currentConnections: [],
+      });
+      expect(res5.success).toBe(true);
+      expect(res5.mutatedDiagram).toBe(true);
+      expect(res5.connections).toHaveLength(1);
+      expect(res5.connections[0].type).toBe('composition');
+      expect(res5.connections[0].sourceMultiplicity).toBe('1');
+      expect(res5.connections[0].targetMultiplicity).toBe('1..*');
+    });
+
+    it('debe devolver asesoría específica por clase offline en modo ADVISE cuando se menciona Producto', async () => {
+      vertexAiService.generateContent.mockRejectedValueOnce(
+        new Error('Could not load the default credentials.'),
+      );
+
+      const currentNodes = [
+        {
+          id: 'node_prod',
+          name: 'Producto',
+          position: { x: 100, y: 80 },
+          attributes: [{ name: 'nombre', type: 'String' }],
+          methods: [],
+        },
+      ];
+
+      const res = await service.processTextPrompt({
+        prompt: 'dime cómo mejorar la clase Producto',
+        diagramId: 'diag-advise-offline',
+        authorUserName: 'Luis',
+        currentNodes,
+        currentConnections: [],
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.intentMode).toBe('ADVISE');
+      expect(res.mutatedDiagram).toBe(false);
+      expect(res.message).toContain('Producto');
+      expect(res.message).toContain('precio');
+      expect(res.suggestions && res.suggestions.length).toBeGreaterThan(0);
+      expect(res.suggestions!.some((s) => s.targetClassName === 'Producto')).toBe(true);
     });
   });
 });

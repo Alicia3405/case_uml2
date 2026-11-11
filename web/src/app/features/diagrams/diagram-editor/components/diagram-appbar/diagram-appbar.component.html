@@ -156,24 +156,51 @@
         }
       </div>
 
-      <!-- Botón Guardar en Base de Datos (Oculto o Deshabilitado para VIEWER) -->
-      @if (diagramId() && !isReadOnly()) {
-        <button
-          (click)="saveDiagram.emit()"
-          [disabled]="isSaving()"
-          [title]="'appbar.saveTooltip' | translate"
-          class="bg-[#0078D4] hover:bg-[#106EBE] dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-mono text-xs font-bold px-2.5 py-1 rounded flex items-center gap-1.5 border border-[#005A9E] dark:border-blue-700 shadow-xs transition-all cursor-pointer disabled:opacity-50">
-          @if (isSaving()) {
-            <span class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-            <span>{{ 'appbar.saving' | translate }}</span>
-          } @else if (saveSuccessMessage()) {
-            <ng-icon name="heroCheck" class="text-xs text-green-300"></ng-icon>
-            <span class="text-green-200">{{ 'appbar.saved' | translate }}</span>
-          } @else {
-            <ng-icon name="heroCloudArrowUp" class="text-sm"></ng-icon>
-            <span>{{ 'appbar.save' | translate }}</span>
-          }
-        </button>
+      <!-- Estado de Autoguardado Continuo + Sincronización Manual (Oculto para VIEWER) -->
+      @if (!isReadOnly()) {
+        @if (diagramId()) {
+          <button
+            (click)="saveDiagram.emit()"
+            [disabled]="isSaving() || autosaveState() === 'saving'"
+            [title]="'appbar.saveTooltip' | translate"
+            [ngClass]="
+              isSaving() || autosaveState() === 'saving'
+                ? 'bg-[#0078D4] border-[#005A9E] text-white'
+                : autosaveState() === 'error'
+                  ? 'bg-rose-800/90 hover:bg-rose-700 border-rose-500 text-rose-100'
+                  : autosaveState() === 'local'
+                    ? 'bg-amber-800/90 hover:bg-amber-700 border-amber-500 text-amber-100'
+                    : autosaveState() === 'pending'
+                      ? 'bg-[#163D6C] hover:bg-[#1E4F8A] border-amber-400/70 text-amber-200'
+                      : 'bg-emerald-900/70 hover:bg-emerald-800/80 border-emerald-500/60 text-emerald-200'
+            "
+            class="font-mono text-[11px] font-bold px-2.5 py-1 rounded flex items-center gap-1.5 border shadow-xs transition-all cursor-pointer disabled:opacity-75 whitespace-nowrap">
+            @if (isSaving() || autosaveState() === 'saving') {
+              <span class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0"></span>
+              <span>{{ 'appbar.autosave.saving' | translate }}</span>
+            } @else if (autosaveState() === 'error') {
+              <ng-icon name="heroExclamationTriangle" class="text-xs text-rose-200 shrink-0"></ng-icon>
+              <span>{{ 'appbar.autosave.error' | translate }}</span>
+            } @else if (autosaveState() === 'local') {
+              <ng-icon name="heroCloudArrowUp" class="text-xs text-amber-200 shrink-0"></ng-icon>
+              <span>{{ 'appbar.autosave.local' | translate }}</span>
+            } @else if (autosaveState() === 'pending' || hasUnsavedChanges()) {
+              <span class="w-2 h-2 rounded-full bg-amber-300 animate-pulse shrink-0"></span>
+              <span>{{ 'appbar.autosave.pending' | translate }}</span>
+            } @else {
+              <ng-icon name="heroCheck" class="text-xs text-emerald-300 shrink-0"></ng-icon>
+              <span>{{ 'appbar.autosave.saved' | translate }}</span>
+            }
+          </button>
+        } @else {
+          <button
+            (click)="saveDiagram.emit()"
+            [title]="'appbar.autosave.localTooltip' | translate"
+            class="bg-emerald-950/75 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-500/50 font-mono text-[11px] font-bold px-2.5 py-1 rounded flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap">
+            <ng-icon name="heroCheck" class="text-xs text-emerald-300 shrink-0"></ng-icon>
+            <span>{{ 'appbar.autosave.local' | translate }}</span>
+          </button>
+        }
       }
 
       <!-- 1. Botón Exportar ▾ -->

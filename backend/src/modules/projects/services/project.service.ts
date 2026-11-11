@@ -3,15 +3,25 @@ import {
   NotFoundException,
   ForbiddenException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { ProjectRepository } from '../repositories/project.repository';
 import { ProjectMemberRepository } from '../repositories/project-member.repository';
 import { DiagramRepository } from '../../diagrams/repositories/diagram.repository';
+import { UserRepository } from '../../auth/repositories/user.repository';
 import { CreateProjectDto } from '../dtos/create-project.dto';
 import { UpdateProjectDto } from '../dtos/update-project.dto';
 import { ProjectResponseDto } from '../dtos/project-response.dto';
 import { ProjectRole } from '../entities/project-role.enum';
+import { isValidUuid } from '../../../common/utils/mongoose-entity.util';
+
+export interface SearchUserCandidate {
+  id: string;
+  fullName: string;
+  email: string;
+  alreadyMember: boolean;
+}
 
 @Injectable()
 export class ProjectService {
@@ -20,6 +30,8 @@ export class ProjectService {
     private readonly projectMemberRepository: ProjectMemberRepository,
     @Inject(forwardRef(() => DiagramRepository))
     private readonly diagramRepository: DiagramRepository,
+    @Optional()
+    private readonly userRepository?: UserRepository,
   ) { }
 
   async create(dto: CreateProjectDto, userId: string): Promise<ProjectResponseDto> {
@@ -60,6 +72,30 @@ export class ProjectService {
   async findAllForUser(userId: string): Promise<ProjectResponseDto[]> {
     const projects = await this.projectRepository.findAllForUser(userId);
     return projects.map((p) => ProjectResponseDto.fromEntity(p, userId));
+  }
+
+  async searchUsers(
+    query: string,
+    currentUserId: string,
+    projectId?: string,
+  ): Promise<SearchUserCandidate[]> {
+    const clean = (query || '').trim();
+    if (!this.userRepository || clean.length < 2) return [];
+
+    const candidates = (await this.userRepository.searchActiveUsers(clean, currentUserId, 8)) || [];
+    let memberUserIds = new Set<string>();
+
+    if (projectId && isValidUuid(projectId)) {
+      const members = (await this.projectMemberRepository.findByProjectId(projectId)) || [];
+      memberUserIds = new Set(members.map((m) => m.userId));
+    }
+
+    return candidates.map((u) => ({
+      id: u.id,
+      fullName: u.fullName,
+      email: u.email,
+      alreadyMember: memberUserIds.has(u.id),
+    }));
   }
 
   async findOne(id: string, userId: string): Promise<ProjectResponseDto> {

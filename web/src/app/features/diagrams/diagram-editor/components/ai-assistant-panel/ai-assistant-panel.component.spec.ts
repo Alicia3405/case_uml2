@@ -197,5 +197,57 @@ describe('AiAssistantPanelComponent', () => {
     expect(emittedNodesCount).toBe(1);
     expect(component.getIntentBadgeLabel('DISCIPLINE')).toContain('Disciplina OMT/UML');
   });
+
+  it('debe activar automáticamente Tesseract OCR 2D cuando falla la visión del servidor', async () => {
+    const fixture = TestBed.createComponent(AiAssistantPanelComponent);
+    fixture.componentRef.setInput('diagramId', 'diag-1');
+    fixture.detectChanges();
+
+    const component = fixture.componentInstance;
+    const ocrService = TestBed.inject(LocalOcrVisionService) as any;
+    ocrService.parseDiagramImageOffline = vi.fn().mockResolvedValueOnce({
+      success: true,
+      nodes: [
+        {
+          id: 'ocr-n1',
+          name: 'Producto',
+          elementType: 'CLASS',
+          position: { x: 100, y: 100 },
+          width: 220,
+          attributes: [{ name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false }],
+          methods: [],
+        },
+      ],
+      connections: [],
+      rawTextExtracted: 'Producto',
+      modelUsed: 'Tesseract.js OCR 2D (Offline)',
+      processingMs: 120,
+    });
+
+    let emittedNodes: any[] = [];
+    component.applyMutation.subscribe((ev) => {
+      emittedNodes = ev.nodes;
+    });
+
+    mockAiService.sendVisionPrompt.mockReturnValueOnce(
+      of({
+        success: false,
+        action: 'error',
+        message: 'Could not load the default credentials',
+        nodes: [],
+        connections: [],
+        changesSummary: 'Error de visión',
+      }),
+    );
+
+    component.attachedImageBase64.set('data:image/png;base64,iVBORw0KGgo=');
+    component.applyAiPrompt();
+
+    await vi.waitFor(() => {
+      expect(ocrService.parseDiagramImageOffline).toHaveBeenCalledWith('data:image/png;base64,iVBORw0KGgo=');
+      expect(emittedNodes).toHaveLength(1);
+    });
+    expect(emittedNodes[0].name).toBe('Producto');
+  });
 });
 

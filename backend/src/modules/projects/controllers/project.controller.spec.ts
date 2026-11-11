@@ -45,6 +45,9 @@ describe('ProjectController', () => {
       findOne: jest.fn().mockResolvedValue(mockProjectResponse),
       update: jest.fn().mockResolvedValue({ ...mockProjectResponse, name: 'Updated' }),
       remove: jest.fn().mockResolvedValue({ success: true, message: 'Deleted' }),
+      searchUsers: jest.fn().mockResolvedValue([
+        { id: 'u2', fullName: 'Ana López', email: 'ana@uagrm.edu.bo', alreadyMember: false },
+      ]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -87,5 +90,12 @@ describe('ProjectController', () => {
     const result = await controller.remove(mockProjectResponse.id, mockUser);
     expect(service.remove).toHaveBeenCalledWith(mockProjectResponse.id, mockUser.id);
     expect(result).toEqual({ success: true, message: 'Deleted' });
+  });
+
+  it('debe buscar usuarios para autocompletar colaboradores', async () => {
+    const result = await controller.searchUsers('ana', mockProjectResponse.id, mockUser);
+    expect(service.searchUsers).toHaveBeenCalledWith('ana', mockUser.id, mockProjectResponse.id);
+    expect(result).toHaveLength(1);
+    expect(result[0].email).toBe('ana@uagrm.edu.bo');
   });
 });

@@ -32,7 +32,10 @@ import {
   heroChatBubbleLeftRight,
   heroBell,
   heroClock,
+  heroExclamationTriangle,
 } from '@ng-icons/heroicons/outline';
+
+export type AutosaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'local' | 'error';
 import { AuthService } from '../../../../../core/services/auth.service';
 import { CollaborationService } from '../../../../../core/services/collaboration.service';
 import { UserGuideService } from '../../../../../core/services/user-guide.service';
@@ -75,6 +78,7 @@ import { ThemeToggleComponent } from '../../../../../core/components/theme-toggl
       heroChatBubbleLeftRight,
       heroBell,
       heroClock,
+      heroExclamationTriangle,
     }),
   ],
   templateUrl: './diagram-appbar.component.html',
@@ -95,6 +99,8 @@ export class DiagramAppbarComponent {
   readonly diagramId = input<string | null>(null);
   readonly isSaving = input<boolean>(false);
   readonly saveSuccessMessage = input<boolean>(false);
+  readonly autosaveState = input<AutosaveState>('idle');
+  readonly hasUnsavedChanges = input<boolean>(false);
   readonly isReadOnly = input<boolean>(false);
   readonly canUndo = input<boolean>(false);
   readonly canRedo = input<boolean>(false);

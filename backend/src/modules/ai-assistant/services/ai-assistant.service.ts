@@ -220,7 +220,7 @@ export class AiAssistantService {
     private readonly diagramService?: DiagramService,
     @Optional()
     private readonly yjsSyncService?: YjsSyncService,
-  ) {}
+  ) { }
 
   getOllamaRuntimeConfig(): OllamaRuntimeConfig {
     return this.ollamaAiService.getRuntimeConfig();
@@ -245,7 +245,7 @@ export class AiAssistantService {
   async getAvailableModels(): Promise<AvailableAiModelsResponse> {
     const isOllamaAvail = await this.ollamaAiService.isAvailable();
     const configuredProvider = (this.configService.get<string>('AI_PROVIDER') || 'vertex').toLowerCase() as 'ollama' | 'vertex';
-    const configuredGeminiModel = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
+    const configuredGeminiModel = this.configService.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
     const configuredOllamaModel = this.ollamaAiService.getModelName();
 
     const models: AiModelOption[] = [];
@@ -348,12 +348,12 @@ export class AiAssistantService {
       );
 
     const isReview =
-      /\b(?:revisa(?:r)?|eval[uú]a(?:r)?|analiza(?:r)?|critica(?:r)?|diagnostica(?:r)?|inspecciona(?:r)?|qu[eé]\s+(?:le\s+)?falta|detecta(?:r)?\s+errores?|encuentras?\s+(?:alg[uú]n\s+)?error)\b/i.test(
+      /\b(?:revis(?:a(?:r)?|e)|eval[uú](?:a(?:r)?|e)|analiz(?:a(?:r)?|e)|critic(?:a(?:r)?|e)|diagnostic(?:a(?:r)?|e)|inspeccion(?:a(?:r)?|e)|qu[eé]\s+(?:le\s+)?falta|detecta(?:r)?\s+errores?|encuentras?\s+(?:alg[uú]n\s+)?error)\b/i.test(
         p,
       );
 
     const startsLikeConsultativeQuestion =
-      /^(?:[¿?]\s*)?(?:qu[eé]\s+(?:opinas|piensas|te\s+parece|recomiendas|sugieres|atributo|relaci[oó]n|multiplicidad|tipo|falta|hizo|cambi[oó])|crees\s+que|conviene|deber[ií]a(?:mos)?|podr[ií]amos\s+(?:evaluar|pensar|revisar|debatir)|ser[ií]a\s+mejor|c[oó]mo\s+(?:puedo|podemos|modelar|dise[nñ]ar|funciona|se\s+usa)|para\s+qu[eé]\s+sirve|por\s+qu[eé]|cu[aá]l\s+es\s+la\s+diferencia|explica(?:me|nos)?|sugiere(?:me|nos)?|recomienda(?:me|nos)?|opina|ayuda(?:me|nos)?\s+a\s+(?:pensar|decidir|dise[nñ]ar)|no\s+recuerdo)\b/i.test(
+      /^(?:[¿?]\s*)?(?:qu[eé]\s+(?:opinas|piensas|te\s+parece|recomiendas|sugieres|mejorar|atributo|relaci[oó]n|multiplicidad|tipo|falta|hizo|cambi[oó])|crees\s+que|conviene|deber[ií]a(?:mos)?|podr[ií]amos\s+(?:evaluar|pensar|revisar|debatir)|ser[ií]a\s+mejor|c[oó]mo\s+(?:puedo|podemos|mejorar|modelar|dise[nñ]ar|funciona|se\s+usa)|para\s+qu[eé]\s+sirve|por\s+qu[eé]|cu[aá]l\s+es\s+la\s+diferencia|explica(?:me|nos)?|sugiere(?:me|nos)?|recomienda(?:me|nos)?|dime\s+(?:c[oó]mo|qu[eé])|opina|ayuda(?:me|nos)?\s+a\s+(?:pensar|decidir|dise[nñ]ar|mejorar)|no\s+recuerdo)\b/i.test(
         p,
       );
 
@@ -369,6 +369,11 @@ export class AiAssistantService {
 
     const hasImperativeMutation =
       /(?:^|[\s,;:«])(?:crea(?:r)?|agrega(?:r)?|a[ñn]ad(?:e|ir)|inserta(?:r)?|elimina(?:r)?|borra(?:r)?|quita(?:r)?|remueve|suprime|destruye|modifica(?:r)?|actualiza(?:r)?|cambia(?:r)?|renombra(?:r)?|conecta(?:r)?|relaciona(?:r)?|vincula(?:r)?|genera(?:r)?|resuelve|vac[ií]a(?:r)?|limpia(?:r)?|convierte|create|add|delete|remove|update|rename)\b/i.test(
+        p,
+      );
+
+    const hasStandaloneRelationCommand =
+      /^(?:composici[oó]n|agregaci[oó]n|asociaci[oó]n|herencia|generalizaci[oó]n|realizaci[oó]n|dependencia|relaci[oó]n)\b.*\bentre\s+[A-Za-z_][A-Za-z0-9_]*\s+y\s+[A-Za-z_]/i.test(
         p,
       );
 
@@ -398,7 +403,7 @@ export class AiAssistantService {
       return 'REVIEW';
     }
 
-    if (isPoliteImperativeCommand || hasImperativeMutation) {
+    if (isPoliteImperativeCommand || hasImperativeMutation || hasStandaloneRelationCommand) {
       return 'MUTATE';
     }
 
@@ -599,7 +604,7 @@ export class AiAssistantService {
     return {
       responseText: text,
       providerUsed: 'vertex',
-      modelUsed: this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview',
+      modelUsed: this.configService.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash',
     };
   }
 
@@ -822,7 +827,17 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
         broadcastedToRoom: dto.broadcastToRoom !== false,
       };
     } catch (err: any) {
-      this.logger.error(`Error procesando prompt de texto IA: ${err.message || err}`);
+      this.logger.warn(
+        `Motor IA no disponible para texto (${err?.message || err}); evaluando motor determinista local...`,
+      );
+      const deterministicResult = await this.tryDeterministicMutateFallback(
+        dto,
+        currentNodes,
+        currentConnections,
+      );
+      if (deterministicResult) {
+        return deterministicResult;
+      }
       return this.handleFallbackPrompt(dto, currentNodes, currentConnections);
     } finally {
       for (const node of targetNodesToLock) {
@@ -891,12 +906,12 @@ REGLAS OBLIGATORIAS AL GENERAR LA RESPUESTA:
 
     const resumeContextBlock = resumeBundle
       ? `\nDATOS DE SESIÓN Y CONTRIBUCIONES:\n${JSON.stringify({
-          diagramName: resumeBundle.diagram?.name,
-          sessionNumber: resumeBundle.session?.sessionNumber,
-          activeDateKeys: resumeBundle.session?.activeDateKeys,
-          sinceLastVisit: resumeBundle.sinceLastVisit,
-          contributorStats: resumeBundle.contributorStats,
-        }, null, 2)}\n`
+        diagramName: resumeBundle.diagram?.name,
+        sessionNumber: resumeBundle.session?.sessionNumber,
+        activeDateKeys: resumeBundle.session?.activeDateKeys,
+        sinceLastVisit: resumeBundle.sinceLastVisit,
+        contributorStats: resumeBundle.contributorStats,
+      }, null, 2)}\n`
       : '';
 
     const userContent = `
@@ -908,24 +923,24 @@ NODOS SELECCIONADOS COMO FOCO: ${selectedNodesInfo.length > 0 ? selectedNodesInf
 
 ESTADO ACTUAL DEL DIAGRAMA (${currentNodes.filter((n) => !n.isAnchor).length} elementos visibles, ${currentConnections.length} conexiones):
 ${JSON.stringify(currentNodes.filter((n) => !n.isAnchor).map((n) => ({
-  id: n.id,
-  name: n.name,
-  elementType: n.elementType || 'CLASS',
-  createdBy: n.createdByName || null,
-  lastModifiedBy: n.lastModifiedByName || null,
-  attributes: n.attributes,
-  methods: n.methods,
-})), null, 2)}
+      id: n.id,
+      name: n.name,
+      elementType: n.elementType || 'CLASS',
+      createdBy: n.createdByName || null,
+      lastModifiedBy: n.lastModifiedByName || null,
+      attributes: n.attributes,
+      methods: n.methods,
+    })), null, 2)}
 
 CONEXIONES:
 ${JSON.stringify(currentConnections.map((c) => ({
-  sourceNodeId: c.sourceNodeId,
-  targetNodeId: c.targetNodeId,
-  type: c.type,
-  name: c.name,
-  sourceMultiplicity: c.sourceMultiplicity,
-  targetMultiplicity: c.targetMultiplicity,
-})), null, 2)}
+      sourceNodeId: c.sourceNodeId,
+      targetNodeId: c.targetNodeId,
+      type: c.type,
+      name: c.name,
+      sourceMultiplicity: c.sourceMultiplicity,
+      targetMultiplicity: c.targetMultiplicity,
+    })), null, 2)}
 
 ALERTAS DETERMINISTAS OMT/UML DETECTADAS:
 ${JSON.stringify(disciplineAlerts, null, 2)}
@@ -976,14 +991,20 @@ CONSULTA DE ${requesterName.toUpperCase()}:
     }
 
     if (!responseMessage) {
-      responseMessage = this.buildDeterministicConsultativeMessage(
+      const consultative = this.buildDeterministicConsultativeMessage(
         intentMode,
         requesterName,
         currentNodes,
         currentConnections,
         disciplineAlerts,
         resumeBundle,
+        prompt,
+        dto.selectedNodeIds,
       );
+      responseMessage = consultative.message;
+      if (parsedSuggestions.length === 0 && consultative.suggestions.length > 0) {
+        parsedSuggestions = consultative.suggestions;
+      }
       providerUsed = providerUsed || 'omt-analyzer';
       modelUsed = modelUsed || 'deterministic-advisor';
     }
@@ -1157,10 +1178,22 @@ CONSULTA DE ${requesterName.toUpperCase()}:
     currentConnections: UmlConnection[],
     alerts: DisciplineAlertItem[],
     resumeBundle: any,
-  ): string {
-    const classNames = currentNodes
-      .filter((n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE')
-      .map((n) => n.name);
+    prompt = '',
+    selectedNodeIds: string[] = [],
+  ): {
+    message: string;
+    suggestions: Array<{
+      severity: 'idea' | 'warning' | 'discipline';
+      targetClassName?: string;
+      title: string;
+      message: string;
+      suggestedPrompt?: string;
+    }>;
+  } {
+    const realNodes = currentNodes.filter(
+      (n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE',
+    );
+    const classNames = realNodes.map((n) => n.name);
 
     if (intentMode === 'RECAP') {
       if (resumeBundle) {
@@ -1169,20 +1202,252 @@ CONSULTA DE ${requesterName.toUpperCase()}:
           .map((c: any) => `${c.userName} (${c.totalEvents} acciones)`)
           .join(', ');
         const recent = (resumeBundle.sinceLastVisit?.highlights || []).slice(0, 3).join(' | ');
-        return `Hola ${requesterName} y equipo: el diagrama "${resumeBundle.diagram?.name || 'actual'}" está en la sesión #${resumeBundle.session?.sessionNumber || 1} con ${classNames.length} clases y ${currentConnections.length} relaciones. ${statsText ? `Aportes acumulados: ${statsText}.` : ''} ${recent ? `Últimos hitos: ${recent}.` : 'El lienzo no se ha modificado.'}`;
+        return {
+          message: `Hola ${requesterName} y equipo: el diagrama "${resumeBundle.diagram?.name || 'actual'}" está en la sesión #${resumeBundle.session?.sessionNumber || 1} con ${classNames.length} clases y ${currentConnections.length} relaciones. ${statsText ? `Aportes acumulados: ${statsText}.` : ''} ${recent ? `Últimos hitos: ${recent}.` : 'El lienzo no se ha modificado.'}`,
+          suggestions: [],
+        };
       }
-      return `Resumen rápido para el equipo: actualmente tenemos ${classNames.length} clase(s) (${classNames.join(', ') || 'lienzo vacío'}) y ${currentConnections.length} relación(es).`;
+      return {
+        message: `Resumen rápido para el equipo: actualmente tenemos ${classNames.length} clase(s) (${classNames.join(', ') || 'lienzo vacío'}) y ${currentConnections.length} relación(es).`,
+        suggestions: [],
+      };
+    }
+
+    const focusNode = this.findFocusNodeForAdvice(realNodes, prompt, selectedNodeIds);
+
+    if (focusNode) {
+      return this.buildClassSpecificAdvice(
+        intentMode,
+        requesterName,
+        focusNode,
+        realNodes,
+        currentConnections,
+        alerts,
+      );
     }
 
     if (intentMode === 'DISCIPLINE' || intentMode === 'REVIEW') {
       if (alerts.length === 0) {
-        return `Revisé las ${classNames.length} clase(s) y ${currentConnections.length} relación(es) del diagrama y cumplen correctamente con las reglas OMT/UML básicas (sin atributos duplicados, M:N pendientes ni clases sin identificador).`;
+        const methodMissingCount = realNodes.filter(
+          (n) => (n.elementType || 'CLASS') === 'CLASS' && (n.methods || []).length === 0,
+        ).length;
+        const extraTip =
+          methodMissingCount > 0 && realNodes.length > 0
+            ? ` Sugerencia arquitectónica: ${methodMissingCount} clase(s) aún no tienen métodos de comportamiento de dominio definidos.`
+            : '';
+        return {
+          message: `Revisé las ${classNames.length} clase(s) y ${currentConnections.length} relación(es) del diagrama y cumplen correctamente con las reglas OMT/UML básicas (sin atributos duplicados, M:N pendientes ni clases sin identificador).${extraTip}`,
+          suggestions: [],
+        };
       }
       const bullets = alerts.slice(0, 3).map((a) => `• ${a.message}`).join(' ');
-      return `${requesterName}, revisé el diagrama bajo reglas OMT/UML y encontré ${alerts.length} punto(s) para revisar en equipo (sin alterar el lienzo): ${bullets}`;
+      return {
+        message: `${requesterName}, revisé el diagrama bajo reglas OMT/UML y encontré ${alerts.length} punto(s) para revisar en equipo (sin alterar el lienzo): ${bullets}`,
+        suggestions: [],
+      };
     }
 
-    return `${requesterName}, analicé el diagrama actual (${classNames.length} clases: ${classNames.slice(0, 5).join(', ') || 'ninguna aún'}). No modifiqué nada del lienzo; si desean que agregue clases, atributos o relaciones concretas, indíquenme el cambio exacto o apliquen una sugerencia de la pizarra.`;
+    if (realNodes.length === 0) {
+      return {
+        message: `${requesterName}, el lienzo está vacío aún. Puedes pedirme crear tus primeras entidades directamente (ej: "Crea una tabla Producto con atributos id UUID, nombre String, precio Double") o dibujar una clase desde el Toolbox.`,
+        suggestions: [
+          {
+            severity: 'idea',
+            title: 'Crear entidad inicial Producto',
+            message: 'Agrega una entidad base con PK, nombre y precio para comenzar a modelar.',
+            suggestedPrompt:
+              'Crea una tabla Producto con atributos id UUID, nombre String, precio Double',
+          },
+        ],
+      };
+    }
+
+    const classAlerts = alerts.slice(0, 2);
+    const generalTips: string[] = [];
+    if (classAlerts.length > 0) {
+      generalTips.push(...classAlerts.map((a) => `• ${a.message}`));
+    }
+    const withoutMethods = realNodes.filter((n) => (n.methods || []).length === 0);
+    if (withoutMethods.length > 0) {
+      generalTips.push(
+        `• Algunas clases (${withoutMethods.slice(0, 3).map((n) => n.name).join(', ')}) no tienen operaciones/métodos de negocio todavía; agrega solo lógica de dominio relevante (evita getters/setters triviales).`,
+      );
+    }
+
+    return {
+      message: `${requesterName}, analicé las ${classNames.length} clase(s) del diagrama (${classNames.slice(0, 5).join(', ')})${generalTips.length > 0 ? `: ${generalTips.join(' ')}` : '. El diseño luce consistente; indícame sobre qué clase quieres profundizar o qué cambio deseas aplicar.'}`,
+      suggestions: classAlerts.map((a) => ({
+        severity: a.severity,
+        targetClassName: a.className,
+        title: `${a.code}: ${a.className || 'Diagrama'}`,
+        message: a.message,
+        suggestedPrompt: a.suggestedPrompt,
+      })),
+    };
+  }
+
+  private findFocusNodeForAdvice(
+    nodes: UmlClassNode[],
+    prompt: string,
+    selectedNodeIds: string[] = [],
+  ): UmlClassNode | undefined {
+    const cleanPrompt = this.normalizeForFuzzy(prompt);
+    if (cleanPrompt) {
+      // Buscar coincidencia explícita del nombre de la clase en el prompt (priorizando nombres más largos)
+      const sortedByLen = [...nodes].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+      for (const node of sortedByLen) {
+        const nodeNorm = this.normalizeForFuzzy(node.name);
+        if (nodeNorm.length >= 3 && cleanPrompt.includes(nodeNorm)) {
+          return node;
+        }
+      }
+      // También revisar palabras sueltas del prompt con findNodeFuzzy
+      const tokens = prompt
+        .replace(/[^\p{L}0-9_\s]/gu, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 3);
+      for (const token of tokens) {
+        if (/^(?:clase|tabla|entidad|como|cómo|mejorar|revisar|atributos|metodos|métodos|dime|para|sobre|esta|este)$/i.test(token)) {
+          continue;
+        }
+        const match = this.findNodeFuzzy(nodes, token);
+        if (match) return match;
+      }
+    }
+    if (selectedNodeIds.length === 1) {
+      return nodes.find((n) => n.id === selectedNodeIds[0]);
+    }
+    return undefined;
+  }
+
+  private buildClassSpecificAdvice(
+    intentMode: Exclude<AiResolvedIntentMode, 'MUTATE'>,
+    requesterName: string,
+    target: UmlClassNode,
+    allNodes: UmlClassNode[],
+    allConnections: UmlConnection[],
+    alerts: DisciplineAlertItem[],
+  ) {
+    const attrs = target.attributes || [];
+    const methods = target.methods || [];
+    const attrNamesLower = new Set(attrs.map((a) => (a.name || '').trim().toLowerCase()));
+    const hasPk = attrs.some(
+      (a) => a.isPrimaryKey || /^(id|.*_id|codigo|uuid)$/i.test((a.name || '').trim()),
+    );
+    const hasConn = allConnections.some((c) => {
+      const sId = c.sourceNodeId || c.sourceId?.replace(/_(top|bottom|left|right)$/, '');
+      const tId = c.targetNodeId || c.targetId?.replace(/_(top|bottom|left|right)$/, '');
+      return sId === target.id || tId === target.id;
+    });
+
+    const improvements: string[] = [];
+    const suggestions: Array<{
+      severity: 'idea' | 'warning' | 'discipline';
+      targetClassName?: string;
+      title: string;
+      message: string;
+      suggestedPrompt?: string;
+    }> = [];
+
+    if (!hasPk) {
+      improvements.push(`• Falta clave primaria explícita (id: UUID).`);
+      suggestions.push({
+        severity: 'discipline',
+        targetClassName: target.name,
+        title: `Agregar PK a ${target.name}`,
+        message: `Toda entidad UML/Spring Boot necesita identificador único (id: UUID).`,
+        suggestedPrompt: `Agrega atributo id UUID a la tabla ${target.name}`,
+      });
+    }
+
+    const normName = this.normalizeForFuzzy(target.name);
+    const suggestedAttrs: Array<{ name: string; type: string }> = [];
+    let suggestedMethod = 'validarEstado(): Boolean';
+
+    if (/product|articul|item/i.test(normName) && !/detalle/i.test(normName)) {
+      if (!attrNamesLower.has('precio') && !attrNamesLower.has('price')) {
+        suggestedAttrs.push({ name: 'precio', type: 'Double' });
+      }
+      if (!attrNamesLower.has('stock') && !attrNamesLower.has('cantidad')) {
+        suggestedAttrs.push({ name: 'stock', type: 'Integer' });
+      }
+      if (!attrNamesLower.has('activo')) {
+        suggestedAttrs.push({ name: 'activo', type: 'Boolean' });
+      }
+      suggestedMethod = 'descontarStock(cantidad: Integer): Boolean';
+    } else if (/detalle/i.test(normName)) {
+      if (!attrNamesLower.has('cantidad')) suggestedAttrs.push({ name: 'cantidad', type: 'Integer' });
+      if (!attrNamesLower.has('precio_unitario') && !attrNamesLower.has('preciounitario')) {
+        suggestedAttrs.push({ name: 'precio_unitario', type: 'Double' });
+      }
+      if (!attrNamesLower.has('subtotal')) suggestedAttrs.push({ name: 'subtotal', type: 'Double' });
+      suggestedMethod = 'calcularSubtotal(): Double';
+    } else if (/pedido|orden|compra|factura|venta/i.test(normName)) {
+      if (!attrNamesLower.has('fecha')) suggestedAttrs.push({ name: 'fecha', type: 'LocalDateTime' });
+      if (!attrNamesLower.has('total')) suggestedAttrs.push({ name: 'total', type: 'Double' });
+      if (!attrNamesLower.has('estado')) suggestedAttrs.push({ name: 'estado', type: 'String' });
+      suggestedMethod = 'calcularTotal(): Double';
+    } else if (/usuario|cliente|persona|user/i.test(normName)) {
+      if (!attrNamesLower.has('email') && !attrNamesLower.has('correo')) {
+        suggestedAttrs.push({ name: 'email', type: 'String' });
+      }
+      if (!attrNamesLower.has('activo')) suggestedAttrs.push({ name: 'activo', type: 'Boolean' });
+      suggestedMethod = 'estaActivo(): Boolean';
+    } else {
+      if (!attrNamesLower.has('estado')) suggestedAttrs.push({ name: 'estado', type: 'String' });
+      if (!attrNamesLower.has('createdat') && !attrNamesLower.has('created_at')) {
+        suggestedAttrs.push({ name: 'createdAt', type: 'LocalDateTime' });
+      }
+    }
+
+    if (suggestedAttrs.length > 0) {
+      const attrListStr = suggestedAttrs.map((a) => `${a.name} ${a.type}`).join(', ');
+      improvements.push(`• Atributos de dominio recomendados: ${attrListStr}.`);
+      suggestions.push({
+        severity: 'idea',
+        targetClassName: target.name,
+        title: `Completar atributos de ${target.name}`,
+        message: `Agrega ${attrListStr} para enriquecer la entidad.`,
+        suggestedPrompt: `Agrega los atributos ${attrListStr} a ${target.name}`,
+      });
+    }
+
+    if (methods.length === 0) {
+      improvements.push(
+        `• Métodos: actualmente no define operaciones; en lugar de getters/setters triviales, conviene agregar lógica de negocio como +${suggestedMethod}.`,
+      );
+      suggestions.push({
+        severity: 'idea',
+        targetClassName: target.name,
+        title: `Agregar método de negocio`,
+        message: `Incorpora comportamiento propio del dominio (${suggestedMethod}).`,
+        suggestedPrompt: `Agrega el método ${suggestedMethod} a ${target.name}`,
+      });
+    }
+
+    if (!hasConn && allNodes.length >= 2) {
+      const otherClass = allNodes.find((n) => n.id !== target.id);
+      improvements.push(
+        `• Relación: ${target.name} aún está aislada; evalúa conectarla con ${otherClass?.name || 'otra entidad'} según su cardinalidad.`,
+      );
+    }
+
+    const nodeAlerts = alerts.filter((a) => a.targetNodeId === target.id);
+    for (const a of nodeAlerts) {
+      if (a.code !== 'OMT_MISSING_PK' && improvements.length < 5) {
+        improvements.push(`• ${a.message}`);
+      }
+    }
+
+    const currentAttrsText =
+      attrs.length > 0
+        ? attrs.map((a) => `${a.name}:${a.type}`).join(', ')
+        : 'ninguno todavía';
+
+    const prefix = intentMode === 'REVIEW' ? 'Revisé' : 'Analicé';
+    const message = `${requesterName}, ${prefix.toLowerCase()} la clase ${target.name} (atributos actuales: ${currentAttrsText}; métodos: ${methods.length}):\n${improvements.join('\n')}\nNo modifiqué el lienzo; puedes aplicarme cualquiera de estos cambios con un comando directo.`;
+
+    return { message, suggestions: suggestions.slice(0, 3) };
   }
 
   private async publishAiGroupChatMessage(
@@ -1281,7 +1546,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
     const configuredProvider = (this.configService.get<string>('AI_PROVIDER') || 'vertex').toLowerCase() as 'ollama' | 'vertex';
     const requestedProvider = dto.provider || configuredProvider;
     let providerUsed: 'ollama' | 'vertex' = 'vertex';
-    let modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview';
+    let modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
 
     try {
       const userPromptInstruction = dto.prompt
@@ -1350,7 +1615,7 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
             responseMimeType: 'application/json',
           });
           providerUsed = 'vertex';
-          modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview';
+          modelUsed = this.configService.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
         } catch (vertexErr: any) {
           this.logger.error(`[Vision] Error en digitalización con Gemini: ${vertexErr?.message || vertexErr}`);
           throw new Error(`No se pudo digitalizar la imagen con Gemini: ${vertexErr?.message || vertexErr}. Por favor intenta nuevamente.`);
@@ -2400,6 +2665,656 @@ REGLA ESTRICTA DE ATRIBUTOS PARA LA TABLA ASOCIATIVA INTERMEDIA:
         };
       })
       .filter((conn) => nodeMap.has(conn.sourceNodeId || '') && nodeMap.has(conn.targetNodeId || ''));
+  }
+
+  private async tryDeterministicMutateFallback(
+    dto: AiPromptDto,
+    currentNodes: UmlClassNode[],
+    currentConnections: UmlConnection[],
+  ): Promise<AiResponseDto | null> {
+    const rawPrompt = (dto.prompt || '').trim();
+    if (!rawPrompt) return null;
+
+    // Quitar menciones @IA y cortesías iniciales manteniendo nombres/tipos exactos
+    const cleanPrompt = rawPrompt
+      .replace(/^@(?:ia|ai|copilot)\b[:,\s-]*/i, '')
+      .replace(/^[¿?\s]*(?:por\s+favor[,\s]+|(?:me\s+)?(?:puedes|podr[ií]as|hazme\s+el\s+favor\s+de)\s+)/i, '')
+      .replace(/[?!.]+$/g, '')
+      .trim();
+
+    if (!cleanPrompt) return null;
+
+    let workingNodes: UmlClassNode[] = currentNodes.map((n) => ({
+      ...n,
+      position: { x: n.position?.x ?? 100, y: n.position?.y ?? 80 },
+      attributes: (n.attributes || []).map((a) => ({ ...a })),
+      methods: (n.methods || []).map((m) => ({ ...m })),
+    }));
+    let workingConnections: UmlConnection[] = currentConnections.map((c) => ({ ...c }));
+    let summary = '';
+
+    // 1. Resolver tablas intermedias M:N existentes cuando no se pide crear otra clase específica
+    if (
+      /(?:genera(?:r)?|resuelve|materializa(?:r)?)\s+(?:la\s+|las\s+)?tablas?\s+(?:intermedias?|asociativas?)/i.test(cleanPrompt) &&
+      !/(?:crea(?:r)?|agrega(?:r)?)\s+(?:una\s+|la\s+)?(?:tabla|clase)\s+[A-Za-z_]/i.test(cleanPrompt)
+    ) {
+      const resolved = this.resolveManyToManyRelationships(workingNodes, workingConnections);
+      if (resolved.resolvedCount > 0) {
+        workingNodes = resolved.nodes;
+        workingConnections = resolved.connections;
+        summary = `Se materializó la tabla asociativa intermedia para ${resolved.resolvedCount} relación(es) muchos a muchos.`;
+      }
+    }
+
+    // 2. Renombrar clase / tabla
+    if (!summary) {
+      const renameMatch = cleanPrompt.match(
+        /^(?:renombra(?:r)?|cambia(?:r)?\s+(?:el\s+)?nombre\s+(?:de\s+)?(?:la\s+)?(?:tabla|clase|entidad)?)\s+(?:la\s+|el\s+)?(?:tabla|clase|entidad)?\s*["'«<]?([A-Za-z0-9_\s]+?)["'»>]?\s+(?:a|por|hacia)\s+["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?$/i,
+      );
+      if (renameMatch) {
+        const target = this.findNodeFuzzy(workingNodes, renameMatch[1].trim());
+        const newName = renameMatch[2].trim();
+        if (target && newName) {
+          const oldName = target.name;
+          target.name = newName;
+          summary = `Clase "${oldName}" renombrada a "${newName}".`;
+        }
+      }
+    }
+
+    // 3. Eliminar todos los atributos de una tabla (preservando la tabla)
+    if (!summary) {
+      const deleteAllAttrsMatch = cleanPrompt.match(
+        /^(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|vac[ií]a(?:r)?)\s+(?:todos?\s+(?:los\s+)?|los\s+)?atributos?\s+(?:de\s+(?:la\s+)?(?:tabla|clase|entidad)\s*|de\s+)?["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (deleteAllAttrsMatch) {
+        const target = this.findNodeFuzzy(workingNodes, deleteAllAttrsMatch[1].trim());
+        if (target) {
+          target.attributes = [];
+          summary = `Se eliminaron todos los atributos de la clase ${target.name} conservando la tabla.`;
+        }
+      }
+    }
+
+    // 4. Eliminar un atributo específico de una tabla
+    if (!summary) {
+      const deleteAttrMatch = cleanPrompt.match(
+        /^(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|remueve)\s+(?:el\s+|la\s+)?(?:atributo|campo|columna)\s+([A-Za-z0-9_]+)\s+(?:de\s+(?:la\s+)?(?:tabla|clase|entidad)\s*|de\s+)?["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (deleteAttrMatch) {
+        const attrName = deleteAttrMatch[1].trim().toLowerCase();
+        const target = this.findNodeFuzzy(workingNodes, deleteAttrMatch[2].trim());
+        if (target) {
+          const beforeLen = target.attributes.length;
+          target.attributes = target.attributes.filter((a) => a.name.trim().toLowerCase() !== attrName);
+          if (target.attributes.length !== beforeLen) {
+            summary = `Atributo "${deleteAttrMatch[1].trim()}" eliminado de ${target.name}.`;
+          }
+        }
+      }
+    }
+
+    // 5. Eliminar todos los métodos de una tabla
+    if (!summary) {
+      const deleteMethodsMatch = cleanPrompt.match(
+        /^(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|vac[ií]a(?:r)?)\s+(?:todos?\s+(?:los\s+)?|los\s+)?m[eé]todos?\s+(?:de\s+(?:la\s+)?(?:tabla|clase|entidad)\s*|de\s+)?["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (deleteMethodsMatch) {
+        const target = this.findNodeFuzzy(workingNodes, deleteMethodsMatch[1].trim());
+        if (target) {
+          target.methods = [];
+          summary = `Se eliminaron todos los métodos de la clase ${target.name}.`;
+        }
+      }
+    }
+
+    // 6. Eliminar tabla / clase específica (+ cascada M:N)
+    if (!summary && !/(?:atributos?|campos?|m[eé]todos?|columnas?|todas?\s+las?\s+)/i.test(cleanPrompt)) {
+      const deleteClassMatch = cleanPrompt.match(
+        /^(?:elimina(?:r)?|borra(?:r)?|quita(?:r)?|suprime|remueve|delete|remove)\s+(?:la\s+|el\s+)?(?:tabla|clase|entidad)\s*(?:de\s+)?["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (deleteClassMatch) {
+        const target = this.findNodeFuzzy(workingNodes, deleteClassMatch[1].trim());
+        if (target) {
+          const remaining = workingNodes.filter((n) => n.id !== target.id);
+          const cascade = this.mergeNodesAndConnections(
+            workingNodes,
+            workingConnections,
+            remaining,
+            [],
+            cleanPrompt,
+          );
+          workingNodes = cascade.nodes;
+          workingConnections = cascade.connections;
+          summary = `Clase "${target.name}" y sus conexiones asociadas eliminadas del diagrama.`;
+        }
+      }
+    }
+
+    // 7. Cambiar tipo de un atributo existente
+    if (!summary) {
+      const changeTypeMatch = cleanPrompt.match(
+        /^(?:cambia(?:r)?|modifica(?:r)?|actualiza(?:r)?)\s+(?:el\s+tipo\s+(?:del?\s+)?)?(?:atributo|campo|columna)?\s*([A-Za-z_][A-Za-z0-9_]*)\s+a\s+([A-Za-z_][A-Za-z0-9_<>[\]]*)\s+(?:en|de)\s+(?:la\s+)?(?:tabla|clase|entidad)?\s*["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (changeTypeMatch) {
+        const attrKey = changeTypeMatch[1].trim().toLowerCase();
+        const newType = changeTypeMatch[2].trim();
+        const target = this.findNodeFuzzy(workingNodes, changeTypeMatch[3].trim());
+        if (target) {
+          const attr = target.attributes.find((a) => a.name.trim().toLowerCase() === attrKey);
+          if (attr) {
+            attr.type = newType;
+            summary = `Tipo del atributo "${attr.name}" actualizado a ${newType} en ${target.name}.`;
+          }
+        }
+      }
+    }
+
+    // 8. Agregar método a una clase existente
+    if (!summary) {
+      const addMethodMatch = cleanPrompt.match(
+        /^(?:agrega(?:r)?|a[ñn]ad(?:e|ir)|crea(?:r)?)\s+(?:el\s+|un\s+)?m[eé]todo\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?(?:\s*:\s*([A-Za-z0-9_<>[\]]+))?\s+(?:a|en)\s+(?:la\s+)?(?:tabla|clase|entidad)?\s*["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      if (addMethodMatch) {
+        const methodName = addMethodMatch[1].trim();
+        const params = (addMethodMatch[2] || '').trim();
+        const returnType = (addMethodMatch[3] || 'void').trim();
+        const target = this.findNodeFuzzy(workingNodes, addMethodMatch[4].trim());
+        if (target) {
+          const dup = target.methods.some(
+            (m) => m.name.trim().toLowerCase() === methodName.toLowerCase() && (m.parameters || '').trim() === params,
+          );
+          if (!dup) {
+            target.methods.push({ name: methodName, parameters: params, returnType, visibility: '+' });
+          }
+          summary = `Método "${methodName}(${params}): ${returnType}" agregado a ${target.name}.`;
+        }
+      }
+    }
+
+    // 9. Agregar atributo(s) a una clase existente ("Agrega atributo id UUID a Pedido" o "Agrega email String a Usuario")
+    if (!summary) {
+      let attrsSpec = '';
+      let targetClassQuery = '';
+      const addAttrsMatch1 = cleanPrompt.match(
+        /^(?:agrega(?:r)?|a[ñn]ad(?:e|ir)|crea(?:r)?|inserta(?:r)?)\s+(?:(?:el|los|un|unos)\s+)?(?:atributos?|campos?|columnas?|propiedades?)\s+(.+?)\s+(?:a|en|para)\s+(?:la\s+)?(?:tabla|clase|entidad)?\s*["'«<]*([A-Za-z0-9_\s]+?)["'»>]*$/i,
+      );
+      const addAttrsMatch2 = cleanPrompt.match(
+        /^(?:agrega(?:r)?|a[ñn]ad(?:e|ir))\s+(?:a|en)\s+(?:la\s+)?(?:tabla|clase|entidad)?\s*["'«<]*([A-Za-z0-9_\s]+?)["'»>]*\s+(?:los?\s+|el\s+)?(?:atributos?|campos?|columnas?)\s+(.+)$/i,
+      );
+      const addAttrsMatch3 = cleanPrompt.match(
+        /^(?:agrega(?:r)?|a[ñn]ad(?:e|ir)|inserta(?:r)?)\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+?)\s+(?:a|en)\s+(?:(?:la|el)\s+)?(?:(?:tabla|clase|entidad)\s+)?["'«<]*([A-Za-z_][A-Za-z0-9_\s]*?)["'»>]*$/i,
+      );
+
+      if (addAttrsMatch1) {
+        attrsSpec = addAttrsMatch1[1].trim();
+        targetClassQuery = addAttrsMatch1[2].trim();
+      } else if (addAttrsMatch2) {
+        targetClassQuery = addAttrsMatch2[1].trim();
+        attrsSpec = addAttrsMatch2[2].trim();
+      } else if (
+        addAttrsMatch3 &&
+        !/^(?:una?|la)\s+(?:tabla|clase|entidad|interfaz|enum|nota|relaci[oó]n)\b/i.test(addAttrsMatch3[1].trim()) &&
+        !/^m[eé]todo\b/i.test(addAttrsMatch3[1].trim()) &&
+        !/\b(?:con|relaci[oó]n|relacionala|conecta|vincula|asocia)\b/i.test(addAttrsMatch3[1].trim()) &&
+        this.findNodeFuzzy(workingNodes, addAttrsMatch3[2].trim())
+      ) {
+        attrsSpec = addAttrsMatch3[1].trim();
+        targetClassQuery = addAttrsMatch3[2].trim();
+      }
+
+      if (attrsSpec && targetClassQuery) {
+        const target = this.findNodeFuzzy(workingNodes, targetClassQuery);
+        if (target) {
+          const parsedAttrs = this.parseAttributeListDeterministically(attrsSpec);
+          if (parsedAttrs.length > 0) {
+            for (const attr of parsedAttrs) {
+              const existingIdx = target.attributes.findIndex(
+                (a) => a.name.trim().toLowerCase() === attr.name.toLowerCase(),
+              );
+              if (existingIdx >= 0) {
+                target.attributes[existingIdx] = { ...target.attributes[existingIdx], ...attr };
+              } else {
+                target.attributes.push(attr);
+              }
+            }
+            summary = `Se agregaron ${parsedAttrs.length} atributo(s) (${parsedAttrs.map((a) => a.name).join(', ')}) a la clase ${target.name}.`;
+          }
+        }
+      }
+    }
+
+    // 10. Relacionar dos clases ("Relaciona Pedido con Cliente..." o "Composición 1 a 1..* entre Factura y FacturaDetalle")
+    if (!summary) {
+      const connectOnlyMatch = cleanPrompt.match(
+        /^(?:relaciona(?:r)?|conecta(?:r)?|vincula(?:r)?|asocia(?:r)?)\s+(?:la\s+(?:tabla|clase|entidad)\s+)?["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?\s+(?:con|a|y)\s+(.+)$/i,
+      );
+      if (connectOnlyMatch) {
+        const source = this.findNodeFuzzy(workingNodes, connectOnlyMatch[1].trim());
+        const relSpec = this.parseRelationClauseDeterministically(connectOnlyMatch[2].trim());
+        if (source && relSpec) {
+          let target = this.findNodeFuzzy(workingNodes, relSpec.targetName);
+          if (!target) {
+            const pos = this.findNextFreeCanvasPosition(workingNodes);
+            target = {
+              id: `node_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              name: relSpec.targetName,
+              elementType: 'CLASS',
+              position: pos,
+              width: 220,
+              attributes: [{ name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false }],
+              methods: [],
+            };
+            workingNodes.push(target);
+          }
+          if (source.id !== target.id) {
+            workingConnections.push({
+              id: `conn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              sourceNodeId: source.id,
+              targetNodeId: target.id,
+              sourceId: `${source.id}_right`,
+              targetId: `${target.id}_left`,
+              type: relSpec.type,
+              lineStyle: 'segment',
+              sourceMultiplicity: relSpec.sourceMult,
+              targetMultiplicity: relSpec.targetMult,
+            });
+            summary = `Relación ${relSpec.type} creada entre ${source.name} (${relSpec.sourceMult}) y ${target.name} (${relSpec.targetMult}).`;
+          }
+        }
+      }
+    }
+
+    if (!summary) {
+      const betweenRelMatch = cleanPrompt.match(
+        /^(?:(?:crea(?:r)?|agrega(?:r)?|a[ñn]ad(?:e|ir)|genera(?:r)?)\s+(?:una?\s+)?)?(?:relaci[oó]n(?:\s+de)?\s+)?(.+?)\s+entre\s+(?:(?:la\s+)?(?:tabla|clase|entidad)\s+)?["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?\s+y\s+(?:(?:la\s+)?(?:tabla|clase|entidad)\s+)?["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?(?:\s+(.*))?$/i,
+      );
+      if (
+        betweenRelMatch &&
+        /(?:composici[oó]n|agregaci[oó]n|asociaci[oó]n|herencia|generalizaci[oó]n|realizaci[oó]n|dependencia|relaci[oó]n|multiplicidad|cardinalidad|muchos\s+a\s+muchos|[0-9.*]+\s*(?:a|->|:)\s*[0-9.*]+)/i.test(
+          `${betweenRelMatch[1]} ${betweenRelMatch[4] || ''}`,
+        )
+      ) {
+        const rawSourceName = betweenRelMatch[2].trim();
+        const relSpec = this.parseRelationClauseDeterministically(
+          `${betweenRelMatch[3].trim()} ${betweenRelMatch[1].trim()} ${(betweenRelMatch[4] || '').trim()}`.trim(),
+        );
+        if (rawSourceName && relSpec) {
+          let source = this.findNodeFuzzy(workingNodes, rawSourceName);
+          if (!source) {
+            const formattedSource = rawSourceName.charAt(0).toUpperCase() + rawSourceName.slice(1);
+            source = {
+              id: `node_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              name: formattedSource,
+              elementType: 'CLASS',
+              position: this.findNextFreeCanvasPosition(workingNodes),
+              width: 220,
+              attributes: [{ name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false }],
+              methods: [],
+            };
+            workingNodes.push(source);
+          }
+
+          let target = this.findNodeFuzzy(workingNodes, relSpec.targetName);
+          if (!target) {
+            target = {
+              id: `node_${Date.now() + 1}_${Math.random().toString(36).substring(2, 6)}`,
+              name: relSpec.targetName,
+              elementType: 'CLASS',
+              position: this.findNextFreeCanvasPosition(workingNodes),
+              width: 220,
+              attributes: [{ name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false }],
+              methods: [],
+            };
+            workingNodes.push(target);
+          }
+
+          if (source.id !== target.id) {
+            workingConnections.push({
+              id: `conn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              sourceNodeId: source.id,
+              targetNodeId: target.id,
+              sourceId: `${source.id}_right`,
+              targetId: `${target.id}_left`,
+              type: relSpec.type,
+              lineStyle: 'segment',
+              sourceMultiplicity: relSpec.sourceMult,
+              targetMultiplicity: relSpec.targetMult,
+            });
+            summary = `Relación ${relSpec.type} creada entre ${source.name} (${relSpec.sourceMult}) y ${target.name} (${relSpec.targetMult}).`;
+          }
+        }
+      }
+    }
+
+    // 11. Crear / actualizar clase o tabla (opcionalmente con atributos y relación posterior)
+    if (!summary) {
+      const relSplitRegex =
+        /\s+(?:y\s+|,\s*y\s+)?(?:relaci[oó]n(?:a(?:la|lo|r(?:la|lo)?)?)?|con[eé]cta(?:la|lo|r(?:la|lo)?)?|vincul[ae](?:la|lo|r(?:la|lo)?)?|asoci[ae](?:la|lo|r(?:la|lo)?)?)\s+(?:con|a|hacia)\s+/i;
+      const splitParts = cleanPrompt.split(relSplitRegex);
+      const mainPart = (splitParts[0] || '').trim();
+      const relationPart = splitParts.length > 1 ? splitParts.slice(1).join(' ').trim() : '';
+
+      const createMatch = mainPart.match(
+        /^(?:crea(?:r)?|agrega(?:r)?|a[ñn]ad(?:e|ir)|inserta(?:r)?|genera(?:r)?|define|create|add)\s+(?:(?:una?|la|el)\s+)?(?:(?:nueva?)\s+)?(tabla|clase|entidad|interfaz|interface|enum(?:eraci[oó]n)?|nota)?\s*(?:(?:llamad[oa]|denominad[oa]|con\s+nombre)\s+)?["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?(?:\s+(?:con|with)(?:\s+(?:los\s+|sus\s+)?(?:atributos?|campos?|columnas?|propiedades?|literales?|values?))?\s+(.+)|\s*\(([^)]+)\))?$/i,
+      );
+
+      const reservedNonClassWords = new Set([
+        'atributo', 'atributos', 'campo', 'campos', 'columna', 'columnas',
+        'metodo', 'método', 'metodos', 'métodos', 'relacion', 'relación',
+        'una', 'un', 'la', 'el', 'los', 'las', 'todo', 'todas', 'todos',
+      ]);
+
+      if (createMatch) {
+        const elementKeyword = (createMatch[1] || 'clase').toLowerCase();
+        const rawClassName = (createMatch[2] || '').trim();
+        const attrRaw = (createMatch[3] || createMatch[4] || '').trim();
+
+        if (rawClassName && (!reservedNonClassWords.has(rawClassName.toLowerCase()) || Boolean(createMatch[1]))) {
+          let elementType = 'CLASS';
+          if (elementKeyword.startsWith('interfa')) elementType = 'INTERFACE';
+          else if (elementKeyword.startsWith('enum')) elementType = 'ENUM';
+          else if (elementKeyword === 'nota') elementType = 'NOTE';
+
+          const formattedName = rawClassName.charAt(0).toUpperCase() + rawClassName.slice(1);
+          const parsedAttrs =
+            elementType === 'ENUM'
+              ? attrRaw
+                .split(/[,;\n]|\s+y\s+/i)
+                .map((v) => v.trim().toUpperCase())
+                .filter(Boolean)
+                .map((name) => ({ name, type: 'String', visibility: '+' }))
+              : attrRaw
+                ? this.parseAttributeListDeterministically(attrRaw)
+                : [];
+
+          let primaryNode = this.findNodeFuzzy(workingNodes, formattedName);
+          if (primaryNode) {
+            for (const attr of parsedAttrs) {
+              const idx = primaryNode.attributes.findIndex(
+                (a) => a.name.trim().toLowerCase() === attr.name.toLowerCase(),
+              );
+              if (idx >= 0) {
+                primaryNode.attributes[idx] = { ...primaryNode.attributes[idx], ...attr };
+              } else {
+                primaryNode.attributes.push(attr);
+              }
+            }
+          } else {
+            const pos = this.findNextFreeCanvasPosition(workingNodes);
+            const initialAttrs: UmlAttributeNode[] =
+              elementType === 'NOTE'
+                ? []
+                : parsedAttrs.length > 0
+                  ? parsedAttrs
+                  : elementType === 'CLASS'
+                    ? [{ name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false }]
+                    : [];
+
+            primaryNode = {
+              id: `node_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              name: formattedName,
+              elementType,
+              ...(elementType === 'NOTE' && attrRaw ? { noteContent: attrRaw } : {}),
+              position: pos,
+              width: 220,
+              attributes: initialAttrs,
+              methods: [],
+            };
+            workingNodes.push(primaryNode);
+          }
+
+          let relMsg = '';
+          if (relationPart) {
+            const relSpec = this.parseRelationClauseDeterministically(relationPart);
+            if (relSpec) {
+              let targetNode = this.findNodeFuzzy(workingNodes, relSpec.targetName);
+              if (!targetNode) {
+                const targetPos = this.findNextFreeCanvasPosition(workingNodes);
+                targetNode = {
+                  id: `node_${Date.now() + 1}_${Math.random().toString(36).substring(2, 6)}`,
+                  name: relSpec.targetName,
+                  elementType: 'CLASS',
+                  position: targetPos,
+                  width: 220,
+                  attributes: [
+                    { name: 'id', type: 'UUID', visibility: '-', isPrimaryKey: true, isNullable: false },
+                  ],
+                  methods: [],
+                };
+                workingNodes.push(targetNode);
+              }
+
+              if (targetNode.id !== primaryNode.id) {
+                workingConnections.push({
+                  id: `conn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                  sourceNodeId: primaryNode.id,
+                  targetNodeId: targetNode.id,
+                  sourceId: `${primaryNode.id}_right`,
+                  targetId: `${targetNode.id}_left`,
+                  type: relSpec.type,
+                  lineStyle: 'segment',
+                  sourceMultiplicity: relSpec.sourceMult,
+                  targetMultiplicity: relSpec.targetMult,
+                });
+                relMsg = ` y relacionada con ${targetNode.name} (${relSpec.sourceMult} .. ${relSpec.targetMult})`;
+              }
+            }
+          }
+
+          summary = `Clase "${primaryNode.name}" procesada con ${primaryNode.attributes.length} atributo(s)${relMsg} (motor UML local).`;
+        }
+      }
+    }
+
+    if (!summary) {
+      return null;
+    }
+
+    const resolved = this.resolveManyToManyRelationships(workingNodes, workingConnections);
+    const finalNodes = this.sanitizeNodes(resolved.nodes);
+    const finalConnections = this.sanitizeConnections(resolved.connections, finalNodes);
+    const affectedClasses = finalNodes
+      .filter((n) => !n.isAnchor && (n.elementType || 'CLASS') !== 'NOTE')
+      .map((n) => n.name)
+      .slice(0, 8);
+    const disciplineAlerts = this.analyzeOmtDiscipline(finalNodes, finalConnections);
+
+    await this.broadcastAiMutation(
+      dto,
+      finalNodes,
+      finalConnections,
+      summary,
+      affectedClasses,
+      'deterministic-engine',
+      'deterministic-uml-engine',
+    );
+
+    return {
+      success: true,
+      action: 'diagram_mutated',
+      intentMode: 'MUTATE',
+      mutatedDiagram: true,
+      message: summary,
+      nodes: finalNodes,
+      connections: finalConnections,
+      changesSummary: summary,
+      providerUsed: 'deterministic-engine',
+      modelUsed: 'deterministic-uml-engine',
+      disciplineAlerts,
+      broadcastedToRoom: dto.broadcastToRoom !== false,
+    };
+  }
+
+  private findNextFreeCanvasPosition(existingNodes: UmlClassNode[]): { x: number; y: number } {
+    const visible = existingNodes.filter((n) => !n.isAnchor);
+    for (let idx = 0; idx < 60; idx++) {
+      const col = idx % 3;
+      const row = Math.floor(idx / 3);
+      const x = 100 + col * 280;
+      const y = 80 + row * 230;
+      const collides = visible.some(
+        (n) => Math.abs((n.position?.x ?? 0) - x) < 220 && Math.abs((n.position?.y ?? 0) - y) < 160,
+      );
+      if (!collides) {
+        return { x, y };
+      }
+    }
+    return { x: 100 + (visible.length % 3) * 280, y: 80 + Math.floor(visible.length / 3) * 230 };
+  }
+
+  private parseAttributeListDeterministically(rawText: string): UmlAttributeNode[] {
+    if (!rawText) return [];
+    const results: UmlAttributeNode[] = [];
+    const seenNames = new Set<string>();
+
+    let normalizedRaw = rawText.trim();
+    const wantsBasicFields = /\bcampos?\s+b[aá]sicos\b/i.test(normalizedRaw);
+    if (wantsBasicFields) {
+      normalizedRaw = normalizedRaw
+        .replace(/\b(?:y\s+|,\s*)?campos?\s+b[aá]sicos\b/gi, '')
+        .trim();
+    }
+
+    const pushAttr = (attr: UmlAttributeNode) => {
+      const key = attr.name.trim().toLowerCase();
+      if (!key || seenNames.has(key)) return;
+      seenNames.add(key);
+      results.push(attr);
+    };
+
+    const parts = normalizedRaw
+      .split(/[,;\n]+|\s+y\s+|\s+and\s+/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    for (const part of parts) {
+      let token = part.replace(/^(?:atributos?|campos?|columnas?)\s+/i, '').trim();
+      if (!token) continue;
+
+      let visibility = '-';
+      const visMatch = token.match(/^([+\-#~])\s*(.+)$/);
+      if (visMatch) {
+        visibility = visMatch[1];
+        token = visMatch[2].trim();
+      }
+
+      const explicitPk = /\b(?:pk|primary\s+key|clave\s+primaria)\b/i.test(token);
+      const explicitNotNull = /\b(?:nn|not\s+null)\b/i.test(token);
+      token = token
+        .replace(/\((?:pk|nn|not\s+null)\)/gi, '')
+        .replace(/\b(?:pk|primary\s+key|not\s+null)\b/gi, '')
+        .trim();
+
+      let attrName = '';
+      let attrType = '';
+
+      if (token.includes(':')) {
+        const [left, right] = token.split(':').map((s) => s.trim());
+        attrName = left.replace(/[^A-Za-z0-9_]/g, '');
+        attrType = right.split(/\s+/)[0] || '';
+      } else {
+        const wsParts = token.split(/\s+/).filter(Boolean);
+        attrName = (wsParts[0] || '').replace(/[^A-Za-z0-9_]/g, '');
+        if (wsParts.length >= 2) {
+          const candidateType = wsParts[1];
+          if (/^(?:de\s+tipo|tipo)$/i.test(candidateType) && wsParts[2]) {
+            attrType = wsParts[2];
+          } else {
+            attrType = candidateType;
+          }
+        }
+      }
+
+      if (!attrName) continue;
+
+      if (!attrType) {
+        if (/^(?:id|.*_id|uuid)$/i.test(attrName)) attrType = 'UUID';
+        else if (/^(?:fecha|date|created.*|updated.*|.*_at|.*At)$/i.test(attrName)) attrType = 'LocalDateTime';
+        else if (/^(?:activo|enabled|visible|pagado|es_.*|is_.*)$/i.test(attrName)) attrType = 'Boolean';
+        else if (/^(?:cantidad|stock|edad|numero|count|orden)$/i.test(attrName)) attrType = 'Integer';
+        else if (/^(?:precio|total|subtotal|monto|descuento|saldo|importe|precio_.*)$/i.test(attrName)) attrType = 'Double';
+        else attrType = 'String';
+      }
+
+      const isPrimaryKey = explicitPk || /^id$/i.test(attrName);
+      pushAttr({
+        name: attrName,
+        type: attrType,
+        visibility,
+        isPrimaryKey,
+        isNullable: isPrimaryKey ? false : explicitNotNull ? false : true,
+      });
+    }
+
+    if (wantsBasicFields) {
+      pushAttr({ name: 'nombre', type: 'String', visibility: '-', isPrimaryKey: false, isNullable: false });
+      pushAttr({ name: 'descripcion', type: 'String', visibility: '-', isPrimaryKey: false, isNullable: true });
+      pushAttr({ name: 'createdAt', type: 'LocalDateTime', visibility: '-', isPrimaryKey: false, isNullable: false });
+    }
+
+    return results;
+  }
+
+  private parseRelationClauseDeterministically(rawClause: string): {
+    targetName: string;
+    type: string;
+    sourceMult: string;
+    targetMult: string;
+  } | null {
+    const cleaned = (rawClause || '').trim();
+    if (!cleaned) return null;
+
+    const targetMatch = cleaned.match(
+      /^(?:la\s+)?(?:tabla|clase|entidad)?\s*["'«<]?([A-Za-z_][A-Za-z0-9_]*)["'»>]?/i,
+    );
+    if (!targetMatch || !targetMatch[1]) return null;
+
+    const rawTarget = targetMatch[1].trim();
+    const targetName = rawTarget.charAt(0).toUpperCase() + rawTarget.slice(1);
+
+    let type = 'association';
+    if (/composici[oó]n/i.test(cleaned)) type = 'composition';
+    else if (/agregaci[oó]n/i.test(cleaned)) type = 'aggregation';
+    else if (/herencia|generalizaci[oó]n|extiende/i.test(cleaned)) type = 'generalization';
+    else if (/realizaci[oó]n|implementa/i.test(cleaned)) type = 'realization';
+    else if (/dependencia|depende/i.test(cleaned)) type = 'dependency';
+
+    let sourceMult = '1';
+    let targetMult = '*';
+
+    if (/muchos\s+a\s+muchos|\bm\s*[:-]\s*n\b/i.test(cleaned)) {
+      sourceMult = '*';
+      targetMult = '*';
+    } else {
+      const multPairMatch = cleaned.match(
+        /(?:(?:multiplicidad|cardinalidad)\s+(?:de\s+)?)?(?:^|\s)([0-9]+\.\.[0-9.*]+|[0-9]+|\*)\s*(?:a|->|:)\s*([0-9]+\.\.[0-9.*]+|[0-9]+|\*)(?=\s|$)/i,
+      );
+      if (multPairMatch) {
+        sourceMult = multPairMatch[1];
+        targetMult = multPairMatch[2];
+      } else {
+        const singleMultMatch = cleaned.match(
+          /(?:multiplicidad|cardinalidad)\s+(?:de\s+)?(\*|0\.\.\*|1\.\.\*|0\.\.1|1|muchos|uno)/i,
+        );
+        if (singleMultMatch) {
+          const m = singleMultMatch[1].toLowerCase() === 'muchos'
+            ? '*'
+            : singleMultMatch[1].toLowerCase() === 'uno'
+              ? '1'
+              : singleMultMatch[1];
+          if (m === '*' || m === '0..*' || m === '1..*') {
+            sourceMult = m;
+            targetMult = '1';
+          } else {
+            sourceMult = m;
+            targetMult = '*';
+          }
+        }
+      }
+    }
+
+    return { targetName, type, sourceMult, targetMult };
   }
 
   private handleFallbackPrompt(

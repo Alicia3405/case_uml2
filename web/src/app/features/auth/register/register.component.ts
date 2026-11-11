@@ -38,7 +38,7 @@ export class RegisterComponent {
 
     this.authService.register(this.registerForm.value).subscribe({
       next: () => {
-        this.router.navigate(['/diagram']);
+        this.router.navigate(['/projects']);
       },
     });
   }

@@ -8,13 +8,14 @@ export class VertexAiService {
   private ai: GoogleGenAI;
   private readonly modelName: string;
   private readonly apiKey?: string;
+  private missingCredentialsWarned = false;
 
   constructor(private readonly configService: ConfigService) {
     const project = this.configService.get<string>('GCP_PROJECT_ID') || 'psyched-list-507014-d7';
     const location = this.configService.get<string>('GCP_LOCATION') || 'us-central1';
-    const configuredModel = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3-flash-preview';
-    this.modelName = (configuredModel === 'gemini-2.5-flash') ? 'gemini-3-flash-preview' : configuredModel;
-    this.apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    const configuredModel = this.configService.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
+    this.modelName = configuredModel;
+    this.apiKey = this.configService.get<string>('GEMINI_API_KEY')?.trim() || undefined;
 
     this.initClient(project, location);
   }
@@ -34,13 +35,27 @@ export class VertexAiService {
           project,
           location,
         });
-        this.logger.log(
-          `[VertexAI] Inicializado con Vertex AI ADC en proyecto: ${project}, región: ${location}, modelo: ${this.modelName}`,
-        );
+        const hasGac = Boolean(process.env['GOOGLE_APPLICATION_CREDENTIALS']?.trim());
+        if (hasGac) {
+          this.logger.log(
+            `[VertexAI] Inicializado con Vertex AI ADC en proyecto: ${project}, región: ${location}, modelo: ${this.modelName}`,
+          );
+        } else {
+          this.logger.warn(
+            `[VertexAI] Sin GEMINI_API_KEY ni GOOGLE_APPLICATION_CREDENTIALS explícitos (proyecto: ${project}); se usará ADC si existe en el host o fallback local/determinista.`,
+          );
+        }
       }
     } catch (err) {
       this.logger.error(`[VertexAI] Error al instanciar GoogleGenAI: ${err}`);
     }
+  }
+
+  private isNonRetryableAuthError(error: any): boolean {
+    const msg = String(error?.message || error || '');
+    return /could not load the default credentials|api[_\s]?key not valid|api_key_invalid|unauthenticated|permission_denied|401\b|403\b/i.test(
+      msg,
+    );
   }
 
   async generateContent(options: {
@@ -57,10 +72,11 @@ export class VertexAiService {
     }
 
     const candidateModels = [
-      this.modelName || 'gemini-3.5-flash-lite',
-      'gemini-3.5-flash-lite',
+      this.modelName || 'gemini-2.5-flash',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-2.0-flash',
       'gemini-3-flash-preview',
-      'gemini-3.6-flash',
     ];
     const modelsToTry = Array.from(new Set(candidateModels));
 
@@ -78,6 +94,15 @@ export class VertexAiService {
           }
         } catch (error: any) {
           lastError = error;
+          if (this.isNonRetryableAuthError(error)) {
+            if (!this.missingCredentialsWarned) {
+              this.logger.warn(
+                `[Gemini] Credenciales de Google/Vertex AI no disponibles (${error?.message || error}). Omitiendo reintentos redundantes.`,
+              );
+              this.missingCredentialsWarned = true;
+            }
+            throw error;
+          }
           this.logger.warn(`[Gemini] Error con ${model} en intento ${attempt}: ${error?.message || error}. Probando siguiente modelo...`);
         }
       }

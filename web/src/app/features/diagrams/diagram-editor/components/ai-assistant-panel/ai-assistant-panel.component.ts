@@ -223,13 +223,17 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
         if (foundSaved) {
           this.selectedModelId.set(foundSaved.id);
           this.selectedProvider.set(foundSaved.provider);
+          localStorage.setItem('uml_preferred_ai_provider', foundSaved.provider);
         } else if (data?.defaultModel) {
           const def = models.find((m) => m.id === data.defaultModel);
+          const provider = def ? def.provider : (data.defaultProvider || 'ollama');
           this.selectedModelId.set(data.defaultModel);
-          this.selectedProvider.set(def ? def.provider : (data.defaultProvider || 'ollama'));
+          this.selectedProvider.set(provider);
+          localStorage.setItem('uml_preferred_ai_provider', provider);
         } else if (models.length > 0) {
           this.selectedModelId.set(models[0].id);
           this.selectedProvider.set(models[0].provider);
+          localStorage.setItem('uml_preferred_ai_provider', models[0].provider);
         }
       },
       error: (err) => {
@@ -337,6 +341,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
             text: `Endpoint conectado en caliente (${cfg.baseUrl}). Actualizando modelos...`,
           });
           localStorage.setItem('uml_preferred_ai_model', cfg.model);
+          localStorage.setItem('uml_preferred_ai_provider', 'ollama');
           this.loadAvailableModels();
         },
         error: (err) => {
@@ -387,6 +392,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     this.selectedModelId.set(model.id);
     this.selectedProvider.set(model.provider);
     localStorage.setItem('uml_preferred_ai_model', model.id);
+    localStorage.setItem('uml_preferred_ai_provider', model.provider);
     this.closeModelDropdown();
   }
 
@@ -582,7 +588,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
       });
   }
 
-  async runLocalOcrAnalysis(imageOverride?: string): Promise<void> {
+  async runLocalOcrAnalysis(imageOverride?: string, isAutoFallback = false): Promise<void> {
     if (this.isReadOnly() || this.isAiProcessing() || this.localOcrService.isProcessing()) {
       return;
     }
@@ -590,18 +596,31 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     const targetImage = imageOverride || this.attachedImageBase64();
     if (!targetImage) return;
 
-    this.aiChatMessages.update((msgs) => [
-      ...msgs,
-      {
-        id: 'msg-ocr-u-' + Date.now(),
-        sender: 'user',
-        text: imageOverride
-          ? 'Reintentar digitalización offline con Tesseract OCR 2D'
-          : 'Digitalizar diagrama offline con Tesseract OCR 2D',
-        timestamp: new Date(),
-        imagePreview: imageOverride ? undefined : targetImage,
-      },
-    ]);
+    if (!isAutoFallback) {
+      this.aiChatMessages.update((msgs) => [
+        ...msgs,
+        {
+          id: 'msg-ocr-u-' + Date.now(),
+          sender: 'user',
+          text: imageOverride
+            ? 'Reintentar digitalización offline con Tesseract OCR 2D'
+            : 'Digitalizar diagrama offline con Tesseract OCR 2D',
+          timestamp: new Date(),
+          imagePreview: imageOverride ? undefined : targetImage,
+        },
+      ]);
+    } else {
+      this.aiChatMessages.update((msgs) => [
+        ...msgs,
+        {
+          id: 'msg-ocr-auto-' + Date.now(),
+          sender: 'assistant',
+          text: '⚡ La visión IA en el servidor no está disponible en este momento. Ejecutando digitalización local automática con Tesseract OCR 2D en tu navegador...',
+          status: 'clarification',
+          timestamp: new Date(),
+        },
+      ]);
+    }
 
     if (!imageOverride) {
       this.aiPrompt.set('');
@@ -654,6 +673,7 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
           status: 'error',
           providerUsed: 'local-ocr',
           modelUsed: result.modelUsed,
+          retryImageBase64: targetImage,
           timestamp: new Date(),
         },
       ]);
@@ -685,6 +705,16 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
     const summary = res.changesSummary || res.message || 'Respuesta de Copilot IA.';
     const isClarification = res.action === 'clarification' || res.action === 'clarification_required';
     const isError = !res.success && !isClarification;
+
+    if (
+      isError &&
+      sentImage &&
+      !this.isReadOnly() &&
+      typeof this.localOcrService?.parseDiagramImageOffline === 'function'
+    ) {
+      void this.runLocalOcrAnalysis(sentImage, true);
+      return;
+    }
 
     const shouldMutate =
       res.mutatedDiagram !== undefined
@@ -734,6 +764,14 @@ export class AiAssistantPanelComponent implements OnInit, OnDestroy {
 
   private handleAiError(err: any, sentImage?: string | null): void {
     this.isAiProcessing.set(false);
+    if (
+      sentImage &&
+      !this.isReadOnly() &&
+      typeof this.localOcrService?.parseDiagramImageOffline === 'function'
+    ) {
+      void this.runLocalOcrAnalysis(sentImage, true);
+      return;
+    }
     const msg = err.error?.message || err.message || 'Error de conexión con el Asistente IA.';
 
     this.aiChatMessages.update((msgs) => [

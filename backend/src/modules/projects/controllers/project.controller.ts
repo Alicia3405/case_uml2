@@ -6,12 +6,13 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ProjectService } from '../services/project.service';
 import { CreateProjectDto } from '../dtos/create-project.dto';
 import { UpdateProjectDto } from '../dtos/update-project.dto';
@@ -43,6 +44,19 @@ export class ProjectController {
   @ApiResponse({ status: 200, description: 'Lista de proyectos', type: [ProjectResponseDto] })
   async findAll(@CurrentUser() user: User): Promise<ProjectResponseDto[]> {
     return this.projectService.findAllForUser(user.id);
+  }
+
+  @Get('users/search')
+  @ApiOperation({ summary: 'Buscar usuarios registrados por nombre o correo para invitar como colaboradores' })
+  @ApiQuery({ name: 'q', required: false, description: 'Texto parcial del nombre o correo' })
+  @ApiQuery({ name: 'projectId', required: false, description: 'ID del proyecto para indicar miembros existentes' })
+  @ApiResponse({ status: 200, description: 'Lista de usuarios candidatos' })
+  async searchUsers(
+    @Query('q') query = '',
+    @Query('projectId') projectId: string | undefined,
+    @CurrentUser() user: User,
+  ) {
+    return this.projectService.searchUsers(query, user.id, projectId);
   }
 
   @Get(':id')

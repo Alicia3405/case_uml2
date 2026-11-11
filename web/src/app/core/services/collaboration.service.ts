@@ -714,7 +714,31 @@ export class CollaborationService {
     this.unreadChatCount.set(0);
   }
 
-  sendChatMessage(message: string): void {
+  appendLocalChatMessage(
+    partial: Omit<ChatMessage, 'timestamp'> & { timestamp?: string },
+  ): void {
+    const entry: ChatMessage = {
+      ...partial,
+      id:
+        partial.id ||
+        `local_chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: partial.timestamp || new Date().toISOString(),
+    };
+    this.chatMessages.update((list) => {
+      if (entry.id && list.some((m) => m.id === entry.id)) {
+        return list;
+      }
+      const next = [...list, entry];
+      return next.length > this.MAX_CLIENT_HISTORY
+        ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
+        : next;
+    });
+  }
+
+  sendChatMessage(
+    message: string,
+    liveContext?: { currentNodes?: UmlClassNode[]; currentConnections?: UmlConnection[] },
+  ): void {
     const clean = message.trim();
     if (!clean) return;
 
@@ -722,21 +746,13 @@ export class CollaborationService {
     const diagramId = this.currentDiagramId();
     const roomCode = this.activeRoomCode();
     if (!this.socket || !this.isConnected() || !diagramId) {
-      this.chatMessages.update((list) => {
-        const next = [
-          ...list,
-          {
-            id: `local_chat_${Date.now()}`,
-            userId: user?.id || 'local',
-            userName: user?.fullName || user?.email || 'Usuario',
-            message: clean,
-            color: this.myColor(),
-            timestamp: new Date().toISOString(),
-          },
-        ];
-        return next.length > this.MAX_CLIENT_HISTORY
-          ? next.slice(next.length - this.MAX_CLIENT_HISTORY)
-          : next;
+      this.appendLocalChatMessage({
+        id: `local_chat_${Date.now()}`,
+        userId: user?.id || 'local',
+        userName: user?.fullName || user?.email || 'Usuario',
+        message: clean,
+        color: this.myColor(),
+        timestamp: new Date().toISOString(),
       });
       return;
     }
@@ -748,6 +764,8 @@ export class CollaborationService {
       userName: user?.fullName || user?.email || 'Usuario',
       message: clean,
       color: this.myColor(),
+      ...(liveContext?.currentNodes ? { currentNodes: liveContext.currentNodes } : {}),
+      ...(liveContext?.currentConnections ? { currentConnections: liveContext.currentConnections } : {}),
     });
   }
 

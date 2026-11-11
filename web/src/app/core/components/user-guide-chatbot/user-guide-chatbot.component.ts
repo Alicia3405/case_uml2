@@ -1,7 +1,10 @@
-import { Component, signal, computed, ViewChild, ElementRef, AfterViewChecked, inject } from '@angular/core';
+import { Component, signal, computed, ViewChild, ElementRef, AfterViewChecked, DestroyRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { NavigationEnd, Router } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { filter } from 'rxjs';
 import { NgIconComponent, provideIcons } from '@ng-icons/core';
 import { UserGuideService } from '../../services/user-guide.service';
 import { TranslationService, TranslatePipe } from '../../i18n';
@@ -93,7 +96,28 @@ export class UserGuideChatbotComponent implements AfterViewChecked {
   guideService = inject(UserGuideService);
   translationService = inject(TranslationService);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly router = inject(Router, { optional: true });
+  private readonly destroyRef = inject(DestroyRef);
   private readonly initialTimestamp = new Date();
+
+  readonly isDiagramRoute = signal<boolean>(false);
+
+  constructor() {
+    this.updateRouteVisibility(this.router?.url);
+    this.router?.events
+      .pipe(
+        filter((ev): ev is NavigationEnd => ev instanceof NavigationEnd),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((ev) => {
+        this.updateRouteVisibility(ev.urlAfterRedirects || ev.url);
+      });
+  }
+
+  private updateRouteVisibility(url?: string): void {
+    const clean = (url || '').split('?')[0].split('#')[0].toLowerCase();
+    this.isDiagramRoute.set(clean.startsWith('/diagram'));
+  }
 
   scrollPills(offset: number): void {
     if (this.pillsContainer) {

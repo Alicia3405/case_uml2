@@ -21,16 +21,24 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
-      - name: Verify Backend Build
+      - name: Verify Backend Tests & Build
         working-directory: backend
         run: |
           npm ci || npm install
+          npm test
           npm run build
+
+      - name: Verify Frontend Tests & Production Build
+        working-directory: web
+        run: |
+          npm ci || npm install --legacy-peer-deps
+          npx ng test --watch=false
+          npm run build -- --configuration=production
 
   # --- Job 2: Despliegue Directo a AWS EC2 vía SSH ---
   deploy:
@@ -48,32 +56,37 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            echo "🚀 [AWS EC2] Iniciando despliegue de CASE Studio AI..."
+            echo "🚀 [AWS EC2] Iniciando despliegue de case_uml2..."
 
             export PATH=$PATH:/usr/bin:/usr/local/bin:/usr/local/bin/docker-compose
 
             # Asegurar permisos sobre el socket de Docker
             sudo chmod 666 /var/run/docker.sock || true
 
-            # Navegar a la carpeta del proyecto o clonar
-            if [ -d "$HOME/case-studio-ai" ]; then
-              cd "$HOME/case-studio-ai"
+            # Navegar a la carpeta del proyecto case_uml2 o clonar
+            if [ -d "$HOME/case_uml2" ]; then
+              cd "$HOME/case_uml2"
             else
-              git clone https://github.com/julioficctcr7/case-studio-ai.git "$HOME/case-studio-ai"
-              cd "$HOME/case-studio-ai"
+              git clone "https://github.com/${{ github.repository }}.git" "$HOME/case_uml2"
+              cd "$HOME/case_uml2"
             fi
 
-            # Traer los últimos cambios confirmados
-            git pull origin main
+            # Sincronizar exactamente con origin/main conservando archivos .env no rastreados
+            git fetch origin main
+            git reset --hard origin/main
 
-            # Desplegar servicios con Docker Compose en el servidor
+            # Desplegar servicios con Docker Compose en el servidor (proyecto case_uml2)
             if [ -d "infra" ]; then
               cd infra
               export DOMAIN_NAME="${{ secrets.DOMAIN_NAME }}"
-              [ -z "$DOMAIN_NAME" ] && export DOMAIN_NAME="casestudio.duckdns.org"
+              [ -z "$DOMAIN_NAME" ] && export DOMAIN_NAME="kellyuml.duckdns.org"
+              if [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+                export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+              fi
 
-              sudo -E docker compose down || true
-              sudo -E docker compose up -d --build
+              sudo -E docker compose -p case_uml2 up -d --build --remove-orphans
+              sudo -E docker compose -p case_uml2 restart nginx || true
+              sudo -E docker compose -p case_uml2 ps
             fi
 
             echo "✅ [AWS EC2] Despliegue en producción completado con éxito!"

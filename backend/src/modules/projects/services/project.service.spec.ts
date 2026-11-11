@@ -4,6 +4,7 @@ import { ProjectService } from './project.service';
 import { ProjectRepository } from '../repositories/project.repository';
 import { ProjectMemberRepository } from '../repositories/project-member.repository';
 import { DiagramRepository } from '../../diagrams/repositories/diagram.repository';
+import { UserRepository } from '../../auth/repositories/user.repository';
 import { ProjectRole } from '../entities/project-role.enum';
 import { Project } from '../entities/project.entity';
 import { ProjectMember } from '../entities/project-member.entity';
@@ -220,6 +221,57 @@ describe('ProjectService', () => {
       await expect(service.remove(mockProjectId, mockOtherUserId)).rejects.toThrow(
         ForbiddenException,
       );
+    });
+  });
+
+  describe('searchUsers', () => {
+    it('debe retornar lista vacía para consultas menores a 2 caracteres', async () => {
+      const mockUserRepo: Partial<UserRepository> = {
+        searchActiveUsers: jest.fn(),
+      };
+      const moduleWithUsers = await Test.createTestingModule({
+        providers: [
+          ProjectService,
+          { provide: ProjectRepository, useValue: projectRepo },
+          { provide: ProjectMemberRepository, useValue: memberRepo },
+          { provide: DiagramRepository, useValue: diagramRepo },
+          { provide: UserRepository, useValue: mockUserRepo },
+        ],
+      }).compile();
+      const svc = moduleWithUsers.get(ProjectService);
+
+      expect(await svc.searchUsers('a', mockUserId, mockProjectId)).toEqual([]);
+      expect(mockUserRepo.searchActiveUsers).not.toHaveBeenCalled();
+    });
+
+    it('debe buscar usuarios activos y marcar alreadyMember si pertenecen al proyecto', async () => {
+      const mockUserRepo: Partial<UserRepository> = {
+        searchActiveUsers: jest.fn().mockResolvedValue([
+          { id: mockOtherUserId, fullName: 'Ana López', email: 'ana@uagrm.edu.bo' } as any,
+          { id: '44444444-4444-4444-4444-444444444444', fullName: 'Luis Torrez', email: 'luis@uagrm.edu.bo' } as any,
+        ]),
+      };
+      memberRepo.findByProjectId!.mockResolvedValue([
+        { userId: mockOtherUserId } as any,
+      ]);
+
+      const moduleWithUsers = await Test.createTestingModule({
+        providers: [
+          ProjectService,
+          { provide: ProjectRepository, useValue: projectRepo },
+          { provide: ProjectMemberRepository, useValue: memberRepo },
+          { provide: DiagramRepository, useValue: diagramRepo },
+          { provide: UserRepository, useValue: mockUserRepo },
+        ],
+      }).compile();
+      const svc = moduleWithUsers.get(ProjectService);
+
+      const res = await svc.searchUsers('uagrm', mockUserId, mockProjectId);
+      expect(mockUserRepo.searchActiveUsers).toHaveBeenCalledWith('uagrm', mockUserId, 8);
+      expect(res).toEqual([
+        { id: mockOtherUserId, fullName: 'Ana López', email: 'ana@uagrm.edu.bo', alreadyMember: true },
+        { id: '44444444-4444-4444-4444-444444444444', fullName: 'Luis Torrez', email: 'luis@uagrm.edu.bo', alreadyMember: false },
+      ]);
     });
   });
 });
